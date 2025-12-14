@@ -579,7 +579,7 @@ def compute_causal_bounds(
         "truth_do1",
         "upper",
         "width",
-        "fold",
+        # "fold",
         "ehat1_oof",
         "dual_loss_fold",
         "divergence",

@@ -40,10 +40,23 @@ if __name__ == "__main__":
     div = "Chi2" # KL, TV, Hellinger, Chi2, JS
 
     data = generate_data(n=n, d=d, seed=seed, structural_type="nonlinear")
-    X = data["X"]
+    keep_cols = None           # choose feature subset; set to None to use all
+    full_X = data["X"]
+    X = full_X[:, keep_cols] if keep_cols is not None else full_X
     A = data["A"]
     Y = data["Y"]
-    GroundTruth = data["GroundTruth"]
+
+    if keep_cols is None:
+        GroundTruth = data["GroundTruth"]
+    else:
+        truth_fn = data["GroundTruth"]
+
+        def GroundTruth(a: int, X_query: np.ndarray) -> np.ndarray:
+            # Compute truth using the original full feature matrix for these rows.
+            Xq = np.asarray(X_query, dtype=np.float32)
+            if Xq.shape[0] != full_X.shape[0]:
+                raise ValueError(f"GroundTruth expects n={full_X.shape[0]} rows; got {Xq.shape[0]}.")
+            return truth_fn(a, full_X)
 
     dual_net_config = {
         "hidden_sizes": (64, 64),
