@@ -610,90 +610,59 @@ class DebiasedCausalBoundEstimator:
         g_val, valid_mask = self.divergence.g_star_with_valid(t)
         return g_val.cpu().numpy().astype(np.float32), valid_mask.cpu().numpy()
 
-
     def predict_bound(self, a: int, X: np.ndarray) -> np.ndarray:
-        """Predict the (upper) bound for E[phi(Y) | do(A=a), X=x] at query covariates X."""
         if not self._fitted:
             raise RuntimeError("Estimator is not fitted. Call fit(X,A,Y) first.")
         if a not in (0, 1):
             raise ValueError("a must be 0 or 1.")
+        Xq = np.asarray(X, dtype=np.float32)
+        if Xq.ndim != 2:
+            raise ValueError(f"X must be 2D. Got {Xq.shape}.")
         if self.X_ is None:
             raise RuntimeError("Internal error: missing fitted X_.")
-        Xq32 = np.ascontiguousarray(np.asarray(X, dtype=np.float32))
-        if Xq32.ndim != 2:
-            raise ValueError(f"X must be 2D. Got {Xq32.shape}.")
-        if Xq32.shape[1] != self.X_.shape[1]:
+        if Xq.shape[1] != self.X_.shape[1]:
             raise ValueError(
-                f"X has wrong number of features: expected {self.X_.shape[1]}, got {Xq32.shape[1]}."
+                f"X has wrong number of features: expected {self.X_.shape[1]}, got {Xq.shape[1]}."
             )
 
         K = len(self.propensity_models_)
         if K == 0:
             raise RuntimeError("No fitted folds found.")
 
-        # Shared NumPy views used by sklearn/xgboost models.
-        Xq64 = Xq32.astype(np.float64, copy=False)
-
-        # Shared design for regression head m^k: [a, X].
-        n_q = int(Xq32.shape[0])
-        AX32 = np.concatenate([np.full((n_q, 1), float(a), dtype=np.float32), Xq32], axis=1)
-        AX64 = AX32.astype(np.float64, copy=False)
-
-        # Shared Torch design for h/u nets: concat([a], X).
-        X_t = torch.from_numpy(Xq32)  # shares memory with Xq32 (CPU)
-        A_t = torch.full((n_q,), float(a), dtype=torch.float32)
-        ax_t = torch.cat([A_t.reshape(-1, 1), X_t], dim=1)
-
-        preds = np.zeros((n_q,), dtype=np.float64)
+        preds = np.zeros((Xq.shape[0],), dtype=np.float64)
         for k in range(K):
-            preds += self._predict_fold_precomputed(k=k, a=a, Xq64=Xq64, ax_t=ax_t, AX64=AX64)
+            preds += self._predict_fold(k=k, a=a, Xq=Xq)
         preds /= float(K)
         return preds.astype(np.float32)
 
-    def _predict_fold_precomputed(
-        self,
-        k: int,
-        a: int,
-        Xq64: np.ndarray,
-        ax_t: torch.Tensor,
-        AX64: np.ndarray,
-    ) -> np.ndarray:
-        """Per-fold bound contribution theta_k(a, x), using shared precomputed designs."""
+    def _predict_fold(self, k: int, a: int, Xq: np.ndarray) -> np.ndarray:
+        """Per-fold bound contribution theta_k(a, x)."""
         prop = self.propensity_models_[k]
         h_net = self.h_nets_[k]
         u_net = self.u_nets_[k]
         m_reg = self.m_models_[k]
 
-        e1 = _predict_proba_class1(prop, Xq64)
+        e1 = _predict_proba_class1(prop, Xq.astype(np.float64, copy=False))
         e1 = np.clip(e1, self.fit_cfg.eps_propensity, 1.0 - self.fit_cfg.eps_propensity)
         eA = e1 if a == 1 else (1.0 - e1)
 
-        eta = self.divergence.B_numpy(eA.astype(np.float64, copy=False)).astype(np.float64, copy=False)
+        eta = self.divergence.B_numpy(eA.astype(np.float64)).astype(np.float64)
+
+        X_t = torch.tensor(Xq.astype(np.float32), dtype=torch.float32)
+        A_t = torch.full((Xq.shape[0],), float(a), dtype=torch.float32)
+        ax = _concat_ax(A_t, X_t)
 
         with torch.no_grad():
-            h = h_net(ax_t)
+            h = h_net(ax)
             h = torch.clamp(h, min=-self.dual_net_cfg.h_clip, max=self.dual_net_cfg.h_clip)
-            lam = torch.exp(h).cpu().numpy().astype(np.float64, copy=False)
-            u = u_net(ax_t).cpu().numpy().astype(np.float64, copy=False)
+            lam = torch.exp(h).cpu().numpy().astype(np.float64)
+            u = u_net(ax).cpu().numpy().astype(np.float64)
 
-        m = m_reg.predict(AX64).astype(np.float64, copy=False)
+        AX = np.concatenate([np.full((Xq.shape[0], 1), float(a), dtype=np.float32), Xq.astype(np.float32)], axis=1)
+        m = m_reg.predict(AX.astype(np.float64, copy=False)).astype(np.float64)
 
         theta = lam * (eta + m) + u
         return theta
-
-    def _predict_fold(self, k: int, a: int, Xq: np.ndarray) -> np.ndarray:
-        """Backward-compatible helper: build precomputations and delegate."""
-        Xq32 = np.ascontiguousarray(np.asarray(Xq, dtype=np.float32))
-        Xq64 = Xq32.astype(np.float64, copy=False)
-        n_q = int(Xq32.shape[0])
-        AX32 = np.concatenate([np.full((n_q, 1), float(a), dtype=np.float32), Xq32], axis=1)
-        AX64 = AX32.astype(np.float64, copy=False)
-
-        X_t = torch.from_numpy(Xq32)
-        A_t = torch.full((n_q,), float(a), dtype=torch.float32)
-        ax_t = torch.cat([A_t.reshape(-1, 1), X_t], dim=1)
-
-        return self._predict_fold_precomputed(k=k, a=a, Xq64=Xq64, ax_t=ax_t, AX64=AX64)
 
     def predict_bound_for_observed_X(self, a: int = 1) -> pd.DataFrame:
         if not self._fitted:
@@ -730,27 +699,15 @@ def compute_causal_bounds(
     fit_config: Dict[str, Any],
     seed: int,
     GroundTruth: Optional[Callable[[int, np.ndarray], np.ndarray]] = None,
-    propensity_cache: Optional[Dict[str, Any]] = None,
 ) -> pd.DataFrame:
     """
     Convenience wrapper that runs the two-pass (phi and -phi) estimator.
 
-    Returns
-    -------
-    pd.DataFrame
-        Columns: i, lower, truth_do1, upper, width, ehat1_oof, dual_loss_fold, divergence
-
-    Speed notes
-    -----------
-    This wrapper *automatically* caches the cross-fitted propensity model when
-    `propensity_cache` is not provided. This avoids redundant propensity fits for:
-      - the sign-flip run (-phi), and
-      - multi-divergence aggregations (e.g., divergence="combined").
+    Returns a DataFrame with lower/upper bounds for E[phi(Y)|do(A=1), X].
     """
     Yc, Ac, Xc = check_shapes(Y=Y, A=A, X=X)
-    n = int(Xc.shape[0])
 
-    truth = np.full((n,), np.nan, dtype=np.float32)
+    truth = np.full((Xc.shape[0],), np.nan, dtype=np.float32)
     if GroundTruth is not None:
         try:
             truth = np.asarray(GroundTruth(1, Xc), dtype=np.float32).reshape(-1)
@@ -758,19 +715,6 @@ def compute_causal_bounds(
             raise TypeError(
                 "GroundTruth must be callable like GroundTruth(a:int, X:(n,d))->(n,)."
             ) from e
-
-    fit_cfg = FitConfig.from_dict(fit_config)
-    prop_cache = propensity_cache
-    if prop_cache is None:
-        prop_cache = prefit_propensity_cache(
-            X=Xc,
-            A=Ac,
-            propensity_model=propensity_model,
-            propensity_config=fit_cfg.propensity_config,
-            n_folds=fit_cfg.n_folds,
-            seed=int(seed),
-            eps_propensity=fit_cfg.eps_propensity,
-        )
 
     def _compute_for_div(div_name: Union[str, FDivergenceLike]) -> pd.DataFrame:
         """Run the standard two-pass (phi and -phi) pipeline for a single divergence."""
@@ -782,7 +726,7 @@ def compute_causal_bounds(
             dual_net_config=dual_net_config,
             fit_config=fit_config,
             seed=seed,
-        ).fit(Xc, Ac, Yc, propensity_cache=prop_cache)
+        ).fit(Xc, Ac, Yc)
 
         df_upper = est.predict_bound_for_observed_X(a=1)
 
@@ -797,7 +741,7 @@ def compute_causal_bounds(
             dual_net_config=dual_net_config,
             fit_config=fit_config,
             seed=seed,
-        ).fit(Xc, Ac, Yc, propensity_cache=prop_cache)
+        ).fit(Xc, Ac, Yc)
 
         df_upper_neg = est_neg.predict_bound_for_observed_X(a=1)
 
@@ -820,11 +764,13 @@ def compute_causal_bounds(
             "truth_do1",
             "upper",
             "width",
+            # "fold",
             "ehat1_oof",
             "dual_loss_fold",
             "divergence",
         ]
-        return out[cols]
+        out = out[cols]
+        return out
 
     def _stack_divergence_runs(div_names: Sequence[str]) -> list[pd.DataFrame]:
         div_dfs = [_compute_for_div(div_name) for div_name in div_names]

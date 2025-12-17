@@ -10,9 +10,9 @@ import os
 import sys
 import unittest
 
-THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-if THIS_DIR not in sys.path:
-    sys.path.insert(0, THIS_DIR)
+# THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+# if THIS_DIR not in sys.path:
+#     sys.path.insert(0, THIS_DIR)
 
 from utils import apply_macos_thread_safety_knobs
 
@@ -27,11 +27,13 @@ from divergences import get_divergence
 
 
 def phi_identity(y: torch.Tensor) -> torch.Tensor:
+    """Identity observable: phi(y)=y."""
     return y
 
 
 class TestSanity(unittest.TestCase):
     def _configs(self):
+        """Small, fast configs to keep tests quick."""
         dual_net_config = {
             "hidden_sizes": (32, 32),
             "activation": "relu",
@@ -91,12 +93,14 @@ class TestSanity(unittest.TestCase):
             )
 
     def test_divergence_penalty_finite(self):
+        """g* should return finite values even when t is near/above the boundary."""
         div = get_divergence("KL")
         t = torch.tensor([0.1, 0.0, -1.0])
         val = div.g_star(t)
         self.assertTrue(torch.isfinite(val).all().item())
 
     def test_reproducibility_same_seed(self):
+        """Same seed implies identical bounds (determinism knobs on)."""
         seed = 7
         data = generate_data(n=200, d=4, seed=seed)
         X = data["X"]
@@ -135,6 +139,7 @@ class TestSanity(unittest.TestCase):
         self.assertTrue(np.allclose(df1["lower"].to_numpy(), df2["lower"].to_numpy(), atol=1e-6))
 
     def test_bound_ordering(self):
+        """Lower bound should not exceed upper (within tiny tolerance)."""
         seed = 11
         data = generate_data(n=200, d=4, seed=seed)
         X = data["X"]

@@ -32,6 +32,7 @@ class RegressorLike(Protocol):
 
 
 def _validate_classifier(est: Any) -> None:
+    """Ensure estimator exposes fit/predict_proba like sklearn classifiers."""
     if not hasattr(est, "fit") or not hasattr(est, "predict_proba"):
         raise TypeError(
             "Propensity model must implement fit(X,y) and predict_proba(X)->(n,2)."
@@ -39,11 +40,13 @@ def _validate_classifier(est: Any) -> None:
 
 
 def _validate_regressor(est: Any) -> None:
+    """Ensure estimator exposes fit/predict for the regression head m."""
     if not hasattr(est, "fit") or not hasattr(est, "predict"):
         raise TypeError("Regressor must implement fit(X,y) and predict(X)->(n,).")
 
 
 def _require_keys(config: Dict[str, Any], keys: Sequence[str], ctx: str) -> None:
+    """Fail fast if required hyperparameters are missing."""
     missing = [k for k in keys if k not in config]
     if missing:
         raise KeyError(

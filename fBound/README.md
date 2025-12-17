@@ -66,13 +66,17 @@ This is implemented by running the estimator twice: once for `phi`, once for `-p
   Toy generator with known `GroundTruth(a, X)` (analytic).
 
 - `run_example.py`  
-  End-to-end run on simulated data for **KL** and **TV**.
+  End-to-end run on simulated data for all base divergences (KL/TV/Hellinger/Chi2/JS),
+  plus post-processing aggregators (combined intersection, cluster heuristic, empirical Manski).
 
 - `test_sanity.py`  
   A small set of tests (3–6) covering reproducibility, shape checks, domain penalties, and bound ordering.
 
 - `utils.py`  
   Seeding, KFold splits, and a utility for macOS thread-safety knobs.
+
+- `manski.py`  
+  Empirical Manski bounds under bounded outcomes using propensity + outcome regression.
 
 ## How to run
 
@@ -81,3 +85,31 @@ From the `project/` directory:
 ```bash
 python run_example.py
 python test_sanity.py
+```
+
+### `run_example.py` outputs
+
+- Prints mean width and empirical coverage for the selected `div` (set inside the script).
+- Saves per-sample tables with bounds, g* validity, coverage:
+  - `gstar_bounds_table.csv`: columns for each base divergence (lower/upper, validity masks, coverage),
+    plus post-process methods (`combined`, `cluster`, `Manski`).
+  - `gstar_bounds_any_invalid.csv`: subset where any g* validity flag is false.
+- Saves a summary:
+  - `gstar_bounds_summary.csv`: coverage_rate and mean_width for each method
+    (`KL`, `TV`, `Hellinger`, `Chi2`, `JS`, `combined`, `cluster`, `Manski_empirical`).
+
+### Empirical Manski quick start
+
+```python
+from manski import empirical_extrema_manski_bounds
+res = empirical_extrema_manski_bounds(
+    Y=Y, A=A, X=X, a=1,
+    propensity_model="logistic", propensity_config={...},
+    outcome_model="random_forest", outcome_config={...},
+    seed=123,
+    eps_propensity=1e-3,
+)
+print(res["mu_lower"], res["mu_upper"])
+```
+
+This uses empirical min/max of `Y` as `(L,U)`; use `empirical_manski_bounds(...)` if you already know `(L,U)`.

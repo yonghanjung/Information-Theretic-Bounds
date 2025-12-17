@@ -34,6 +34,7 @@ class FDivergenceLike(Protocol):
     def B_numpy(self, e: np.ndarray) -> np.ndarray: ...
     def dB_numpy(self, e: np.ndarray) -> np.ndarray: ...
     def g_star(self, t: torch.Tensor) -> torch.Tensor: ...
+    # Implementations may optionally provide g_star_with_valid(t)->(val,mask).
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,7 @@ class FDivergence(FDivergenceLike):
     _B_numpy: Callable[[np.ndarray], np.ndarray]
     _dB_numpy: Callable[[np.ndarray], np.ndarray]
     _g_star: Callable[[torch.Tensor], torch.Tensor]
+    _valid_mask: Callable[[torch.Tensor], torch.Tensor]
 
     def B_torch(self, e: torch.Tensor) -> torch.Tensor:
         return self._B_torch(e)
@@ -70,18 +72,29 @@ class FDivergence(FDivergenceLike):
     def g_star(self, t: torch.Tensor) -> torch.Tensor:
         return self._g_star(t)
 
+    def g_star_with_valid(self, t: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Return both g*(t) and a boolean mask indicating whether t lies in the
+        valid domain (per-divergence threshold).
+        """
+        t = _ensure_tensor(t)
+        return self._g_star(t), self._valid_mask(t)
+
 
 def _ensure_tensor(x: torch.Tensor) -> torch.Tensor:
+    """Fail fast if callers accidentally pass NumPy or Python numbers."""
     if not isinstance(x, torch.Tensor):
         raise TypeError("Expected a torch.Tensor.")
     return x
 
 
 def _penalty_like(t: torch.Tensor, cfg: PenaltyConfig) -> torch.Tensor:
+    """Smoothly penalize values outside the valid domain of g*."""
     return cfg.penalty_value + cfg.penalty_growth * (t**2)
 
 
 def _safe_log(x: torch.Tensor, eps: float) -> torch.Tensor:
+    """Numerically safe log with a floor to avoid -inf."""
     return torch.log(torch.clamp(x, min=eps))
 
 
@@ -108,6 +121,10 @@ def _kl_divergence(cfg: PenaltyConfig, eps_e: float) -> FDivergence:
         safe = -1.0 - _safe_log(-t, eps=cfg.boundary_eps)
         return torch.where(valid, safe, _penalty_like(t, cfg))
 
+    def valid_mask(t: torch.Tensor) -> torch.Tensor:
+        t = _ensure_tensor(t)
+        return t < -cfg.boundary_eps
+
     return FDivergence(
         name="KL",
         notes="KL divergence with f(t)=t log t and g*(t) domain t<0.",
@@ -117,6 +134,7 @@ def _kl_divergence(cfg: PenaltyConfig, eps_e: float) -> FDivergence:
         _B_numpy=B_n,
         _dB_numpy=dB_n,
         _g_star=g_star,
+        _valid_mask=valid_mask,
     )
 
 
@@ -145,6 +163,11 @@ def _hellinger_divergence(cfg: PenaltyConfig, eps_e: float) -> FDivergence:
         val = t / torch.clamp(denom, min=cfg.boundary_eps)
         return torch.where(valid, val, _penalty_like(t, cfg))
 
+    def valid_mask(t: torch.Tensor) -> torch.Tensor:
+        t = _ensure_tensor(t)
+        bound = 0.5
+        return t < (bound - cfg.boundary_eps)
+
     return FDivergence(
         name="Hellinger",
         notes="Hellinger divergence with B(e)=1-sqrt(e). g*(t) domain t<1/2.",
@@ -154,6 +177,7 @@ def _hellinger_divergence(cfg: PenaltyConfig, eps_e: float) -> FDivergence:
         _B_numpy=B_n,
         _dB_numpy=dB_n,
         _g_star=g_star,
+        _valid_mask=valid_mask,
     )
 
 
@@ -183,6 +207,11 @@ def _chi2_divergence(cfg: PenaltyConfig, eps_e: float) -> FDivergence:
         val = -(1.0 + sqrt_term)
         return torch.where(valid, val, _penalty_like(t, cfg))
 
+    def valid_mask(t: torch.Tensor) -> torch.Tensor:
+        t = _ensure_tensor(t)
+        bound = 0.5
+        return t <= (bound - cfg.boundary_eps)
+
     return FDivergence(
         name="Chi2",
         notes="Chi-square divergence with B(e)=(1-e)/(2e). g*(t) domain t<=1/2.",
@@ -192,6 +221,7 @@ def _chi2_divergence(cfg: PenaltyConfig, eps_e: float) -> FDivergence:
         _B_numpy=B_n,
         _dB_numpy=dB_n,
         _g_star=g_star,
+        _valid_mask=valid_mask,
     )
 
 
@@ -238,6 +268,10 @@ def _tv_divergence(cfg: PenaltyConfig, eps_e: float, scaled: bool) -> FDivergenc
             valid = t <= thr
             return torch.where(valid, val, _penalty_like(t, cfg))
 
+        def valid_mask(t: torch.Tensor) -> torch.Tensor:
+            t = _ensure_tensor(t)
+            return t <= thr
+
         return FDivergence(
             name="TV",
             notes="Standard TV: f(t)=|t-1|/2, B(e)=1-e, g* thresholds ±1/2.",
@@ -247,6 +281,7 @@ def _tv_divergence(cfg: PenaltyConfig, eps_e: float, scaled: bool) -> FDivergenc
             _B_numpy=B_n,
             _dB_numpy=dB_n,
             _g_star=g_star,
+            _valid_mask=valid_mask,
         )
 
     def B_t(e: torch.Tensor) -> torch.Tensor:
@@ -275,6 +310,10 @@ def _tv_divergence(cfg: PenaltyConfig, eps_e: float, scaled: bool) -> FDivergenc
         valid = t <= thr
         return torch.where(valid, val, _penalty_like(t, cfg))
 
+    def valid_mask(t: torch.Tensor) -> torch.Tensor:
+        t = _ensure_tensor(t)
+        return t <= thr
+
     return FDivergence(
         name="TV_unscaled",
         notes="Unscaled TV (paper): f(t)=|t-1|, B(e)=2(1-e), g* thresholds ±1.",
@@ -284,6 +323,7 @@ def _tv_divergence(cfg: PenaltyConfig, eps_e: float, scaled: bool) -> FDivergenc
         _B_numpy=B_n,
         _dB_numpy=dB_n,
         _g_star=g_star,
+        _valid_mask=valid_mask,
     )
 
 
@@ -322,6 +362,10 @@ def _js_divergence(cfg: PenaltyConfig, eps_e: float) -> FDivergence:
         safe = torch.log(2.0 / torch.clamp(denom, min=cfg.boundary_eps))
         return torch.where(valid, safe, _penalty_like(t, cfg))
 
+    def valid_mask(t: torch.Tensor) -> torch.Tensor:
+        t = _ensure_tensor(t)
+        return t < (log4 - cfg.boundary_eps)
+
     return FDivergence(
         name="JS",
         notes="JS divergence with g*(t)=log(2/(4-exp(t))) domain t<log 4.",
@@ -331,6 +375,7 @@ def _js_divergence(cfg: PenaltyConfig, eps_e: float) -> FDivergence:
         _B_numpy=B_n,
         _dB_numpy=dB_n,
         _g_star=g_star,
+        _valid_mask=valid_mask,
     )
 
 
@@ -358,12 +403,34 @@ def _build_default_registry() -> None:
 
 
 def register_divergence(name: str, divergence: FDivergenceLike) -> None:
+    """Add a custom divergence to the registry (validates interface at runtime)."""
     if not isinstance(name, str) or not name:
         raise ValueError("name must be a non-empty string.")
     if not isinstance(divergence, FDivergenceLike):
         raise TypeError(
             "divergence must implement FDivergenceLike (B, dB, g_star and metadata)."
         )
+
+    def default_mask(t: torch.Tensor) -> torch.Tensor:
+        t = _ensure_tensor(t)
+        return torch.ones_like(t, dtype=torch.bool)
+
+    # Prefer a custom validity mask if the divergence exposes g_star_with_valid.
+    if hasattr(divergence, "g_star_with_valid"):
+        try:
+            _, mask_sample = divergence.g_star_with_valid(torch.tensor([0.0]))
+            _ = mask_sample  # ensure it works
+
+            def custom_mask(t: torch.Tensor) -> torch.Tensor:
+                _, m = divergence.g_star_with_valid(t)
+                return m
+
+            valid_mask = custom_mask
+        except Exception:
+            valid_mask = default_mask
+    else:
+        valid_mask = default_mask
+
     _REGISTRY[name] = FDivergence(
         name=divergence.name,
         notes=divergence.notes,
@@ -373,10 +440,12 @@ def register_divergence(name: str, divergence: FDivergenceLike) -> None:
         _B_numpy=divergence.B_numpy,
         _dB_numpy=divergence.dB_numpy,
         _g_star=divergence.g_star,
+        _valid_mask=valid_mask,
     )
 
 
 def get_divergence(divergence: Union[str, FDivergenceLike]) -> FDivergence:
+    """Retrieve a registered divergence (case-insensitive), or wrap a custom one."""
     _build_default_registry()
 
     if isinstance(divergence, str):
@@ -406,6 +475,21 @@ def get_divergence(divergence: Union[str, FDivergenceLike]) -> FDivergence:
     if not isinstance(divergence, FDivergenceLike):
         raise TypeError("Custom divergence must satisfy FDivergenceLike protocol.")
 
+    def default_mask(t: torch.Tensor) -> torch.Tensor:
+        t = _ensure_tensor(t)
+        return torch.ones_like(t, dtype=torch.bool)
+
+    if hasattr(divergence, "g_star_with_valid"):
+        try:
+            def custom_mask(t: torch.Tensor) -> torch.Tensor:
+                _, m = divergence.g_star_with_valid(t)
+                return m
+            valid_mask = custom_mask
+        except Exception:
+            valid_mask = default_mask
+    else:
+        valid_mask = default_mask
+
     return FDivergence(
         name=divergence.name,
         notes=divergence.notes,
@@ -415,4 +499,5 @@ def get_divergence(divergence: Union[str, FDivergenceLike]) -> FDivergence:
         _B_numpy=divergence.B_numpy,
         _dB_numpy=divergence.dB_numpy,
         _g_star=divergence.g_star,
+        _valid_mask=valid_mask,
     )
