@@ -136,6 +136,20 @@ def _predict_proba_class1(model: Any, X: np.ndarray) -> np.ndarray:
     return proba[:, col]
 
 
+class _ConstantPropensityModel:
+    """Fallback model that predicts a constant propensity when a fold has a single class."""
+
+    def __init__(self, p: float) -> None:
+        self.p = float(p)
+        self.classes_ = np.asarray([0, 1], dtype=int)
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        n = int(np.asarray(X).shape[0])
+        p1 = np.full((n,), self.p, dtype=np.float64)
+        p0 = 1.0 - p1
+        return np.stack([p0, p1], axis=1)
+
+
 # ---- Propensity prefit cache (speed) -----------------------------------------
 
 def prefit_propensity_cache(
@@ -186,12 +200,17 @@ def prefit_propensity_cache(
     e1_oof = np.empty(n, dtype=np.float32)
 
     for k, (train_idx, fold_idx) in enumerate(splits):
-        prop_model = make_classifier(
-            propensity_model,
-            config=propensity_config,
-            seed=int(seed) + 10_000 + k,
-        )
-        prop_model.fit(Xc[train_idx].astype(np.float64, copy=False), Ac[train_idx])
+        A_train = Ac[train_idx]
+        classes = np.unique(A_train)
+        if classes.size < 2:
+            prop_model = _ConstantPropensityModel(float(classes[0]))
+        else:
+            prop_model = make_classifier(
+                propensity_model,
+                config=propensity_config,
+                seed=int(seed) + 10_000 + k,
+            )
+            prop_model.fit(Xc[train_idx].astype(np.float64, copy=False), A_train)
 
         e1_fold = _predict_proba_class1(prop_model, Xc[fold_idx].astype(np.float64, copy=False))
         e1_fold = np.clip(e1_fold, eps_propensity, 1.0 - eps_propensity).astype(np.float32)
@@ -340,12 +359,17 @@ class DebiasedCausalBoundEstimator:
         # Cross-fitting loop: fit nuisance models on train folds, evaluate dual loss on held-out fold.
         for k, (train_idx, fold_idx) in enumerate(self.splits_):
             if propensity_cache is None:
-                prop_model = make_classifier(
-                    self.propensity_model_spec,
-                    config=self.fit_cfg.propensity_config,
-                    seed=self.seed + 10_000 + k,
-                )
-                prop_model.fit(Xc[train_idx].astype(np.float64, copy=False), Ac[train_idx])
+                A_train = Ac[train_idx]
+                classes = np.unique(A_train)
+                if classes.size < 2:
+                    prop_model = _ConstantPropensityModel(float(classes[0]))
+                else:
+                    prop_model = make_classifier(
+                        self.propensity_model_spec,
+                        config=self.fit_cfg.propensity_config,
+                        seed=self.seed + 10_000 + k,
+                    )
+                    prop_model.fit(Xc[train_idx].astype(np.float64, copy=False), A_train)
 
                 e1_fold = _predict_proba_class1(prop_model, Xc[fold_idx].astype(np.float64, copy=False))
                 e1_fold = np.clip(e1_fold, self.fit_cfg.eps_propensity, 1.0 - self.fit_cfg.eps_propensity).astype(
@@ -499,19 +523,7 @@ class DebiasedCausalBoundEstimator:
             raise ValueError("Batch tensors must have the same first dimension.")
 
         ax = _concat_ax(A, X)
-        h_ax = h_net(ax)
         u_ax = u_net(ax)
-        h_ax = torch.clamp(h_ax, min=-self.dual_net_cfg.h_clip, max=self.dual_net_cfg.h_clip)
-        lam_ax = torch.exp(h_ax)
-
-        phi_y = self.phi(Y)
-        t = (phi_y - u_ax) / lam_ax
-        g_star_val = self.divergence.g_star(t)
-
-        eA = torch.where(A >= 0.5, e1, e0)
-        eta = self.divergence.B_torch(eA)
-
-        main = lam_ax * (eta + g_star_val) + u_ax
 
         # Debiasing correction terms at A=0 and A=1 (Eq. 26).
         zeros = torch.zeros_like(A)
@@ -522,6 +534,18 @@ class DebiasedCausalBoundEstimator:
 
         h0 = torch.clamp(h_net(ax0), min=-self.dual_net_cfg.h_clip, max=self.dual_net_cfg.h_clip)
         h1 = torch.clamp(h_net(ax1), min=-self.dual_net_cfg.h_clip, max=self.dual_net_cfg.h_clip)
+
+        h_ax = torch.where(A >= 0.5, h1, h0)
+        lam_ax = torch.exp(h_ax)
+
+        phi_y = self.phi(Y)
+        t = (phi_y - u_ax) / lam_ax
+        g_star_val = self.divergence.g_star(t)
+
+        eA = torch.where(A >= 0.5, e1, e0)
+        eta = self.divergence.B_torch(eA)
+
+        main = lam_ax * (eta + g_star_val) + u_ax
 
         lam0 = torch.exp(h0)
         lam1 = torch.exp(h1)
