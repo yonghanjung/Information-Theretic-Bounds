@@ -635,7 +635,7 @@ class DebiasedCausalBoundEstimator:
         return g_val.cpu().numpy().astype(np.float32), valid_mask.cpu().numpy()
 
 
-    def predict_bound(self, a: int, X: np.ndarray) -> np.ndarray:
+    def predict_bound(self, a: int, X: np.ndarray, e_eval: Optional[np.ndarray] = None) -> np.ndarray:
         """Predict the (upper) bound for E[phi(Y) | do(A=a), X=x] at query covariates X."""
         if not self._fitted:
             raise RuntimeError("Estimator is not fitted. Call fit(X,A,Y) first.")
@@ -668,9 +668,23 @@ class DebiasedCausalBoundEstimator:
         A_t = torch.full((n_q,), float(a), dtype=torch.float32)
         ax_t = torch.cat([A_t.reshape(-1, 1), X_t], dim=1)
 
+        e1_eval = None
+        if e_eval is not None:
+            e1_eval = np.asarray(e_eval, dtype=np.float64).reshape(-1)
+            if e1_eval.ndim != 1 or e1_eval.shape[0] != n_q:
+                raise ValueError(f"e_eval must be 1D of length {n_q}, got shape {e1_eval.shape}.")
+            e1_eval = np.clip(e1_eval, self.fit_cfg.eps_propensity, 1.0 - self.fit_cfg.eps_propensity)
+
         preds = np.zeros((n_q,), dtype=np.float64)
         for k in range(K):
-            preds += self._predict_fold_precomputed(k=k, a=a, Xq64=Xq64, ax_t=ax_t, AX64=AX64)
+            preds += self._predict_fold_precomputed(
+                k=k,
+                a=a,
+                Xq64=Xq64,
+                ax_t=ax_t,
+                AX64=AX64,
+                e1_eval=e1_eval,
+            )
         preds /= float(K)
         return preds.astype(np.float32)
 
@@ -681,6 +695,7 @@ class DebiasedCausalBoundEstimator:
         Xq64: np.ndarray,
         ax_t: torch.Tensor,
         AX64: np.ndarray,
+        e1_eval: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """Per-fold bound contribution theta_k(a, x), using shared precomputed designs."""
         prop = self.propensity_models_[k]
@@ -688,8 +703,11 @@ class DebiasedCausalBoundEstimator:
         u_net = self.u_nets_[k]
         m_reg = self.m_models_[k]
 
-        e1 = _predict_proba_class1(prop, Xq64)
-        e1 = np.clip(e1, self.fit_cfg.eps_propensity, 1.0 - self.fit_cfg.eps_propensity)
+        if e1_eval is None:
+            e1 = _predict_proba_class1(prop, Xq64)
+            e1 = np.clip(e1, self.fit_cfg.eps_propensity, 1.0 - self.fit_cfg.eps_propensity)
+        else:
+            e1 = e1_eval
         eA = e1 if a == 1 else (1.0 - e1)
 
         eta = self.divergence.B_numpy(eA.astype(np.float64, copy=False)).astype(np.float64, copy=False)

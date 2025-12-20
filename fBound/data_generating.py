@@ -26,12 +26,38 @@ def _enforce_margin(p: np.ndarray, eps: float = 0.05) -> np.ndarray:
     return eps + (1.0 - 2.0 * eps) * p
 
 
+_GH_NODES = 20
+_GH_X, _GH_W = np.polynomial.hermite.hermgauss(_GH_NODES)
+
+
+def _normal_gh_expectation(func, mean: np.ndarray | float, std: float = 1.0) -> np.ndarray:
+    """Deterministic E[func(U)] for U ~ N(mean, std^2) via Gauss-Hermite quadrature."""
+    mean_arr = np.asarray(mean, dtype=np.float64)
+    scale = np.sqrt(2.0) * float(std)
+    out = None
+    for x, w in zip(_GH_X, _GH_W):
+        u = mean_arr + scale * x
+        val = np.asarray(func(u), dtype=np.float64)
+        if out is None:
+            out = w * val
+        else:
+            out = out + w * val
+    return (out / np.sqrt(np.pi)).astype(np.float32)
+
+
+def _draw_noise(rng, size, scale: float, noise_dist: str = "normal"):
+    if noise_dist == "t3":
+        return scale * rng.standard_t(df=3, size=size)
+    return rng.normal(0.0, scale, size=size)
+
+
 def generate_data(
     n: int,
     d: int,
     seed: int,
     structural_type: str = "nonlinear",
     x_range: float = 2.0,
+    noise_dist: str = "normal",
 ) -> Dict[str, object]:
     if n <= 0:
         raise ValueError("n must be positive.")
@@ -83,6 +109,21 @@ def generate_data(
             eX_q = _sigmoid(dot_q)
             return (5.0 * (2.0 * float(a) - 1.0) * np.sin(eX_q) + (Xq @ B) / float(d)).astype(np.float32)
 
+        def propensity_true(X_query: np.ndarray) -> np.ndarray:
+            """True propensity P(A=1|X) under the cyclic DGP."""
+            Xq = np.asarray(X_query, dtype=np.float32)
+            if Xq.ndim != 2 or Xq.shape[1] != d:
+                raise ValueError(f"X_query must have shape (m,{d}). Got {Xq.shape}.")
+            lin_x_q = (Xq @ beta) / float(d)
+            lin_x_q = np.clip(lin_x_q, 0.0, 1.0)
+            dot_q = lin_x_q * float(d)
+
+            def _p_for_u(u: np.ndarray | float) -> np.ndarray:
+                gamma_u_q = np.clip(gamma * u, 0.0, 1.0)
+                return _enforce_margin(_sigmoid(alpha + dot_q + gamma_u_q))
+
+            return _normal_gh_expectation(_p_for_u, mean=0.0, std=1.0)
+
         def sample_do(a: int) -> np.ndarray:
             a_arr = np.full((n,), a, dtype=np.float32)
             eps_do = rng.normal(0.0, sig_y, size=(n,)).astype(np.float32)
@@ -99,6 +140,7 @@ def generate_data(
             "A_do1": np.ones_like(A),
             "Y_do1": sample_do(1),
             "GroundTruth": GroundTruth,
+            "propensity_true": propensity_true,
         }
 
     if structural_type == "cyclic2":
@@ -106,11 +148,11 @@ def generate_data(
         X = rng.uniform(-np.pi, np.pi, size=(n, d)).astype(np.float32)
         U = rng.normal(0.0, 1.0, size=(n,)).astype(np.float32)
 
-        beta = np.ones((d,), dtype=np.float32)  # can be tuned; defaults to all ones
+        beta = np.linspace(1.5, 0.5, num=d, dtype=np.float32)  # more dynamic linear term
         alpha = 0.0
         theta = 1.0
         eta = 1.0
-        gamma_s = 1.0
+        gamma_s = 2.0
         sig_y = 1.0
 
         L = _sigmoid((X @ beta) / float(d))
@@ -118,8 +160,8 @@ def generate_data(
         p = _enforce_margin(_sigmoid(alpha + theta * np.sin(X[:, 0]) + eta * G))
         A = rng.binomial(1, p, size=(n,)).astype(np.int64)
 
-        eps = rng.normal(0.0, sig_y, size=(n,)).astype(np.float32)
-        Y = (5.0 * (2.0 * A.astype(np.float32) - 1.0) * np.sin(X[:, 0]) + L + G + eps).astype(np.float32)
+        eps = _draw_noise(rng, size=(n,), scale=sig_y, noise_dist=noise_dist).astype(np.float32)
+        Y = (5.0 * (2.0 * A.astype(np.float32) - 1.0) * np.sin(X[:, 0]) + 0.25 * (L + G) + eps).astype(np.float32)
 
         def GroundTruth(a: int, X_query: np.ndarray) -> np.ndarray:
             if a not in (0, 1):
@@ -128,12 +170,25 @@ def generate_data(
             if Xq.ndim != 2 or Xq.shape[1] != d:
                 raise ValueError(f"X_query must have shape (m,{d}). Got {Xq.shape}.")
             Lq = _sigmoid((Xq @ beta) / float(d))
-            return (5.0 * (2.0 * float(a) - 1.0) * np.sin(Xq[:, 0]) + Lq + np.mean(G)).astype(np.float32)
+            return (5.0 * (2.0 * float(a) - 1.0) * np.sin(Xq[:, 0]) + 0.25 * (Lq + np.mean(G))).astype(np.float32)
+
+        def propensity_true(X_query: np.ndarray) -> np.ndarray:
+            """True propensity P(A=1|X) under the cyclic2 DGP."""
+            Xq = np.asarray(X_query, dtype=np.float32)
+            if Xq.ndim != 2 or Xq.shape[1] != d:
+                raise ValueError(f"X_query must have shape (m,{d}). Got {Xq.shape}.")
+            base = alpha + theta * np.sin(Xq[:, 0])
+
+            def _p_for_u(u: np.ndarray | float) -> np.ndarray:
+                Gq = _sigmoid(gamma_s * u)
+                return _enforce_margin(_sigmoid(base + eta * Gq))
+
+            return _normal_gh_expectation(_p_for_u, mean=0.0, std=1.0)
 
         def sample_do(a: int) -> np.ndarray:
             a_arr = np.full((n,), a, dtype=np.float32)
-            eps_do = rng.normal(0.0, sig_y, size=(n,)).astype(np.float32)
-            return (5.0 * (2.0 * a_arr - 1.0) * np.sin(X[:, 0]) + L + G + eps_do).astype(np.float32)
+            eps_do = _draw_noise(rng, size=(n,), scale=sig_y, noise_dist=noise_dist).astype(np.float32)
+            return (5.0 * (2.0 * a_arr - 1.0) * np.sin(X[:, 0]) + 0.25 * (L + G) + eps_do).astype(np.float32)
 
         return {
             "X": X,
@@ -146,6 +201,7 @@ def generate_data(
             "A_do1": np.ones_like(A),
             "Y_do1": sample_do(1),
             "GroundTruth": GroundTruth,
+            "propensity_true": propensity_true,
         }
 
     if structural_type == "simpson":
@@ -203,6 +259,21 @@ def generate_data(
             p_q = _enforce_margin(_sigmoid(logits_q))
             return (mu_x(Xq) + tau * float(a) + beta_u * est_u + prop_effect(p_q)).astype(np.float32)
 
+        def propensity_true(X_query: np.ndarray) -> np.ndarray:
+            """True propensity P(A=1|X) under the simpson DGP."""
+            Xq = np.asarray(X_query, dtype=np.float32)
+            if Xq.ndim != 2 or Xq.shape[1] != d:
+                raise ValueError(f"X_query must have shape (m,{d}). Got {Xq.shape}.")
+            x0 = Xq[:, 0]
+            mean_u = coef_u_given_x0 * x0
+            std_u = 1.0 / np.sqrt(rho ** 2 + 1.0)
+
+            def _p_for_u(u: np.ndarray | float) -> np.ndarray:
+                logits_q = 2.5 * u + 0.5 * x0 - 0.2
+                return _enforce_margin(_sigmoid(logits_q))
+
+            return _normal_gh_expectation(_p_for_u, mean=mean_u, std=std_u)
+
         return {
             "X": X,
             "A": A,
@@ -214,6 +285,7 @@ def generate_data(
             "A_do1": np.ones_like(A),
             "Y_do1": sample_do(1),
             "GroundTruth": GroundTruth,
+            "propensity_true": propensity_true,
         }
 
     d_cont = max(1, d // 2)
@@ -261,12 +333,12 @@ def generate_data(
             base = base + prop_effect(p_arr)
         return base
 
-    noise = rng.normal(0.0, 1.0, size=(n,)).astype(np.float32)
+    noise = _draw_noise(rng, size=(n,), scale=1.0, noise_dist=noise_dist).astype(np.float32)
     Y = (mu_x(X) + tau_x(X, p) * A.astype(np.float32) + 0.7 * U + noise).astype(np.float32)
 
     def sample_do(a: int) -> np.ndarray:
         a_arr = np.full((n,), a, dtype=np.float32)
-        eps = rng.normal(0.0, 1.0, size=(n,)).astype(np.float32)
+        eps = _draw_noise(rng, size=(n,), scale=1.0, noise_dist=noise_dist).astype(np.float32)
         return (mu_x(X) + tau_x(X, p) * a_arr + 0.7 * U + eps).astype(np.float32)
 
     Y_do0 = sample_do(0)
@@ -285,6 +357,20 @@ def generate_data(
         p_q = _enforce_margin(_sigmoid(logits_q))
         return (mu_x(Xq) + tau_x(Xq, p_q) * float(a)).astype(np.float32)
 
+    def propensity_true(X_query: np.ndarray) -> np.ndarray:
+        """True propensity P(A=1|X) under the linear/nonlinear DGP."""
+        Xq = np.asarray(X_query, dtype=np.float32)
+        if Xq.ndim != 2 or Xq.shape[1] != d:
+            raise ValueError(f"X_query must have shape (m,{d}). Got {Xq.shape}.")
+        logits_q = Xq @ w
+        if structural_type == "nonlinear":
+            logits_q = logits_q + 0.5 * np.sin(Xq[:, 0]) - 0.25 * (Xq[:, 0] ** 2)
+
+        def _p_for_u(u: np.ndarray | float) -> np.ndarray:
+            return _enforce_margin(_sigmoid(logits_q + 0.8 * u))
+
+        return _normal_gh_expectation(_p_for_u, mean=0.0, std=1.0)
+
     return {
         "X": X,
         "A": A,
@@ -296,4 +382,5 @@ def generate_data(
         "A_do1": np.ones_like(A),
         "Y_do1": Y_do1,
         "GroundTruth": GroundTruth,
+        "propensity_true": propensity_true,
     }

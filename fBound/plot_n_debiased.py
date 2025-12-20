@@ -418,6 +418,7 @@ def fit_two_pass_do1_cached(
     A_train,
     Y_train,
     X_eval,
+    e_eval: Optional[np.ndarray],
     dual_net_config,
     fit_config,
     seed,
@@ -450,8 +451,8 @@ def fit_two_pass_do1_cached(
         seed=seed,
     ).fit(X_train, A_train, Y_train, propensity_cache=propensity_cache)
 
-    U = est_pos.predict_bound(a=1, X=X_eval).astype(np.float32)
-    L = (-est_neg.predict_bound(a=1, X=X_eval)).astype(np.float32)
+    U = est_pos.predict_bound(a=1, X=X_eval, e_eval=e_eval).astype(np.float32)
+    L = (-est_neg.predict_bound(a=1, X=X_eval, e_eval=e_eval)).astype(np.float32)
     return L, U, est_pos
 
 
@@ -689,6 +690,7 @@ def _fit_bounds_for_divs(
     propensity_model,
     m_model,
     prop_cache,
+    e_eval: Optional[np.ndarray] = None,
     progress_prefix: Optional[str] = None,
     timing_label: Optional[str] = None,
     timing: bool = False,
@@ -715,6 +717,7 @@ def _fit_bounds_for_divs(
                         A,
                         Y,
                         X_eval,
+                        e_eval,
                         dual_net_config,
                         fit_config,
                         seed=seed,
@@ -763,6 +766,7 @@ def _fit_bounds_for_divs(
                     A,
                     Y,
                     X_eval,
+                    e_eval,
                     dual_net_config,
                     fit_config,
                     seed=seed,
@@ -929,6 +933,24 @@ def main() -> None:
     )
     n_eval = int(X_eval.shape[0])
 
+    # True propensity on X_eval from the DGP (Oracle-B helper).
+    warn_state: Dict[str, bool] = {}
+    data_eval = _call_generate_data_compat(
+        n=n_eval,
+        d=args.d,
+        seed=args.eval_seed,
+        structural_type=args.structural_type,
+        x_range=args.x_range,
+        noise_dist=args.noise_dist,
+        _warn_state=warn_state,
+    )
+    prop_true_fn = data_eval.get("propensity_true")
+    if prop_true_fn is None:
+        raise RuntimeError("generate_data(...) did not return propensity_true.")
+    e_true_eval = np.asarray(prop_true_fn(X_eval), dtype=np.float32).reshape(-1)
+    if e_true_eval.shape[0] != n_eval:
+        raise RuntimeError(f"propensity_true returned shape {e_true_eval.shape}, expected ({n_eval},).")
+
     dual_net_config = {
         "hidden_sizes": (64, 64),
         "activation": "relu",
@@ -991,8 +1013,6 @@ def main() -> None:
     oracle_fit_config["batch_size"] = int(args.oracle_batch_size)
     config_timer.__exit__(None, None, None)
 
-    warn_state: Dict[str, bool] = {}
-
     with StepTimer("oracle setup", use_tqdm=False, enabled=timing_enabled):
         # Oracle bounds and propensity (near-truth)
         oracle_seed = int(args.oracle_seed) if args.oracle_seed >= 0 else int(args.base_seed)
@@ -1039,6 +1059,7 @@ def main() -> None:
             propensity_model=propensity_model,
             m_model=m_model,
             prop_cache=prop_cache_oracle,
+            e_eval=e_true_eval,
             progress_prefix="[oracle]",
             timing_label="oracle",
             timing=timing_enabled,
@@ -1046,7 +1067,7 @@ def main() -> None:
             use_tqdm=False,
         )
         U_oracle = {div: oracle_bounds[div][1] for div in div_list}
-        e_oracle = _predict_propensity_mean(prop_cache_oracle["models"], X_eval, oracle_fit_config["eps_propensity"])
+        e_oracle = e_true_eval
         print("Oracle estimator completed.")
 
     replicate_rows: List[Dict[str, Any]] = []
@@ -1105,6 +1126,7 @@ def main() -> None:
 
                 e_hat = _predict_propensity_mean(prop_cache["models"], X_eval, fit_config["eps_propensity"])
                 prop_rmse = _rmse(e_hat, e_oracle)
+                prop_rmse_true = _rmse(e_hat, e_true_eval)
 
             with StepTimer("debiased bounds", use_tqdm=True, enabled=timing_enabled):
                 deb_bounds = _fit_bounds_for_divs(
@@ -1121,7 +1143,29 @@ def main() -> None:
                     propensity_model=propensity_model,
                     m_model=m_model,
                     prop_cache=prop_cache,
+                    e_eval=None,
                     timing_label="debiased",
+                    timing=timing_enabled,
+                    timing_detail=timing_detail,
+                    use_tqdm=True,
+                )
+            with StepTimer("oracle-B bounds", use_tqdm=True, enabled=timing_enabled):
+                oracleb_bounds = _fit_bounds_for_divs(
+                    DebiasedCausalBoundEstimator,
+                    div_list,
+                    base_divs,
+                    X,
+                    A,
+                    Y,
+                    X_eval,
+                    dual_net_config,
+                    fit_config,
+                    seed=seed_tr,
+                    propensity_model=propensity_model,
+                    m_model=m_model,
+                    prop_cache=prop_cache,
+                    e_eval=e_true_eval,
+                    timing_label="oracleB",
                     timing=timing_enabled,
                     timing_detail=timing_detail,
                     use_tqdm=True,
@@ -1141,6 +1185,7 @@ def main() -> None:
                     propensity_model=propensity_model,
                     m_model=m_model,
                     prop_cache=prop_cache,
+                    e_eval=None,
                     timing_label="naive",
                     timing=timing_enabled,
                     timing_detail=timing_detail,
@@ -1151,9 +1196,11 @@ def main() -> None:
                 for div in div_list:
                     Ld, Ud = deb_bounds[div]
                     Ln, Un = nai_bounds[div]
+                    Lob, Uob = oracleb_bounds[div]
 
                     valid_d = np.isfinite(Ld) & np.isfinite(Ud) & (Ud - Ld > 0)
                     valid_n = np.isfinite(Ln) & np.isfinite(Un) & (Un - Ln > 0)
+                    valid_ob = np.isfinite(Lob) & np.isfinite(Uob) & (Uob - Lob > 0)
                     cov_d = float(np.mean(valid_d & (theta_eval >= Ld) & (theta_eval <= Ud)))
                     cov_n = float(np.mean(valid_n & (theta_eval >= Ln) & (theta_eval <= Un)))
 
@@ -1166,6 +1213,11 @@ def main() -> None:
 
                     err_up_d = _rmse(Ud, U_oracle[div])
                     err_up_n = _rmse(Un, U_oracle[div])
+                    mask = valid_d & valid_ob
+                    err_up_d_oracleB_masked = (
+                        _rmse(Ud[mask], Uob[mask]) if int(np.sum(mask)) >= 2 else float("nan")
+                    )
+                    err_up_d_oracleB_unmasked = _rmse(Ud, Uob)
 
                     score_d_mean = _score_penalized_width(width_d_mean, cov_d, args.score_lambda, args.score_alpha)
                     score_d_median = _score_penalized_width(width_d_median, cov_d, args.score_lambda, args.score_alpha)
@@ -1181,8 +1233,11 @@ def main() -> None:
                             "rep": int(j),
                             "seed": int(seed_tr),
                             "propensity_rmse": prop_rmse,
+                            "propensity_rmse_true": prop_rmse_true,
                             "err_up_debiased": err_up_d,
                             "err_up_naive": err_up_n,
+                            "err_up_debiased_oracleB_masked": err_up_d_oracleB_masked,
+                            "err_up_debiased_oracleB_unmasked": err_up_d_oracleB_unmasked,
                             "coverage_debiased": cov_d,
                             "coverage_naive": cov_n,
                             "width_debiased": width_d,
@@ -1199,6 +1254,8 @@ def main() -> None:
                             "score_naive_median": score_n_median,
                             "valid_rate_debiased": float(np.mean(valid_d)),
                             "valid_rate_naive": float(np.mean(valid_n)),
+                            "valid_rate_oracleB": float(np.mean(valid_ob)),
+                            "valid_mask_rate_oracleB": float(np.mean(mask)),
                         }
                     )
     if n_timer is not None:
@@ -1214,8 +1271,11 @@ def main() -> None:
             for n in n_list:
                 rows = rows_by.get((div, int(n)), [])
                 prop = np.array([r["propensity_rmse"] for r in rows], dtype=float)
+                prop_true = np.array([r["propensity_rmse_true"] for r in rows], dtype=float)
                 err_d = np.array([r["err_up_debiased"] for r in rows], dtype=float)
                 err_n = np.array([r["err_up_naive"] for r in rows], dtype=float)
+                err_ob_masked = np.array([r["err_up_debiased_oracleB_masked"] for r in rows], dtype=float)
+                err_ob_unmasked = np.array([r["err_up_debiased_oracleB_unmasked"] for r in rows], dtype=float)
                 cov_d = np.array([r["coverage_debiased"] for r in rows], dtype=float)
                 cov_n = np.array([r["coverage_naive"] for r in rows], dtype=float)
                 if stat_within == "mean":
@@ -1230,6 +1290,8 @@ def main() -> None:
                     sco_n = np.array([r["score_naive_median"] for r in rows], dtype=float)
                 val_d = np.array([r["valid_rate_debiased"] for r in rows], dtype=float)
                 val_n = np.array([r["valid_rate_naive"] for r in rows], dtype=float)
+                val_ob = np.array([r["valid_rate_oracleB"] for r in rows], dtype=float)
+                mask_rate = np.array([r["valid_mask_rate_oracleB"] for r in rows], dtype=float)
 
                 summary_rows.append(
                     {
@@ -1238,12 +1300,25 @@ def main() -> None:
                         "propensity_rmse_center": _stat_reduce(prop, stat_over_reps),
                         "propensity_rmse_ci_low": _nan_quantile(prop, args.ci_alpha / 2),
                         "propensity_rmse_ci_high": _nan_quantile(prop, 1 - args.ci_alpha / 2),
+                        "propensity_rmse_true_center": _stat_reduce(prop_true, stat_over_reps),
+                        "propensity_rmse_true_ci_low": _nan_quantile(prop_true, args.ci_alpha / 2),
+                        "propensity_rmse_true_ci_high": _nan_quantile(prop_true, 1 - args.ci_alpha / 2),
                         "err_up_debiased_center": _stat_reduce(err_d, stat_over_reps),
                         "err_up_debiased_ci_low": _nan_quantile(err_d, args.ci_alpha / 2),
                         "err_up_debiased_ci_high": _nan_quantile(err_d, 1 - args.ci_alpha / 2),
                         "err_up_naive_center": _stat_reduce(err_n, stat_over_reps),
                         "err_up_naive_ci_low": _nan_quantile(err_n, args.ci_alpha / 2),
                         "err_up_naive_ci_high": _nan_quantile(err_n, 1 - args.ci_alpha / 2),
+                        "err_up_debiased_oracleB_masked_center": _stat_reduce(err_ob_masked, stat_over_reps),
+                        "err_up_debiased_oracleB_masked_ci_low": _nan_quantile(err_ob_masked, args.ci_alpha / 2),
+                        "err_up_debiased_oracleB_masked_ci_high": _nan_quantile(
+                            err_ob_masked, 1 - args.ci_alpha / 2
+                        ),
+                        "err_up_debiased_oracleB_unmasked_center": _stat_reduce(err_ob_unmasked, stat_over_reps),
+                        "err_up_debiased_oracleB_unmasked_ci_low": _nan_quantile(err_ob_unmasked, args.ci_alpha / 2),
+                        "err_up_debiased_oracleB_unmasked_ci_high": _nan_quantile(
+                            err_ob_unmasked, 1 - args.ci_alpha / 2
+                        ),
                         "coverage_debiased_center": _stat_reduce(cov_d, stat_over_reps),
                         "coverage_debiased_ci_low": _nan_quantile(cov_d, args.ci_alpha / 2),
                         "coverage_debiased_ci_high": _nan_quantile(cov_d, 1 - args.ci_alpha / 2),
@@ -1268,6 +1343,12 @@ def main() -> None:
                         "valid_rate_naive_center": _stat_reduce(val_n, stat_over_reps),
                         "valid_rate_naive_ci_low": _nan_quantile(val_n, args.ci_alpha / 2),
                         "valid_rate_naive_ci_high": _nan_quantile(val_n, 1 - args.ci_alpha / 2),
+                        "valid_rate_oracleB_center": _stat_reduce(val_ob, stat_over_reps),
+                        "valid_rate_oracleB_ci_low": _nan_quantile(val_ob, args.ci_alpha / 2),
+                        "valid_rate_oracleB_ci_high": _nan_quantile(val_ob, 1 - args.ci_alpha / 2),
+                        "valid_mask_rate_oracleB_center": _stat_reduce(mask_rate, stat_over_reps),
+                        "valid_mask_rate_oracleB_ci_low": _nan_quantile(mask_rate, args.ci_alpha / 2),
+                        "valid_mask_rate_oracleB_ci_high": _nan_quantile(mask_rate, 1 - args.ci_alpha / 2),
                         "m": int(args.m),
                         "d": int(args.d),
                         "n_eval": int(n_eval),
@@ -1295,11 +1376,33 @@ def main() -> None:
         for div in div_list:
             sub = [row for row in rows if row["divergence"] == div]
             xs = [row["n"] for row in sub]
-            ys = [row["propensity_rmse_center"] for row in sub]
-            lo = [row["propensity_rmse_ci_low"] for row in sub]
-            hi = [row["propensity_rmse_ci_high"] for row in sub]
-            yerr = [np.subtract(ys, lo), np.subtract(hi, ys)]
-            plt.errorbar(xs, ys, yerr=yerr, marker="o", linestyle="-", capsize=3, label=f"{div}")
+            ys_ref = [row["propensity_rmse_center"] for row in sub]
+            lo_ref = [row["propensity_rmse_ci_low"] for row in sub]
+            hi_ref = [row["propensity_rmse_ci_high"] for row in sub]
+            yerr_ref = [np.subtract(ys_ref, lo_ref), np.subtract(hi_ref, ys_ref)]
+            plt.errorbar(
+                xs,
+                ys_ref,
+                yerr=yerr_ref,
+                marker="o",
+                linestyle="-",
+                capsize=3,
+                label=f"{div} (vs TRUE propensity, ref)",
+            )
+
+            ys_true = [row["propensity_rmse_true_center"] for row in sub]
+            lo_true = [row["propensity_rmse_true_ci_low"] for row in sub]
+            hi_true = [row["propensity_rmse_true_ci_high"] for row in sub]
+            yerr_true = [np.subtract(ys_true, lo_true), np.subtract(hi_true, ys_true)]
+            plt.errorbar(
+                xs,
+                ys_true,
+                yerr=yerr_true,
+                marker="x",
+                linestyle="--",
+                capsize=3,
+                label=f"{div} (vs TRUE propensity, direct)",
+            )
 
         if rows:
             xs_ref = np.array(sorted({row["n"] for row in rows}), dtype=float)
@@ -1328,12 +1431,14 @@ def main() -> None:
             xs = [row["n"] for row in sub]
             yd = [row["err_up_debiased_center"] for row in sub]
             yn = [row["err_up_naive_center"] for row in sub]
+            ydb = [row["err_up_debiased_oracleB_masked_center"] for row in sub]
             lo_d = [row["err_up_debiased_ci_low"] for row in sub]
             hi_d = [row["err_up_debiased_ci_high"] for row in sub]
             lo_n = [row["err_up_naive_ci_low"] for row in sub]
             hi_n = [row["err_up_naive_ci_high"] for row in sub]
             plt.errorbar(xs, yd, yerr=[np.subtract(yd, lo_d), np.subtract(hi_d, yd)], marker="o", linestyle="-", capsize=3, label=f"{div} debiased")
             plt.errorbar(xs, yn, yerr=[np.subtract(yn, lo_n), np.subtract(hi_n, yn)], marker="o", linestyle="--", capsize=3, label=f"{div} naive")
+            plt.plot(xs, ydb, marker="x", linestyle=":", label=f"{div} debiased (Oracle-B masked)")
         plt.xlabel("Sample size n")
         plt.ylabel("Target RMSE (upper bound)")
         plt.title(f"Target error vs n (struct={args.structural_type}, eval={args.eval_mode})")
@@ -1394,22 +1499,27 @@ def main() -> None:
             pd.DataFrame(replicate_rows).to_csv(rep_path, index=False)
         except Exception:
             header = (
-                "divergence,n,rep,seed,propensity_rmse,err_up_debiased,err_up_naive,coverage_debiased,coverage_naive,"
+                "divergence,n,rep,seed,propensity_rmse,propensity_rmse_true,err_up_debiased,err_up_naive,"
+                "err_up_debiased_oracleB_masked,err_up_debiased_oracleB_unmasked,"
+                "coverage_debiased,coverage_naive,"
                 "width_debiased,width_debiased_mean,width_debiased_median,width_naive,width_naive_mean,width_naive_median,"
                 "score_debiased,score_debiased_mean,score_debiased_median,score_naive,score_naive_mean,score_naive_median,"
-                "valid_rate_debiased,valid_rate_naive"
+                "valid_rate_debiased,valid_rate_naive,valid_rate_oracleB,valid_mask_rate_oracleB"
             )
             with open(rep_path, "w") as f:
                 f.write(header + "\n")
                 for row in replicate_rows:
                     f.write(
-                        f"{row['divergence']},{row['n']},{row['rep']},{row['seed']},{row['propensity_rmse']},"
-                        f"{row['err_up_debiased']},{row['err_up_naive']},{row['coverage_debiased']},{row['coverage_naive']},"
+                        f"{row['divergence']},{row['n']},{row['rep']},{row['seed']},{row['propensity_rmse']},{row['propensity_rmse_true']},"
+                        f"{row['err_up_debiased']},{row['err_up_naive']},"
+                        f"{row['err_up_debiased_oracleB_masked']},{row['err_up_debiased_oracleB_unmasked']},"
+                        f"{row['coverage_debiased']},{row['coverage_naive']},"
                         f"{row['width_debiased']},{row['width_debiased_mean']},{row['width_debiased_median']},"
                         f"{row['width_naive']},{row['width_naive_mean']},{row['width_naive_median']},"
                         f"{row['score_debiased']},{row['score_debiased_mean']},{row['score_debiased_median']},"
                         f"{row['score_naive']},{row['score_naive_mean']},{row['score_naive_median']},"
-                        f"{row['valid_rate_debiased']},{row['valid_rate_naive']}\n"
+                        f"{row['valid_rate_debiased']},{row['valid_rate_naive']},"
+                        f"{row['valid_rate_oracleB']},{row['valid_mask_rate_oracleB']}\n"
                     )
 
         summary_path = name_with_suffix(f"{summary_base}_{suffix}" if suffix else summary_base, "csv")
@@ -1420,8 +1530,11 @@ def main() -> None:
         except Exception:
             header = (
                 "divergence,n,propensity_rmse_center,propensity_rmse_ci_low,propensity_rmse_ci_high,"
+                "propensity_rmse_true_center,propensity_rmse_true_ci_low,propensity_rmse_true_ci_high,"
                 "err_up_debiased_center,err_up_debiased_ci_low,err_up_debiased_ci_high,"
                 "err_up_naive_center,err_up_naive_ci_low,err_up_naive_ci_high,"
+                "err_up_debiased_oracleB_masked_center,err_up_debiased_oracleB_masked_ci_low,err_up_debiased_oracleB_masked_ci_high,"
+                "err_up_debiased_oracleB_unmasked_center,err_up_debiased_oracleB_unmasked_ci_low,err_up_debiased_oracleB_unmasked_ci_high,"
                 "coverage_debiased_center,coverage_debiased_ci_low,coverage_debiased_ci_high,"
                 "coverage_naive_center,coverage_naive_ci_low,coverage_naive_ci_high,"
                 "width_debiased_center,width_debiased_ci_low,width_debiased_ci_high,"
@@ -1430,6 +1543,8 @@ def main() -> None:
                 "score_naive_center,score_naive_ci_low,score_naive_ci_high,"
                 "valid_rate_debiased_center,valid_rate_debiased_ci_low,valid_rate_debiased_ci_high,"
                 "valid_rate_naive_center,valid_rate_naive_ci_low,valid_rate_naive_ci_high,"
+                "valid_rate_oracleB_center,valid_rate_oracleB_ci_low,valid_rate_oracleB_ci_high,"
+                "valid_mask_rate_oracleB_center,valid_mask_rate_oracleB_ci_low,valid_mask_rate_oracleB_ci_high,"
                 "m,d,n_eval,structural_type,eval_mode,width_stat,stat_over_reps,score_lambda,score_alpha,ci_alpha"
             )
             with open(summary_path, "w") as f:
@@ -1438,8 +1553,11 @@ def main() -> None:
                     f.write(
                         f"{row['divergence']},{row['n']},{row['propensity_rmse_center']},"
                         f"{row['propensity_rmse_ci_low']},{row['propensity_rmse_ci_high']},"
+                        f"{row['propensity_rmse_true_center']},{row['propensity_rmse_true_ci_low']},{row['propensity_rmse_true_ci_high']},"
                         f"{row['err_up_debiased_center']},{row['err_up_debiased_ci_low']},{row['err_up_debiased_ci_high']},"
                         f"{row['err_up_naive_center']},{row['err_up_naive_ci_low']},{row['err_up_naive_ci_high']},"
+                        f"{row['err_up_debiased_oracleB_masked_center']},{row['err_up_debiased_oracleB_masked_ci_low']},{row['err_up_debiased_oracleB_masked_ci_high']},"
+                        f"{row['err_up_debiased_oracleB_unmasked_center']},{row['err_up_debiased_oracleB_unmasked_ci_low']},{row['err_up_debiased_oracleB_unmasked_ci_high']},"
                         f"{row['coverage_debiased_center']},{row['coverage_debiased_ci_low']},{row['coverage_debiased_ci_high']},"
                         f"{row['coverage_naive_center']},{row['coverage_naive_ci_low']},{row['coverage_naive_ci_high']},"
                         f"{row['width_debiased_center']},{row['width_debiased_ci_low']},{row['width_debiased_ci_high']},"
@@ -1448,6 +1566,8 @@ def main() -> None:
                         f"{row['score_naive_center']},{row['score_naive_ci_low']},{row['score_naive_ci_high']},"
                         f"{row['valid_rate_debiased_center']},{row['valid_rate_debiased_ci_low']},{row['valid_rate_debiased_ci_high']},"
                         f"{row['valid_rate_naive_center']},{row['valid_rate_naive_ci_low']},{row['valid_rate_naive_ci_high']},"
+                        f"{row['valid_rate_oracleB_center']},{row['valid_rate_oracleB_ci_low']},{row['valid_rate_oracleB_ci_high']},"
+                        f"{row['valid_mask_rate_oracleB_center']},{row['valid_mask_rate_oracleB_ci_low']},{row['valid_mask_rate_oracleB_ci_high']},"
                         f"{row['m']},{row['d']},{row['n_eval']},{row['structural_type']},{row['eval_mode']},"
                         f"{row['width_stat']},{row['stat_over_reps']},{row['score_lambda']},{row['score_alpha']},{row['ci_alpha']}\n"
                     )
