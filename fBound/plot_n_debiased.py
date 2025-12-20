@@ -519,10 +519,12 @@ class _NoisyPropensityModel:
         proba = self.base_model.predict_proba(X)
         if proba.ndim != 2 or proba.shape[1] < 2:
             raise ValueError(f"predict_proba must return shape (n,2+). Got {proba.shape}")
-        classes = np.asarray(self.classes_)
         col = 1
-        if 1 in classes:
-            col = int(np.where(classes == 1)[0][0])
+        classes = getattr(self.base_model, "classes_", None)
+        if classes is not None:
+            classes = np.asarray(classes)
+            if 1 in classes:
+                col = int(np.where(classes == 1)[0][0])
         p1 = proba[:, col]
         if self.noise_std != 0.0 or self.noise_mean != 0.0:
             noise = self.rng.normal(loc=self.noise_mean, scale=self.noise_std, size=p1.shape)
@@ -530,6 +532,7 @@ class _NoisyPropensityModel:
         else:
             p1 = np.clip(p1, self.eps, 1.0 - self.eps)
 
+        classes = np.asarray(self.classes_)
         if 1 in classes and 0 in classes:
             idx1 = int(np.where(classes == 1)[0][0])
             idx0 = int(np.where(classes == 0)[0][0])
