@@ -1049,9 +1049,13 @@ def main() -> None:
 
     def _build_summary(stat_within: str, stat_over_reps: str) -> List[Dict[str, Any]]:
         summary_rows: List[Dict[str, Any]] = []
+        rows_by: Dict[Tuple[str, int], List[Dict[str, Any]]] = {}
+        for row in replicate_rows:
+            key = (row["divergence"], row["n"])
+            rows_by.setdefault(key, []).append(row)
         for div in div_list:
             for n in n_list:
-                rows = [r for r in replicate_rows if r["divergence"] == div and r["n"] == n]
+                rows = rows_by.get((div, int(n)), [])
                 prop = np.array([r["propensity_rmse"] for r in rows], dtype=float)
                 err_d = np.array([r["err_up_debiased"] for r in rows], dtype=float)
                 err_n = np.array([r["err_up_naive"] for r in rows], dtype=float)
