@@ -639,16 +639,20 @@ def _fit_bounds_for_divs(
                 )
                 base_outputs[dname] = (L_div, U_div)
 
+    lower_base = None
+    upper_base = None
     for div in div_list:
         if div in base_outputs:
             L, U = base_outputs[div]
         elif div == "combined":
-            lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
-            upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
+            if lower_base is None:
+                lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
+                upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
             L, U = combined_cwise_intersection(lower_base, upper_base, c=3)
         elif div == "cluster":
-            lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
-            upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
+            if lower_base is None:
+                lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
+                upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
             L, U = cluster_per_sample_fast1d(lower_base, upper_base, k_candidates=(2, 3, 4), penalty_singleton=0.2)
         else:
             L, U, _ = fit_two_pass_do1_cached(
