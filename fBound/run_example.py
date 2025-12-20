@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 import warnings
 
 # Thread knobs kept off by default; flip to True if you hit BLAS/OpenMP issues on macOS.
@@ -53,6 +54,83 @@ from manski import empirical_extrema_manski_bounds
 # Prefer cached estimator (propensity cache reuse). Fall back to baseline if unavailable.
 from causal_bound import DebiasedCausalBoundEstimator, prefit_propensity_cache
 _HAS_PROP_CACHE = True
+
+
+# -------------------------
+# Lightweight progress/timing utilities
+# -------------------------
+_STEP_STACK: list[dict[str, object]] = []
+
+
+def _now_str() -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _log(msg: str, use_tqdm: bool = False) -> None:
+    print(msg, flush=True)
+
+
+class StepTimer:
+    def __init__(self, name: str, use_tqdm: bool, enabled: bool = True) -> None:
+        self.name = name
+        self.use_tqdm = use_tqdm
+        self.enabled = enabled
+
+    def __enter__(self) -> "StepTimer":
+        if not self.enabled:
+            return self
+        entry = {
+            "name": self.name,
+            "start_wall": time.perf_counter(),
+            "start_cpu": time.process_time(),
+            "use_tqdm": self.use_tqdm,
+        }
+        _STEP_STACK.append(entry)
+        _log(f"[PROGRESS] START {self.name}", self.use_tqdm)
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        if not self.enabled:
+            return False
+        if not _STEP_STACK:
+            return False
+        entry = _STEP_STACK[-1]
+        if entry.get("name") != self.name:
+            return False
+        if exc_type is None:
+            wall = time.perf_counter() - float(entry["start_wall"])
+            cpu = time.process_time() - float(entry["start_cpu"])
+            _log(f"[PROGRESS] END {self.name} | wall={wall:.3f}s cpu={cpu:.3f}s", self.use_tqdm)
+            _STEP_STACK.pop()
+        return False
+
+
+def _log_active_step_error(use_tqdm: bool = False) -> None:
+    if not _STEP_STACK:
+        _log("[PROGRESS] ERROR during unknown step", use_tqdm)
+        return
+    entry = _STEP_STACK[-1]
+    wall = time.perf_counter() - float(entry["start_wall"])
+    cpu = time.process_time() - float(entry["start_cpu"])
+    _log(
+        f"[PROGRESS] ERROR during {entry['name']} | wall={wall:.3f}s cpu={cpu:.3f}s",
+        bool(entry["use_tqdm"]),
+    )
+    _STEP_STACK.clear()
+
+
+def _timing_enabled_from_argv(default: bool = True) -> bool:
+    if "--no-timing" in sys.argv:
+        return False
+    if "--timing" in sys.argv:
+        return True
+    return default
+
+
+def _timing_detail_from_argv(default: bool = False) -> bool:
+    if "--timing_detail" in sys.argv or "--timing-detail" in sys.argv:
+        return True
+    return default
 
 
 # -------------------------
@@ -485,36 +563,48 @@ def fit_bounds_with_masks_fast(
     propensity_model: str,
     m_model: str,
     propensity_cache: dict | None,
+    timing: bool = False,
+    timing_detail: bool = False,
 ) -> dict:
     """
     Fit upper and lower bounds for a single divergence and return bounds + g* validity masks.
     """
-    est_upper = DebiasedCausalBoundEstimator(
-        divergence=div_name,
-        phi=phi_identity,
-        propensity_model=propensity_model,
-        m_model=m_model,
-        dual_net_config=dual_net_config,
-        fit_config=fit_config,
-        seed=seed,
-    )
-    est_upper = _fit_with_optional_prop_cache(est_upper, X, A, Y, propensity_cache=propensity_cache)
-    upper = est_upper.predict_bound(a=1, X=X).astype(np.float32)
-    mask_upper = gstar_valid_mask_per_sample(est_upper, X, A, Y)
+    with StepTimer(
+        f"fit {div_name} upper (+phi)",
+        use_tqdm=False,
+        enabled=timing and timing_detail,
+    ):
+        est_upper = DebiasedCausalBoundEstimator(
+            divergence=div_name,
+            phi=phi_identity,
+            propensity_model=propensity_model,
+            m_model=m_model,
+            dual_net_config=dual_net_config,
+            fit_config=fit_config,
+            seed=seed,
+        )
+        est_upper = _fit_with_optional_prop_cache(est_upper, X, A, Y, propensity_cache=propensity_cache)
+        upper = est_upper.predict_bound(a=1, X=X).astype(np.float32)
+        mask_upper = gstar_valid_mask_per_sample(est_upper, X, A, Y)
 
-    est_lower = DebiasedCausalBoundEstimator(
-        divergence=div_name,
-        phi=phi_neg,
-        propensity_model=propensity_model,
-        m_model=m_model,
-        dual_net_config=dual_net_config,
-        fit_config=fit_config,
-        seed=seed,
-    )
-    est_lower = _fit_with_optional_prop_cache(est_lower, X, A, Y, propensity_cache=propensity_cache)
-    upper_neg = est_lower.predict_bound(a=1, X=X).astype(np.float32)
-    lower = (-upper_neg).astype(np.float32)
-    mask_lower = gstar_valid_mask_per_sample(est_lower, X, A, Y)
+    with StepTimer(
+        f"fit {div_name} lower (-phi)",
+        use_tqdm=False,
+        enabled=timing and timing_detail,
+    ):
+        est_lower = DebiasedCausalBoundEstimator(
+            divergence=div_name,
+            phi=phi_neg,
+            propensity_model=propensity_model,
+            m_model=m_model,
+            dual_net_config=dual_net_config,
+            fit_config=fit_config,
+            seed=seed,
+        )
+        est_lower = _fit_with_optional_prop_cache(est_lower, X, A, Y, propensity_cache=propensity_cache)
+        upper_neg = est_lower.predict_bound(a=1, X=X).astype(np.float32)
+        lower = (-upper_neg).astype(np.float32)
+        mask_lower = gstar_valid_mask_per_sample(est_lower, X, A, Y)
 
     return {
         "upper": upper,
@@ -523,393 +613,417 @@ def fit_bounds_with_masks_fast(
         "mask_lower": mask_lower,
     }
 
-if __name__ == "__main__":
-    # Keep defaults identical to the original run_example.py
-    seed = 190602
-    n = 10000
-    d = 10
-    div = "KL"  # KL, TV, Hellinger, Chi2, JS, combined, cluster
+def main() -> None:
+    timing_enabled = _timing_enabled_from_argv(default=True)
+    timing_detail = _timing_detail_from_argv(default=False)
 
-    data = generate_data(n=n, d=d, seed=seed, structural_type="cyclic2")
-    keep_cols = None  # choose feature subset; set to None to use all
-    full_X = data["X"]
-    X = full_X[:, keep_cols] if keep_cols is not None else full_X
-    A = data["A"]
-    Y = data["Y"]
+    with StepTimer("configure experiment", use_tqdm=False, enabled=timing_enabled):
+        # Keep defaults identical to the original run_example.py
+        seed = 190602
+        n = 10000
+        d = 10
+        div = "KL"  # KL, TV, Hellinger, Chi2, JS, combined, cluster
+        structural_type = "cyclic2"
 
-    if keep_cols is None:
-        GroundTruth = data["GroundTruth"]
-    else:
-        truth_fn = data["GroundTruth"]
+        dual_net_config = {
+            "hidden_sizes": (64, 64),
+            "activation": "relu",
+            "dropout": 0.0,
+            "h_clip": 20.0,
+            "device": "cpu",
+        }
 
-        def GroundTruth(a: int, X_query: np.ndarray) -> np.ndarray:
-            Xq = np.asarray(X_query, dtype=np.float32)
-            if Xq.shape[0] != full_X.shape[0]:
-                raise ValueError(f"GroundTruth expects n={full_X.shape[0]} rows; got {Xq.shape[0]}.")
-            return truth_fn(a, full_X)
+        # Core estimator models (propensity + pseudo-outcome regressor).
+        propensity_model = "xgboost"
+        m_model = "xgboost"
+        # Manski uses simpler, fast models to keep compute cheap and lightweight.
+        manski_propensity_model = "logistic"
+        manski_outcome_model = "random_forest"
 
-    dual_net_config = {
-        "hidden_sizes": (64, 64),
-        "activation": "relu",
-        "dropout": 0.0,
-        "h_clip": 20.0,
-        "device": "cpu",
-    }
+        fit_config = {
+            "n_folds": 3,
+            "num_epochs": 200,
+            "batch_size": 256,
+            "lr": 5e-4,
+            "weight_decay": 1e-4,
+            "max_grad_norm": 10.0,
+            "eps_propensity": 1e-3,
+            "deterministic_torch": True,
+            "train_m_on_fold": True,
+            "propensity_config": {
+                "n_estimators": 300,
+                "max_depth": 10,
+                "learning_rate": 0.005,
+                "subsample": 0.8,
+                "colsample_bytree": 0.8,
+                "reg_lambda": 1.0,
+                "min_child_weight": 1.0,
+                "objective": "binary:logistic",
+                "eval_metric": "logloss",
+                "n_jobs": -1,
+                "verbosity": 0,
+            },
+            "m_config": {
+                "n_estimators": 400,
+                "max_depth": 10,
+                "learning_rate": 0.005,
+                "subsample": 0.8,
+                "colsample_bytree": 0.8,
+                "reg_lambda": 1.0,
+                "min_child_weight": 1.0,
+                "objective": "reg:squarederror",
+                "eval_metric": "rmse",
+                "n_jobs": -1,
+                "verbosity": 0,
+            },
+            "verbose": False,
+            "log_every": 10,
+        }
 
-    # Core estimator models (propensity + pseudo-outcome regressor).
-    propensity_model = "xgboost"
-    m_model = "xgboost"
-    # Manski uses simpler, fast models to keep compute cheap and lightweight.
-    manski_propensity_model = "logistic"
-    manski_outcome_model = "random_forest"
+        manski_propensity_config = {
+            "C": 1.0,
+            "max_iter": 2000,
+            "penalty": "l2",
+            "solver": "lbfgs",
+            "n_jobs": 1,
+        }
+        manski_outcome_config = {
+            "n_estimators": 200,
+            "max_depth": None,
+            "min_samples_leaf": 5,
+            "min_samples_split": 10,
+            "n_jobs": 1,
+        }
 
-    fit_config = {
-        "n_folds": 3,
-        "num_epochs": 200,
-        "batch_size": 256,
-        "lr": 5e-4,
-        "weight_decay": 1e-4,
-        "max_grad_norm": 10.0,
-        "eps_propensity": 1e-3,
-        "deterministic_torch": True,
-        "train_m_on_fold": True,
-        "propensity_config": {
-            "n_estimators": 300,
-            "max_depth": 10,
-            "learning_rate": 0.005,
-            "subsample": 0.8,
-            "colsample_bytree": 0.8,
-            "reg_lambda": 1.0,
-            "min_child_weight": 1.0,
-            "objective": "binary:logistic",
-            "eval_metric": "logloss",
-            "n_jobs": -1,
-            "verbosity": 0,
-        },
-        "m_config": {
-            "n_estimators": 400,
-            "max_depth": 10,
-            "learning_rate": 0.005,
-            "subsample": 0.8,
-            "colsample_bytree": 0.8,
-            "reg_lambda": 1.0,
-            "min_child_weight": 1.0,
-            "objective": "reg:squarederror",
-            "eval_metric": "rmse",
-            "n_jobs": -1,
-            "verbosity": 0,
-        },
-        "verbose": False,
-        "log_every": 10,
-    }
+    with StepTimer("data generation", use_tqdm=False, enabled=timing_enabled):
+        data = generate_data(n=n, d=d, seed=seed, structural_type=structural_type)
+        keep_cols = None  # choose feature subset; set to None to use all
+        full_X = data["X"]
+        X = full_X[:, keep_cols] if keep_cols is not None else full_X
+        A = data["A"]
+        Y = data["Y"]
 
-    manski_propensity_config = {
-        "C": 1.0,
-        "max_iter": 2000,
-        "penalty": "l2",
-        "solver": "lbfgs",
-        "n_jobs": 1,
-    }
-    manski_outcome_config = {
-        "n_estimators": 200,
-        "max_depth": None,
-        "min_samples_leaf": 5,
-        "min_samples_split": 10,
-        "n_jobs": 1,
-    }
+        if keep_cols is None:
+            GroundTruth = data["GroundTruth"]
+        else:
+            truth_fn = data["GroundTruth"]
 
-    # Prefit propensity cache (big speed win across divergences and phi/-phi).
-    propensity_cache = None
-    if _HAS_PROP_CACHE and prefit_propensity_cache is not None:
-        propensity_cache = prefit_propensity_cache(
-            X=X,
+            def GroundTruth(a: int, X_query: np.ndarray) -> np.ndarray:
+                Xq = np.asarray(X_query, dtype=np.float32)
+                if Xq.shape[0] != full_X.shape[0]:
+                    raise ValueError(f"GroundTruth expects n={full_X.shape[0]} rows; got {Xq.shape[0]}.")
+                return truth_fn(a, full_X)
+
+    with StepTimer("fit propensity cache", use_tqdm=False, enabled=timing_enabled):
+        # Prefit propensity cache (big speed win across divergences and phi/-phi).
+        propensity_cache = None
+        if _HAS_PROP_CACHE and prefit_propensity_cache is not None:
+            propensity_cache = prefit_propensity_cache(
+                X=X,
+                A=A,
+                propensity_model=propensity_model,
+                propensity_config=fit_config["propensity_config"],
+                n_folds=fit_config["n_folds"],
+                seed=seed,
+                eps_propensity=fit_config["eps_propensity"],
+            )
+            ehat1_oof = np.asarray(propensity_cache["e1_oof"], dtype=np.float32)
+        else:
+            ehat1_oof = None  # will be available only after fitting an estimator
+
+    with StepTimer("fit base divergence bounds", use_tqdm=False, enabled=timing_enabled):
+        # Fit base divergences once (and only once).
+        base_divs = ["KL", "TV", "Hellinger", "Chi2", "JS"]
+        truth_do1 = np.asarray(GroundTruth(1, X), dtype=np.float32).reshape(-1)
+
+        results: dict[str, object] = {
+            "i": np.arange(X.shape[0], dtype=int),
+            "truth_do1": truth_do1,
+        }
+
+        lower_stack = []
+        upper_stack = []
+
+        for div_name in base_divs:
+            with StepTimer(f"fit bounds div={div_name}", use_tqdm=False, enabled=timing_enabled):
+                stats = fit_bounds_with_masks_fast(
+                    div_name=div_name,
+                    X=X,
+                    A=A,
+                    Y=Y,
+                    dual_net_config=dual_net_config,
+                    fit_config=fit_config,
+                    seed=seed,
+                    propensity_model=propensity_model,
+                    m_model=m_model,
+                    propensity_cache=propensity_cache,
+                    timing=timing_enabled,
+                    timing_detail=timing_detail,
+                )
+            results[f"lower_{div_name}"] = stats["lower"]
+            results[f"valid_gstar_lower_{div_name}"] = stats["mask_lower"]
+            results[f"upper_{div_name}"] = stats["upper"]
+            results[f"valid_gstar_upper_{div_name}"] = stats["mask_upper"]
+
+            lower_stack.append(stats["lower"])
+            upper_stack.append(stats["upper"])
+
+            # Get ehat1_oof if we couldn't prefit it.
+            if ehat1_oof is None:
+                try:
+                    # Pick from the last fitted estimator implicitly via cache absence:
+                    # safer to not rely on internals here.
+                    pass
+                except Exception:
+                    pass
+
+        lower_mat = np.vstack([np.asarray(x, dtype=np.float32) for x in lower_stack])
+        upper_mat = np.vstack([np.asarray(x, dtype=np.float32) for x in upper_stack])
+
+    with StepTimer("aggregate combined bounds", use_tqdm=False, enabled=timing_enabled):
+        # Combined robust interval (intersection across divergences).
+        lower_combined, upper_combined = combined_cwise_intersection(lower_mat, upper_mat, c=3)
+        results["lower_combined"] = lower_combined.astype(np.float32)
+        results["upper_combined"] = upper_combined.astype(np.float32)
+
+    with StepTimer("compute Manski bounds", use_tqdm=False, enabled=timing_enabled):
+        # Empirical-extrema Manski heuristic.
+        manski_res = empirical_extrema_manski_bounds(
+            Y=Y,
             A=A,
-            propensity_model=propensity_model,
-            propensity_config=fit_config["propensity_config"],
-            n_folds=fit_config["n_folds"],
+            X=X,
+            a=1,
+            propensity_model=manski_propensity_model,
+            propensity_config=manski_propensity_config,
+            outcome_model=manski_outcome_model,
+            outcome_config=manski_outcome_config,
             seed=seed,
             eps_propensity=fit_config["eps_propensity"],
         )
-        ehat1_oof = np.asarray(propensity_cache["e1_oof"], dtype=np.float32)
-    else:
-        ehat1_oof = None  # will be available only after fitting an estimator
+        manski_lower = np.asarray(manski_res["lower"], dtype=np.float32)
+        manski_upper = np.asarray(manski_res["upper"], dtype=np.float32)
+        results["lower_Manski"] = manski_lower
+        results["upper_Manski"] = manski_upper
 
-    # Fit base divergences once (and only once).
-    base_divs = ["KL", "TV", "Hellinger", "Chi2", "JS"]
-    truth_do1 = np.asarray(GroundTruth(1, X), dtype=np.float32).reshape(-1)
+    with StepTimer("aggregate cluster bounds", use_tqdm=False, enabled=timing_enabled):
+        # Cluster-based aggregator over divergence bounds (auto-k on {2,3,4}) using fast 1D partition search.
+        cluster_lower = np.empty(X.shape[0], dtype=np.float32)
+        cluster_upper = np.empty(X.shape[0], dtype=np.float32)
+        cluster_kL = np.empty(X.shape[0], dtype=int)
+        cluster_kU = np.empty(X.shape[0], dtype=int)
+        penalty_singleton = 0.2
+        k_candidates = (2, 3, 4)
 
-    results: dict[str, object] = {
-        "i": np.arange(X.shape[0], dtype=int),
-        "truth_do1": truth_do1,
-    }
+        cluster_cache: dict[
+            tuple[tuple[float, ...], tuple[float, ...], tuple[int, ...], float],
+            tuple[float, float, int, int],
+        ] = {}
+        for i in range(X.shape[0]):
+            lowers_key = tuple(float(v) for v in lower_mat[:, i])
+            uppers_key = tuple(float(v) for v in upper_mat[:, i])
+            cache_key = (lowers_key, uppers_key, k_candidates, penalty_singleton)
+            cached = cluster_cache.get(cache_key)
+            if cached is None:
+                lc, uc, kL, kU = cluster_bounds_fast(
+                    lowers=list(lowers_key),
+                    uppers=list(uppers_key),
+                    k_candidates=k_candidates,
+                    penalty_singleton=penalty_singleton,
+                )
+                cluster_cache[cache_key] = (lc, uc, kL, kU)
+            else:
+                lc, uc, kL, kU = cached
+            cluster_lower[i] = np.float32(lc)
+            cluster_upper[i] = np.float32(uc)
+            cluster_kL[i] = int(kL)
+            cluster_kU[i] = int(kU)
 
-    lower_stack = []
-    upper_stack = []
+        results["lower_cluster"] = cluster_lower
+        results["upper_cluster"] = cluster_upper
+        results["k_cluster_lower"] = cluster_kL
+        results["k_cluster_upper"] = cluster_kU
 
-    for div_name in base_divs:
-        stats = fit_bounds_with_masks_fast(
-            div_name=div_name,
-            X=X,
-            A=A,
-            Y=Y,
-            dual_net_config=dual_net_config,
-            fit_config=fit_config,
-            seed=seed,
-            propensity_model=propensity_model,
-            m_model=m_model,
-            propensity_cache=propensity_cache,
-        )
-        results[f"lower_{div_name}"] = stats["lower"]
-        results[f"valid_gstar_lower_{div_name}"] = stats["mask_lower"]
-        results[f"upper_{div_name}"] = stats["upper"]
-        results[f"valid_gstar_upper_{div_name}"] = stats["mask_upper"]
+    with StepTimer("compute metrics", use_tqdm=False, enabled=timing_enabled):
+        # Basic sanity checks (mirror the original checks, but on computed outputs).
+        for key in ["lower_combined", "upper_combined", "lower_cluster", "upper_cluster", "lower_Manski", "upper_Manski"]:
+            arr = np.asarray(results[key], dtype=np.float32)
+            assert np.isfinite(arr).all(), f"{key} has non-finite values"
 
-        lower_stack.append(stats["lower"])
-        upper_stack.append(stats["upper"])
+        # If we have ehat1_oof from cache, validate the clipping range.
+        if ehat1_oof is not None:
+            assert (
+                (ehat1_oof >= fit_config["eps_propensity"] - 1e-8)
+                & (ehat1_oof <= 1 - fit_config["eps_propensity"] + 1e-8)
+            ).all(), "propensity outside clipping range"
 
-        # Get ehat1_oof if we couldn't prefit it.
-        if ehat1_oof is None:
-            try:
-                # Pick from the last fitted estimator implicitly via cache absence:
-                # safer to not rely on internals here.
-                pass
-            except Exception:
-                pass
-
-    lower_mat = np.vstack([np.asarray(x, dtype=np.float32) for x in lower_stack])
-    upper_mat = np.vstack([np.asarray(x, dtype=np.float32) for x in upper_stack])
-
-    # Combined robust interval (intersection across divergences).
-    lower_combined, upper_combined = combined_cwise_intersection(lower_mat, upper_mat, c=3)
-    results["lower_combined"] = lower_combined.astype(np.float32)
-    results["upper_combined"] = upper_combined.astype(np.float32)
-
-    # Empirical-extrema Manski heuristic.
-    manski_res = empirical_extrema_manski_bounds(
-        Y=Y,
-        A=A,
-        X=X,
-        a=1,
-        propensity_model=manski_propensity_model,
-        propensity_config=manski_propensity_config,
-        outcome_model=manski_outcome_model,
-        outcome_config=manski_outcome_config,
-        seed=seed,
-        eps_propensity=fit_config["eps_propensity"],
-    )
-    manski_lower = np.asarray(manski_res["lower"], dtype=np.float32)
-    manski_upper = np.asarray(manski_res["upper"], dtype=np.float32)
-    results["lower_Manski"] = manski_lower
-    results["upper_Manski"] = manski_upper
-
-    # Cluster-based aggregator over divergence bounds (auto-k on {2,3,4}) using fast 1D partition search.
-    cluster_lower = np.empty(X.shape[0], dtype=np.float32)
-    cluster_upper = np.empty(X.shape[0], dtype=np.float32)
-    cluster_kL = np.empty(X.shape[0], dtype=int)
-    cluster_kU = np.empty(X.shape[0], dtype=int)
-    penalty_singleton = 0.2
-    k_candidates = (2, 3, 4)
-
-    cluster_cache: dict[
-        tuple[tuple[float, ...], tuple[float, ...], tuple[int, ...], float],
-        tuple[float, float, int, int],
-    ] = {}
-    for i in range(X.shape[0]):
-        lowers_key = tuple(float(v) for v in lower_mat[:, i])
-        uppers_key = tuple(float(v) for v in upper_mat[:, i])
-        cache_key = (lowers_key, uppers_key, k_candidates, penalty_singleton)
-        cached = cluster_cache.get(cache_key)
-        if cached is None:
-            lc, uc, kL, kU = cluster_bounds_fast(
-                lowers=list(lowers_key),
-                uppers=list(uppers_key),
-                k_candidates=k_candidates,
-                penalty_singleton=penalty_singleton,
-            )
-            cluster_cache[cache_key] = (lc, uc, kL, kU)
+        # Print width/coverage for the user-selected divergence
+        div_key = div.strip()
+        if div_key in base_divs:
+            lo = np.asarray(results[f"lower_{div_key}"], dtype=np.float32)
+            up = np.asarray(results[f"upper_{div_key}"], dtype=np.float32)
+        elif div_key.lower() == "combined":
+            lo = np.asarray(results["lower_combined"], dtype=np.float32)
+            up = np.asarray(results["upper_combined"], dtype=np.float32)
+        elif div_key.lower() == "cluster":
+            lo = np.asarray(results["lower_cluster"], dtype=np.float32)
+            up = np.asarray(results["upper_cluster"], dtype=np.float32)
         else:
-            lc, uc, kL, kU = cached
-        cluster_lower[i] = np.float32(lc)
-        cluster_upper[i] = np.float32(uc)
-        cluster_kL[i] = int(kL)
-        cluster_kU[i] = int(kU)
+            raise ValueError(f"Unknown div='{div}'. Choose one of {base_divs + ['combined','cluster']}.")
 
-    results["lower_cluster"] = cluster_lower
-    results["upper_cluster"] = cluster_upper
-    results["k_cluster_lower"] = cluster_kL
-    results["k_cluster_upper"] = cluster_kU
+        width = float(np.mean(up - lo))
+        cover = float(np.mean((truth_do1 >= lo) & (truth_do1 <= up)))
+        print(f"divergence={div_key:>8} | mean width={width:.4f} | coverage={cover:.3f}")
 
-    # Basic sanity checks (mirror the original checks, but on computed outputs).
-    for key in ["lower_combined", "upper_combined", "lower_cluster", "upper_cluster", "lower_Manski", "upper_Manski"]:
-        arr = np.asarray(results[key], dtype=np.float32)
-        assert np.isfinite(arr).all(), f"{key} has non-finite values"
+        # Build detailed table for conjecture: bounds + g* validity per divergence.
+        ordered_cols = [
+            "i",
+            "truth_do1",
+            "lower_KL", "valid_gstar_lower_KL",
+            "lower_TV", "valid_gstar_lower_TV",
+            "lower_Hellinger", "valid_gstar_lower_Hellinger",
+            "lower_Chi2", "valid_gstar_lower_Chi2",
+            "lower_JS", "valid_gstar_lower_JS",
+            "upper_KL", "valid_gstar_upper_KL",
+            "upper_TV", "valid_gstar_upper_TV",
+            "upper_Hellinger", "valid_gstar_upper_Hellinger",
+            "upper_Chi2", "valid_gstar_upper_Chi2",
+            "upper_JS", "valid_gstar_upper_JS",
+            "lower_combined",
+            "upper_combined",
+            "lower_Manski",
+            "upper_Manski",
+            "lower_cluster",
+            "upper_cluster",
+        ]
 
-    # If we have ehat1_oof from cache, validate the clipping range.
-    if ehat1_oof is not None:
-        assert (
-            (ehat1_oof >= fit_config["eps_propensity"] - 1e-8)
-            & (ehat1_oof <= 1 - fit_config["eps_propensity"] + 1e-8)
-        ).all(), "propensity outside clipping range"
+        table_df = pd.DataFrame({col: results[col] for col in ordered_cols})
 
-    # Print width/coverage for the user-selected divergence
-    div_key = div.strip()
-    if div_key in base_divs:
-        lo = np.asarray(results[f"lower_{div_key}"], dtype=np.float32)
-        up = np.asarray(results[f"upper_{div_key}"], dtype=np.float32)
-    elif div_key.lower() == "combined":
-        lo = np.asarray(results["lower_combined"], dtype=np.float32)
-        up = np.asarray(results["upper_combined"], dtype=np.float32)
-    elif div_key.lower() == "cluster":
-        lo = np.asarray(results["lower_cluster"], dtype=np.float32)
-        up = np.asarray(results["upper_cluster"], dtype=np.float32)
-    else:
-        raise ValueError(f"Unknown div='{div}'. Choose one of {base_divs + ['combined','cluster']}.")
+        # Identify samples where any divergence had an invalid g* on lower or upper.
+        any_invalid = np.zeros(X.shape[0], dtype=bool)
+        for dv in base_divs:
+            any_invalid |= (~table_df[f"valid_gstar_lower_{dv}"]) | (~table_df[f"valid_gstar_upper_{dv}"])
+        table_df["any_invalid_gstar"] = any_invalid
 
-    width = float(np.mean(up - lo))
-    cover = float(np.mean((truth_do1 >= lo) & (truth_do1 <= up)))
-    print(f"divergence={div_key:>8} | mean width={width:.4f} | coverage={cover:.3f}")
-
-    # Build detailed table for conjecture: bounds + g* validity per divergence.
-    ordered_cols = [
-        "i",
-        "truth_do1",
-        "lower_KL", "valid_gstar_lower_KL",
-        "lower_TV", "valid_gstar_lower_TV",
-        "lower_Hellinger", "valid_gstar_lower_Hellinger",
-        "lower_Chi2", "valid_gstar_lower_Chi2",
-        "lower_JS", "valid_gstar_lower_JS",
-        "upper_KL", "valid_gstar_upper_KL",
-        "upper_TV", "valid_gstar_upper_TV",
-        "upper_Hellinger", "valid_gstar_upper_Hellinger",
-        "upper_Chi2", "valid_gstar_upper_Chi2",
-        "upper_JS", "valid_gstar_upper_JS",
-        "lower_combined",
-        "upper_combined",
-        "lower_Manski",
-        "upper_Manski",
-        "lower_cluster",
-        "upper_cluster",
-    ]
-
-    table_df = pd.DataFrame({col: results[col] for col in ordered_cols})
-
-    # Identify samples where any divergence had an invalid g* on lower or upper.
-    any_invalid = np.zeros(X.shape[0], dtype=bool)
-    for dv in base_divs:
-        any_invalid |= (~table_df[f"valid_gstar_lower_{dv}"]) | (~table_df[f"valid_gstar_upper_{dv}"])
-    table_df["any_invalid_gstar"] = any_invalid
-
-    # Per-divergence coverage flags: truth within [lower, upper].
-    for dv in base_divs:
-        table_df[f"coverage_{dv}"] = (
-            (table_df[f"lower_{dv}"] <= table_df["truth_do1"])
-            & (table_df["truth_do1"] <= table_df[f"upper_{dv}"])
+        # Per-divergence coverage flags: truth within [lower, upper].
+        for dv in base_divs:
+            table_df[f"coverage_{dv}"] = (
+                (table_df[f"lower_{dv}"] <= table_df["truth_do1"])
+                & (table_df["truth_do1"] <= table_df[f"upper_{dv}"])
+            )
+        table_df["coverage_combined"] = (
+            (table_df["lower_combined"] <= table_df["truth_do1"])
+            & (table_df["truth_do1"] <= table_df["upper_combined"])
         )
-    table_df["coverage_combined"] = (
-        (table_df["lower_combined"] <= table_df["truth_do1"])
-        & (table_df["truth_do1"] <= table_df["upper_combined"])
-    )
-    table_df["coverage_Manski"] = (
-        (table_df["lower_Manski"] <= table_df["truth_do1"])
-        & (table_df["truth_do1"] <= table_df["upper_Manski"])
-    )
-    table_df["coverage_cluster"] = (
-        (table_df["lower_cluster"] <= table_df["truth_do1"])
-        & (table_df["truth_do1"] <= table_df["upper_cluster"])
-    )
+        table_df["coverage_Manski"] = (
+            (table_df["lower_Manski"] <= table_df["truth_do1"])
+            & (table_df["truth_do1"] <= table_df["upper_Manski"])
+        )
+        table_df["coverage_cluster"] = (
+            (table_df["lower_cluster"] <= table_df["truth_do1"])
+            & (table_df["truth_do1"] <= table_df["upper_cluster"])
+        )
 
-    summary_rows = []
-    for dv in base_divs:
-        widths = table_df[f"upper_{dv}"] - table_df[f"lower_{dv}"]
+        summary_rows = []
+        for dv in base_divs:
+            widths = table_df[f"upper_{dv}"] - table_df[f"lower_{dv}"]
+            summary_rows.append(
+                {
+                    "divergence": dv,
+                    "coverage_rate": float(table_df[f"coverage_{dv}"].mean()),
+                    "mean_width": float(widths.mean()),
+                }
+            )
+        widths_combined = table_df["upper_combined"] - table_df["lower_combined"]
         summary_rows.append(
             {
-                "divergence": dv,
-                "coverage_rate": float(table_df[f"coverage_{dv}"].mean()),
-                "mean_width": float(widths.mean()),
+                "divergence": "combined",
+                "coverage_rate": float(table_df["coverage_combined"].mean()),
+                "mean_width": float(widths_combined.mean()),
             }
         )
-    widths_combined = table_df["upper_combined"] - table_df["lower_combined"]
-    summary_rows.append(
-        {
-            "divergence": "combined",
-            "coverage_rate": float(table_df["coverage_combined"].mean()),
-            "mean_width": float(widths_combined.mean()),
-        }
-    )
-    widths_manski = table_df["upper_Manski"] - table_df["lower_Manski"]
-    summary_rows.append(
-        {
-            "divergence": "Manski_empirical",
-            "coverage_rate": float(table_df["coverage_Manski"].mean()),
-            "mean_width": float(widths_manski.mean()),
-        }
-    )
-    widths_cluster = table_df["upper_cluster"] - table_df["lower_cluster"]
-    summary_rows.append(
-        {
-            "divergence": "cluster",
-            "coverage_rate": float(table_df["coverage_cluster"].mean()),
-            "mean_width": float(widths_cluster.mean()),
-        }
-    )
-    summary_df = pd.DataFrame(summary_rows)
+        widths_manski = table_df["upper_Manski"] - table_df["lower_Manski"]
+        summary_rows.append(
+            {
+                "divergence": "Manski_empirical",
+                "coverage_rate": float(table_df["coverage_Manski"].mean()),
+                "mean_width": float(widths_manski.mean()),
+            }
+        )
+        widths_cluster = table_df["upper_cluster"] - table_df["lower_cluster"]
+        summary_rows.append(
+            {
+                "divergence": "cluster",
+                "coverage_rate": float(table_df["coverage_cluster"].mean()),
+                "mean_width": float(widths_cluster.mean()),
+            }
+        )
+        summary_df = pd.DataFrame(summary_rows)
 
-    # Reorder columns for clarity before saving (same as original)
-    final_columns = [
-        "i",
-        "truth_do1",
-        "lower_KL", "valid_gstar_lower_KL",
-        "lower_TV", "valid_gstar_lower_TV",
-        "lower_Hellinger", "valid_gstar_lower_Hellinger",
-        "lower_Chi2", "valid_gstar_lower_Chi2",
-        "lower_JS", "valid_gstar_lower_JS",
-        "upper_KL", "valid_gstar_upper_KL",
-        "upper_TV", "valid_gstar_upper_TV",
-        "upper_Hellinger", "valid_gstar_upper_Hellinger",
-        "upper_Chi2", "valid_gstar_upper_Chi2",
-        "upper_JS", "valid_gstar_upper_JS",
-        "lower_combined", "upper_combined",
-        "lower_Manski", "upper_Manski",
-        "lower_cluster", "upper_cluster",
-        "coverage_KL", "coverage_TV", "coverage_Hellinger", "coverage_Chi2", "coverage_JS",
-        "coverage_combined", "coverage_Manski", "coverage_cluster",
-        "any_invalid_gstar",
-    ]
-    table_df = table_df[final_columns]
+        # Reorder columns for clarity before saving (same as original)
+        final_columns = [
+            "i",
+            "truth_do1",
+            "lower_KL", "valid_gstar_lower_KL",
+            "lower_TV", "valid_gstar_lower_TV",
+            "lower_Hellinger", "valid_gstar_lower_Hellinger",
+            "lower_Chi2", "valid_gstar_lower_Chi2",
+            "lower_JS", "valid_gstar_lower_JS",
+            "upper_KL", "valid_gstar_upper_KL",
+            "upper_TV", "valid_gstar_upper_TV",
+            "upper_Hellinger", "valid_gstar_upper_Hellinger",
+            "upper_Chi2", "valid_gstar_upper_Chi2",
+            "upper_JS", "valid_gstar_upper_JS",
+            "lower_combined", "upper_combined",
+            "lower_Manski", "upper_Manski",
+            "lower_cluster", "upper_cluster",
+            "coverage_KL", "coverage_TV", "coverage_Hellinger", "coverage_Chi2", "coverage_JS",
+            "coverage_combined", "coverage_Manski", "coverage_cluster",
+            "any_invalid_gstar",
+        ]
+        table_df = table_df[final_columns]
 
-    invalid_cols = [
-        "i",
-        "truth_do1",
-        "lower_KL", "upper_KL",
-        "lower_TV", "upper_TV",
-        "lower_Hellinger", "upper_Hellinger",
-        "lower_Chi2", "upper_Chi2",
-        "lower_JS", "upper_JS",
-        "lower_cluster", "upper_cluster",
-        "lower_combined", "upper_combined",
-        "lower_Manski", "upper_Manski",
-        "valid_gstar_lower_KL", "valid_gstar_upper_KL",
-        "valid_gstar_lower_TV", "valid_gstar_upper_TV",
-        "valid_gstar_lower_Hellinger", "valid_gstar_upper_Hellinger",
-        "valid_gstar_lower_Chi2", "valid_gstar_upper_Chi2",
-        "valid_gstar_lower_JS", "valid_gstar_upper_JS",
-        "any_invalid_gstar",
-    ]
+        invalid_cols = [
+            "i",
+            "truth_do1",
+            "lower_KL", "upper_KL",
+            "lower_TV", "upper_TV",
+            "lower_Hellinger", "upper_Hellinger",
+            "lower_Chi2", "upper_Chi2",
+            "lower_JS", "upper_JS",
+            "lower_cluster", "upper_cluster",
+            "lower_combined", "upper_combined",
+            "lower_Manski", "upper_Manski",
+            "valid_gstar_lower_KL", "valid_gstar_upper_KL",
+            "valid_gstar_lower_TV", "valid_gstar_upper_TV",
+            "valid_gstar_lower_Hellinger", "valid_gstar_upper_Hellinger",
+            "valid_gstar_lower_Chi2", "valid_gstar_upper_Chi2",
+            "valid_gstar_lower_JS", "valid_gstar_upper_JS",
+            "any_invalid_gstar",
+        ]
 
-    os.makedirs("experiments", exist_ok=True)
+    with StepTimer("save outputs", use_tqdm=False, enabled=timing_enabled):
+        os.makedirs("experiments", exist_ok=True)
 
-    invalid_df = table_df.loc[table_df["any_invalid_gstar"], invalid_cols].reset_index(drop=True)
-    invalid_df.to_csv("experiments/run_example_gstar_bounds_any_invalid.csv", index=False)
-    print(f"Found {len(invalid_df)} samples with any invalid g*; saved to run_example_gstar_bounds_any_invalid.csv")
-    if len(invalid_df) > 0:
-        print(invalid_df.head())
+        invalid_df = table_df.loc[table_df["any_invalid_gstar"], invalid_cols].reset_index(drop=True)
+        invalid_df.to_csv("experiments/run_example_gstar_bounds_any_invalid.csv", index=False)
+        print(f"Found {len(invalid_df)} samples with any invalid g*; saved to run_example_gstar_bounds_any_invalid.csv")
+        if len(invalid_df) > 0:
+            print(invalid_df.head())
 
-    table_df.to_csv("experiments/run_example_gstar_bounds_table.csv", index=False)
-    print("Saved g* validity table to experiments/run_example_gstar_bounds_table.csv")
-    print(table_df.head())
+        table_df.to_csv("experiments/run_example_gstar_bounds_table.csv", index=False)
+        print("Saved g* validity table to experiments/run_example_gstar_bounds_table.csv")
+        print(table_df.head())
 
-    summary_df.to_csv("experiments/run_example_gstar_bounds_summary.csv", index=False)
-    print("Coverage/width summary by divergence:")
-    print(summary_df)
-    
-    # print(table_df[["i","lower_cluster","truth_do1","upper_cluster","lower_combined","truth_do1","upper_combined"]])
+        summary_df.to_csv("experiments/run_example_gstar_bounds_summary.csv", index=False)
+        print("Coverage/width summary by divergence:")
+        print(summary_df)
+
+        # print(table_df[["i","lower_cluster","truth_do1","upper_cluster","lower_combined","truth_do1","upper_combined"]])
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:
+        _log_active_step_error(use_tqdm=False)
+        raise

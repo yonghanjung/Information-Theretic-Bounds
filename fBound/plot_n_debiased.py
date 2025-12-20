@@ -12,6 +12,8 @@ import inspect
 import json
 import os
 import pickle
+import sys
+import time
 import warnings
 from itertools import combinations
 from typing import Any, Dict, List, Optional, Tuple
@@ -28,6 +30,79 @@ except Exception:  # pragma: no cover
 from causal_bound import DebiasedCausalBoundEstimator, _concat_ax, _predict_proba_class1, prefit_propensity_cache
 from data_generating import generate_data
 
+
+# -------------------------
+# Lightweight progress/timing utilities
+# -------------------------
+_STEP_STACK: List[Dict[str, Any]] = []
+
+
+def _now_str() -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _log(msg: str, use_tqdm: bool) -> None:
+    if use_tqdm and hasattr(tqdm, "write"):
+        tqdm.write(msg)
+    else:
+        print(msg, flush=True)
+
+
+class StepTimer:
+    def __init__(self, name: str, use_tqdm: bool, enabled: bool = True) -> None:
+        self.name = name
+        self.use_tqdm = use_tqdm
+        self.enabled = enabled
+
+    def __enter__(self) -> "StepTimer":
+        if not self.enabled:
+            return self
+        entry = {
+            "name": self.name,
+            "start_wall": time.perf_counter(),
+            "start_cpu": time.process_time(),
+            "use_tqdm": self.use_tqdm,
+        }
+        _STEP_STACK.append(entry)
+        _log(f"[PROGRESS] START {self.name}", self.use_tqdm)
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        if not self.enabled:
+            return False
+        if not _STEP_STACK:
+            return False
+        entry = _STEP_STACK[-1]
+        if entry.get("name") != self.name:
+            return False
+        if exc_type is None:
+            wall = time.perf_counter() - float(entry["start_wall"])
+            cpu = time.process_time() - float(entry["start_cpu"])
+            _log(f"[PROGRESS] END {self.name} | wall={wall:.3f}s cpu={cpu:.3f}s", self.use_tqdm)
+            _STEP_STACK.pop()
+        return False
+
+
+def _log_active_step_error(use_tqdm: bool) -> None:
+    if not _STEP_STACK:
+        _log("[PROGRESS] ERROR during unknown step", use_tqdm)
+        return
+    entry = _STEP_STACK[-1]
+    wall = time.perf_counter() - float(entry["start_wall"])
+    cpu = time.process_time() - float(entry["start_cpu"])
+    _log(
+        f"[PROGRESS] ERROR during {entry['name']} | wall={wall:.3f}s cpu={cpu:.3f}s",
+        bool(entry["use_tqdm"]),
+    )
+    _STEP_STACK.clear()
+
+
+def _timing_enabled_from_argv(default: bool = True) -> bool:
+    if "--no-timing" in sys.argv:
+        return False
+    if "--timing" in sys.argv:
+        return True
+    return default
 
 # -------------------------
 # Phi definitions
@@ -615,16 +690,75 @@ def _fit_bounds_for_divs(
     m_model,
     prop_cache,
     progress_prefix: Optional[str] = None,
+    timing_label: Optional[str] = None,
+    timing: bool = False,
+    timing_detail: bool = False,
+    use_tqdm: bool = False,
 ):
     outputs = {}
     needs_base = any(div in {"combined", "cluster"} for div in div_list)
     base_outputs: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
+    label = timing_label or progress_prefix or ""
+    prefix = f"{label} " if label else ""
     if needs_base or any(dv in base_divs for dv in div_list):
         for dname in base_divs:
             if dname in div_list or needs_base:
-                L_div, U_div, _ = fit_two_pass_do1_cached(
+                with StepTimer(
+                    f"{prefix}fit {dname}".strip(),
+                    use_tqdm=use_tqdm,
+                    enabled=timing and timing_detail,
+                ):
+                    L_div, U_div, _ = fit_two_pass_do1_cached(
+                        EstimatorClass,
+                        dname,
+                        X,
+                        A,
+                        Y,
+                        X_eval,
+                        dual_net_config,
+                        fit_config,
+                        seed=seed,
+                        propensity_model=propensity_model,
+                        m_model=m_model,
+                        propensity_cache=prop_cache,
+                        progress_prefix=progress_prefix,
+                    )
+                base_outputs[dname] = (L_div, U_div)
+
+    lower_base = None
+    upper_base = None
+    for div in div_list:
+        if div in base_outputs:
+            L, U = base_outputs[div]
+        elif div == "combined":
+            with StepTimer(
+                f"{prefix}aggregate combined".strip(),
+                use_tqdm=use_tqdm,
+                enabled=timing and timing_detail,
+            ):
+                if lower_base is None:
+                    lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
+                    upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
+                L, U = combined_cwise_intersection(lower_base, upper_base, c=3)
+        elif div == "cluster":
+            with StepTimer(
+                f"{prefix}aggregate cluster".strip(),
+                use_tqdm=use_tqdm,
+                enabled=timing and timing_detail,
+            ):
+                if lower_base is None:
+                    lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
+                    upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
+                L, U = cluster_per_sample_fast1d(lower_base, upper_base, k_candidates=(2, 3, 4), penalty_singleton=0.2)
+        else:
+            with StepTimer(
+                f"{prefix}fit {div}".strip(),
+                use_tqdm=use_tqdm,
+                enabled=timing and timing_detail,
+            ):
+                L, U, _ = fit_two_pass_do1_cached(
                     EstimatorClass,
-                    dname,
+                    div,
                     X,
                     A,
                     Y,
@@ -637,39 +771,6 @@ def _fit_bounds_for_divs(
                     propensity_cache=prop_cache,
                     progress_prefix=progress_prefix,
                 )
-                base_outputs[dname] = (L_div, U_div)
-
-    lower_base = None
-    upper_base = None
-    for div in div_list:
-        if div in base_outputs:
-            L, U = base_outputs[div]
-        elif div == "combined":
-            if lower_base is None:
-                lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
-                upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
-            L, U = combined_cwise_intersection(lower_base, upper_base, c=3)
-        elif div == "cluster":
-            if lower_base is None:
-                lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
-                upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
-            L, U = cluster_per_sample_fast1d(lower_base, upper_base, k_candidates=(2, 3, 4), penalty_singleton=0.2)
-        else:
-            L, U, _ = fit_two_pass_do1_cached(
-                EstimatorClass,
-                div,
-                X,
-                A,
-                Y,
-                X_eval,
-                dual_net_config,
-                fit_config,
-                seed=seed,
-                propensity_model=propensity_model,
-                m_model=m_model,
-                propensity_cache=prop_cache,
-                progress_prefix=progress_prefix,
-            )
         outputs[div] = (L.astype(np.float32), U.astype(np.float32))
 
     return outputs
@@ -769,8 +870,34 @@ def main() -> None:
     # Slow propensity noise (optional)
     parser.add_argument("--propensity_noise", action="store_true", help="Add N(n^{-beta}, n^{-beta}) noise to propensity.")
     parser.add_argument("--propensity_noise_beta", type=float, default=0.25, help="Noise rate beta for n^{-beta}.")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--timing",
+        dest="timing",
+        action="store_true",
+        default=True,
+        help="Enable progress/timing logs.",
+    )
+    parser.add_argument(
+        "--no-timing",
+        dest="timing",
+        action="store_false",
+        help="Disable progress/timing logs.",
+    )
+    parser.add_argument(
+        "--timing_detail",
+        "--timing-detail",
+        action="store_true",
+        default=False,
+        help="Enable per-divergence timing logs.",
+    )
+    pre_timing = _timing_enabled_from_argv(default=True)
+    with StepTimer("parse args", use_tqdm=False, enabled=pre_timing):
+        args = parser.parse_args()
+    timing_enabled = bool(args.timing)
+    timing_detail = bool(args.timing_detail)
 
+    config_timer = StepTimer("configure experiment", use_tqdm=False, enabled=timing_enabled)
+    config_timer.__enter__()
     torch_threads = args.torch_threads if args.torch_threads > 0 else max(1, os.cpu_count() or 1)
     try:
         torch.set_num_threads(torch_threads)
@@ -862,190 +989,220 @@ def main() -> None:
     oracle_fit_config["propensity_config"] = oracle_prop_cfg
     oracle_fit_config["num_epochs"] = int(args.oracle_num_epochs)
     oracle_fit_config["batch_size"] = int(args.oracle_batch_size)
+    config_timer.__exit__(None, None, None)
 
     warn_state: Dict[str, bool] = {}
 
-    # Oracle bounds and propensity (near-truth)
-    oracle_seed = int(args.oracle_seed) if args.oracle_seed >= 0 else int(args.base_seed)
-    print("Oracle estimator is being computed...")
-    data_oracle = _call_generate_data_compat(
-        n=int(args.n_oracle),
-        d=args.d,
-        seed=oracle_seed,
-        structural_type=args.structural_type,
-        x_range=args.x_range,
-        noise_dist=args.noise_dist,
-        _warn_state=warn_state,
-    )
-    X_oracle = np.asarray(data_oracle["X"], dtype=np.float32)
-    A_oracle = np.asarray(data_oracle["A"], dtype=np.float32)
-    Y_oracle = np.asarray(data_oracle["Y"], dtype=np.float32)
+    with StepTimer("oracle setup", use_tqdm=False, enabled=timing_enabled):
+        # Oracle bounds and propensity (near-truth)
+        oracle_seed = int(args.oracle_seed) if args.oracle_seed >= 0 else int(args.base_seed)
+        print("Oracle estimator is being computed...")
+        data_oracle = _call_generate_data_compat(
+            n=int(args.n_oracle),
+            d=args.d,
+            seed=oracle_seed,
+            structural_type=args.structural_type,
+            x_range=args.x_range,
+            noise_dist=args.noise_dist,
+            _warn_state=warn_state,
+        )
+        X_oracle = np.asarray(data_oracle["X"], dtype=np.float32)
+        A_oracle = np.asarray(data_oracle["A"], dtype=np.float32)
+        Y_oracle = np.asarray(data_oracle["Y"], dtype=np.float32)
 
-    print("Fitting oracle propensity cache...")
-    prop_cache_oracle = prefit_propensity_cache(
-        X=X_oracle,
-        A=A_oracle,
-        propensity_model=propensity_model,
-        propensity_config=oracle_fit_config["propensity_config"],
-        n_folds=oracle_fit_config["n_folds"],
-        seed=oracle_seed,
-        eps_propensity=oracle_fit_config["eps_propensity"],
-    )
+        print("Fitting oracle propensity cache...")
+        prop_cache_oracle = prefit_propensity_cache(
+            X=X_oracle,
+            A=A_oracle,
+            propensity_model=propensity_model,
+            propensity_config=oracle_fit_config["propensity_config"],
+            n_folds=oracle_fit_config["n_folds"],
+            seed=oracle_seed,
+            eps_propensity=oracle_fit_config["eps_propensity"],
+        )
 
-    print(
-        "Fitting oracle bounds..."
-        f" (batch_size={oracle_fit_config['batch_size']}, num_epochs={oracle_fit_config['num_epochs']})"
-    )
-    oracle_bounds = _fit_bounds_for_divs(
-        DebiasedCausalBoundEstimator,
-        div_list,
-        base_divs,
-        X_oracle,
-        A_oracle,
-        Y_oracle,
-        X_eval,
-        dual_net_config,
-        oracle_fit_config,
-        seed=oracle_seed,
-        propensity_model=propensity_model,
-        m_model=m_model,
-        prop_cache=prop_cache_oracle,
-        progress_prefix="[oracle]",
-    )
-    U_oracle = {div: oracle_bounds[div][1] for div in div_list}
-    e_oracle = _predict_propensity_mean(prop_cache_oracle["models"], X_eval, oracle_fit_config["eps_propensity"])
-    print("Oracle estimator completed.")
+        print(
+            "Fitting oracle bounds..."
+            f" (batch_size={oracle_fit_config['batch_size']}, num_epochs={oracle_fit_config['num_epochs']})"
+        )
+        oracle_bounds = _fit_bounds_for_divs(
+            DebiasedCausalBoundEstimator,
+            div_list,
+            base_divs,
+            X_oracle,
+            A_oracle,
+            Y_oracle,
+            X_eval,
+            dual_net_config,
+            oracle_fit_config,
+            seed=oracle_seed,
+            propensity_model=propensity_model,
+            m_model=m_model,
+            prop_cache=prop_cache_oracle,
+            progress_prefix="[oracle]",
+            timing_label="oracle",
+            timing=timing_enabled,
+            timing_detail=timing_detail,
+            use_tqdm=False,
+        )
+        U_oracle = {div: oracle_bounds[div][1] for div in div_list}
+        e_oracle = _predict_propensity_mean(prop_cache_oracle["models"], X_eval, oracle_fit_config["eps_propensity"])
+        print("Oracle estimator completed.")
 
     replicate_rows: List[Dict[str, Any]] = []
     seeds_used: List[int] = []
 
     total_reps = len(n_list) * args.m
     print(f"Running {total_reps} replicate fits...")
+    n_timer = None
+    current_n = None
     for t in tqdm(range(total_reps), desc="replicates", leave=False):
         idx_n = t // args.m
         j = t % args.m
         n = n_list[idx_n]
+        if n != current_n:
+            if n_timer is not None:
+                n_timer.__exit__(None, None, None)
+            current_n = n
+            n_timer = StepTimer(f"n={n} loop", use_tqdm=True, enabled=timing_enabled)
+            n_timer.__enter__()
         seed_tr = int(args.base_seed + 100000 * idx_n + j)
         seeds_used.append(seed_tr)
-        data = _call_generate_data_compat(
-            n=n,
-            d=args.d,
-            seed=seed_tr,
-            structural_type=args.structural_type,
-            x_range=args.x_range,
-            noise_dist=args.noise_dist,
-            _warn_state=warn_state,
-        )
-        X = np.asarray(data["X"], dtype=np.float32)
-        A = np.asarray(data["A"], dtype=np.float32)
-        Y = np.asarray(data["Y"], dtype=np.float32)
-        theta_eval = np.asarray(data["GroundTruth"](1, X_eval), dtype=np.float32).reshape(-1)
+        with StepTimer(f"replicate n={n} rep={j}", use_tqdm=True, enabled=timing_enabled):
+            with StepTimer("data generation", use_tqdm=True, enabled=timing_enabled):
+                data = _call_generate_data_compat(
+                    n=n,
+                    d=args.d,
+                    seed=seed_tr,
+                    structural_type=args.structural_type,
+                    x_range=args.x_range,
+                    noise_dist=args.noise_dist,
+                    _warn_state=warn_state,
+                )
+                X = np.asarray(data["X"], dtype=np.float32)
+                A = np.asarray(data["A"], dtype=np.float32)
+                Y = np.asarray(data["Y"], dtype=np.float32)
+                theta_eval = np.asarray(data["GroundTruth"](1, X_eval), dtype=np.float32).reshape(-1)
 
-        prop_cache = prefit_propensity_cache(
-            X=X,
-            A=A,
-            propensity_model=propensity_model,
-            propensity_config=fit_config["propensity_config"],
-            n_folds=fit_config["n_folds"],
-            seed=seed_tr,
-            eps_propensity=fit_config["eps_propensity"],
-        )
-        prop_cache = _apply_propensity_noise(
-            prop_cache,
-            n=n,
-            eps=fit_config["eps_propensity"],
-            noise_beta=args.propensity_noise_beta,
-            enabled=args.propensity_noise,
-            seed=seed_tr,
-        )
+            with StepTimer("nuisance fits", use_tqdm=True, enabled=timing_enabled):
+                prop_cache = prefit_propensity_cache(
+                    X=X,
+                    A=A,
+                    propensity_model=propensity_model,
+                    propensity_config=fit_config["propensity_config"],
+                    n_folds=fit_config["n_folds"],
+                    seed=seed_tr,
+                    eps_propensity=fit_config["eps_propensity"],
+                )
+                prop_cache = _apply_propensity_noise(
+                    prop_cache,
+                    n=n,
+                    eps=fit_config["eps_propensity"],
+                    noise_beta=args.propensity_noise_beta,
+                    enabled=args.propensity_noise,
+                    seed=seed_tr,
+                )
 
-        e_hat = _predict_propensity_mean(prop_cache["models"], X_eval, fit_config["eps_propensity"])
-        prop_rmse = _rmse(e_hat, e_oracle)
+                e_hat = _predict_propensity_mean(prop_cache["models"], X_eval, fit_config["eps_propensity"])
+                prop_rmse = _rmse(e_hat, e_oracle)
 
-        deb_bounds = _fit_bounds_for_divs(
-            DebiasedCausalBoundEstimator,
-            div_list,
-            base_divs,
-            X,
-            A,
-            Y,
-            X_eval,
-            dual_net_config,
-            fit_config,
-            seed=seed_tr,
-            propensity_model=propensity_model,
-            m_model=m_model,
-            prop_cache=prop_cache,
-        )
-        nai_bounds = _fit_bounds_for_divs(
-            NaiveCausalBoundEstimator,
-            div_list,
-            base_divs,
-            X,
-            A,
-            Y,
-            X_eval,
-            dual_net_config,
-            fit_config,
-            seed=seed_tr,
-            propensity_model=propensity_model,
-            m_model=m_model,
-            prop_cache=prop_cache,
-        )
+            with StepTimer("debiased bounds", use_tqdm=True, enabled=timing_enabled):
+                deb_bounds = _fit_bounds_for_divs(
+                    DebiasedCausalBoundEstimator,
+                    div_list,
+                    base_divs,
+                    X,
+                    A,
+                    Y,
+                    X_eval,
+                    dual_net_config,
+                    fit_config,
+                    seed=seed_tr,
+                    propensity_model=propensity_model,
+                    m_model=m_model,
+                    prop_cache=prop_cache,
+                    timing_label="debiased",
+                    timing=timing_enabled,
+                    timing_detail=timing_detail,
+                    use_tqdm=True,
+                )
+            with StepTimer("naive bounds", use_tqdm=True, enabled=timing_enabled):
+                nai_bounds = _fit_bounds_for_divs(
+                    NaiveCausalBoundEstimator,
+                    div_list,
+                    base_divs,
+                    X,
+                    A,
+                    Y,
+                    X_eval,
+                    dual_net_config,
+                    fit_config,
+                    seed=seed_tr,
+                    propensity_model=propensity_model,
+                    m_model=m_model,
+                    prop_cache=prop_cache,
+                    timing_label="naive",
+                    timing=timing_enabled,
+                    timing_detail=timing_detail,
+                    use_tqdm=True,
+                )
 
-        for div in div_list:
-            Ld, Ud = deb_bounds[div]
-            Ln, Un = nai_bounds[div]
+            with StepTimer("metrics", use_tqdm=True, enabled=timing_enabled):
+                for div in div_list:
+                    Ld, Ud = deb_bounds[div]
+                    Ln, Un = nai_bounds[div]
 
-            valid_d = np.isfinite(Ld) & np.isfinite(Ud) & (Ud - Ld > 0)
-            valid_n = np.isfinite(Ln) & np.isfinite(Un) & (Un - Ln > 0)
-            cov_d = float(np.mean(valid_d & (theta_eval >= Ld) & (theta_eval <= Ud)))
-            cov_n = float(np.mean(valid_n & (theta_eval >= Ln) & (theta_eval <= Un)))
+                    valid_d = np.isfinite(Ld) & np.isfinite(Ud) & (Ud - Ld > 0)
+                    valid_n = np.isfinite(Ln) & np.isfinite(Un) & (Un - Ln > 0)
+                    cov_d = float(np.mean(valid_d & (theta_eval >= Ld) & (theta_eval <= Ud)))
+                    cov_n = float(np.mean(valid_n & (theta_eval >= Ln) & (theta_eval <= Un)))
 
-            width_d_mean = float(np.nanmean((Ud - Ld)[valid_d])) if np.any(valid_d) else float("nan")
-            width_d_median = float(np.nanmedian((Ud - Ld)[valid_d])) if np.any(valid_d) else float("nan")
-            width_n_mean = float(np.nanmean((Un - Ln)[valid_n])) if np.any(valid_n) else float("nan")
-            width_n_median = float(np.nanmedian((Un - Ln)[valid_n])) if np.any(valid_n) else float("nan")
-            width_d = width_d_mean if args.width_stat == "mean" else width_d_median
-            width_n = width_n_mean if args.width_stat == "mean" else width_n_median
+                    width_d_mean = float(np.nanmean((Ud - Ld)[valid_d])) if np.any(valid_d) else float("nan")
+                    width_d_median = float(np.nanmedian((Ud - Ld)[valid_d])) if np.any(valid_d) else float("nan")
+                    width_n_mean = float(np.nanmean((Un - Ln)[valid_n])) if np.any(valid_n) else float("nan")
+                    width_n_median = float(np.nanmedian((Un - Ln)[valid_n])) if np.any(valid_n) else float("nan")
+                    width_d = width_d_mean if args.width_stat == "mean" else width_d_median
+                    width_n = width_n_mean if args.width_stat == "mean" else width_n_median
 
-            err_up_d = _rmse(Ud, U_oracle[div])
-            err_up_n = _rmse(Un, U_oracle[div])
+                    err_up_d = _rmse(Ud, U_oracle[div])
+                    err_up_n = _rmse(Un, U_oracle[div])
 
-            score_d_mean = _score_penalized_width(width_d_mean, cov_d, args.score_lambda, args.score_alpha)
-            score_d_median = _score_penalized_width(width_d_median, cov_d, args.score_lambda, args.score_alpha)
-            score_n_mean = _score_penalized_width(width_n_mean, cov_n, args.score_lambda, args.score_alpha)
-            score_n_median = _score_penalized_width(width_n_median, cov_n, args.score_lambda, args.score_alpha)
-            score_d = score_d_mean if args.width_stat == "mean" else score_d_median
-            score_n = score_n_mean if args.width_stat == "mean" else score_n_median
+                    score_d_mean = _score_penalized_width(width_d_mean, cov_d, args.score_lambda, args.score_alpha)
+                    score_d_median = _score_penalized_width(width_d_median, cov_d, args.score_lambda, args.score_alpha)
+                    score_n_mean = _score_penalized_width(width_n_mean, cov_n, args.score_lambda, args.score_alpha)
+                    score_n_median = _score_penalized_width(width_n_median, cov_n, args.score_lambda, args.score_alpha)
+                    score_d = score_d_mean if args.width_stat == "mean" else score_d_median
+                    score_n = score_n_mean if args.width_stat == "mean" else score_n_median
 
-            replicate_rows.append(
-                {
-                    "divergence": div,
-                    "n": int(n),
-                    "rep": int(j),
-                    "seed": int(seed_tr),
-                    "propensity_rmse": prop_rmse,
-                    "err_up_debiased": err_up_d,
-                    "err_up_naive": err_up_n,
-                    "coverage_debiased": cov_d,
-                    "coverage_naive": cov_n,
-                    "width_debiased": width_d,
-                    "width_debiased_mean": width_d_mean,
-                    "width_debiased_median": width_d_median,
-                    "width_naive": width_n,
-                    "width_naive_mean": width_n_mean,
-                    "width_naive_median": width_n_median,
-                    "score_debiased": score_d,
-                    "score_debiased_mean": score_d_mean,
-                    "score_debiased_median": score_d_median,
-                    "score_naive": score_n,
-                    "score_naive_mean": score_n_mean,
-                    "score_naive_median": score_n_median,
-                    "valid_rate_debiased": float(np.mean(valid_d)),
-                    "valid_rate_naive": float(np.mean(valid_n)),
-                }
-            )
+                    replicate_rows.append(
+                        {
+                            "divergence": div,
+                            "n": int(n),
+                            "rep": int(j),
+                            "seed": int(seed_tr),
+                            "propensity_rmse": prop_rmse,
+                            "err_up_debiased": err_up_d,
+                            "err_up_naive": err_up_n,
+                            "coverage_debiased": cov_d,
+                            "coverage_naive": cov_n,
+                            "width_debiased": width_d,
+                            "width_debiased_mean": width_d_mean,
+                            "width_debiased_median": width_d_median,
+                            "width_naive": width_n,
+                            "width_naive_mean": width_n_mean,
+                            "width_naive_median": width_n_median,
+                            "score_debiased": score_d,
+                            "score_debiased_mean": score_d_mean,
+                            "score_debiased_median": score_d_median,
+                            "score_naive": score_n,
+                            "score_naive_mean": score_n_mean,
+                            "score_naive_median": score_n_median,
+                            "valid_rate_debiased": float(np.mean(valid_d)),
+                            "valid_rate_naive": float(np.mean(valid_n)),
+                        }
+                    )
+    if n_timer is not None:
+        n_timer.__exit__(None, None, None)
 
     def _build_summary(stat_within: str, stat_over_reps: str) -> List[Dict[str, Any]]:
         summary_rows: List[Dict[str, Any]] = []
@@ -1219,6 +1376,12 @@ def main() -> None:
     score_base = "plot_n_debiased_score"
 
     for stat_within, stat_over_reps in stat_pairs:
+        step_timer = StepTimer(
+            f"summary/plots {stat_within}/{stat_over_reps}",
+            use_tqdm=False,
+            enabled=timing_enabled,
+        )
+        step_timer.__enter__()
         suffix = _stat_suffix(stat_within, stat_over_reps) if len(stat_pairs) > 1 else ""
         key = suffix or "default"
         summary_rows = _build_summary(stat_within, stat_over_reps)
@@ -1329,54 +1492,60 @@ def main() -> None:
 
         if stat_within == args.width_stat and stat_over_reps == args.stat_over_reps:
             default_files = run_files
+        step_timer.__exit__(None, None, None)
 
     if not default_files and runs:
         default_files = runs[0]["files"]
 
-    artifacts = {
-        "args": vars(args),
-        "fit_config": fit_config,
-        "dual_net_config": dual_net_config,
-        "divergences": div_list,
-        "seeds": seeds_used,
-        "X_eval": X_eval,
-        "oracle_U": U_oracle,
-        "oracle_e": e_oracle,
-        "oracle_seed": oracle_seed,
-        "replicate_rows": replicate_rows,
-        "summary_rows_by_stat": summary_rows_by_stat,
-        "stat_pairs": stat_pairs,
-        "timestamp": stamp,
-    }
-    artifacts_path = name_with_suffix("plot_n_debiased_artifacts", "pkl")
-    with open(artifacts_path, "wb") as f:
-        pickle.dump(artifacts, f, protocol=pickle.HIGHEST_PROTOCOL)
+    with StepTimer("save artifacts", use_tqdm=False, enabled=timing_enabled):
+        artifacts = {
+            "args": vars(args),
+            "fit_config": fit_config,
+            "dual_net_config": dual_net_config,
+            "divergences": div_list,
+            "seeds": seeds_used,
+            "X_eval": X_eval,
+            "oracle_U": U_oracle,
+            "oracle_e": e_oracle,
+            "oracle_seed": oracle_seed,
+            "replicate_rows": replicate_rows,
+            "summary_rows_by_stat": summary_rows_by_stat,
+            "stat_pairs": stat_pairs,
+            "timestamp": stamp,
+        }
+        artifacts_path = name_with_suffix("plot_n_debiased_artifacts", "pkl")
+        with open(artifacts_path, "wb") as f:
+            pickle.dump(artifacts, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    summary_json = {
-        "timestamp": stamp or datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
-        "files": dict(default_files, artifacts_pkl=artifacts_path),
-        "args": vars(args),
-        "divergences": div_list,
-        "structural_type": args.structural_type,
-        "eval_mode": args.eval_mode,
-        "n_eval": n_eval,
-        "oracle_seed": oracle_seed,
-    }
-    if len(runs) > 1:
-        summary_json["runs"] = runs
-    summary_json_path = name_with_suffix("plot_n_debiased_summary", "json")
-    with open(summary_json_path, "w") as f:
-        json.dump(summary_json, f, indent=2)
+        summary_json = {
+            "timestamp": stamp or datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
+            "files": dict(default_files, artifacts_pkl=artifacts_path),
+            "args": vars(args),
+            "divergences": div_list,
+            "structural_type": args.structural_type,
+            "eval_mode": args.eval_mode,
+            "n_eval": n_eval,
+            "oracle_seed": oracle_seed,
+        }
+        if len(runs) > 1:
+            summary_json["runs"] = runs
+        summary_json_path = name_with_suffix("plot_n_debiased_summary", "json")
+        with open(summary_json_path, "w") as f:
+            json.dump(summary_json, f, indent=2)
 
-    log_line = (
-        f"[plot_n_debiased] ts={summary_json['timestamp']} divs={','.join(div_list)} struct={args.structural_type} "
-        f"eval={args.eval_mode} n_eval={n_eval} n_list={n_list} m={args.m} "
-        f"stat_grid={args.stat_grid} files={summary_json['files']}"
-    )
-    log_path = name_with_suffix("plot_n_debiased_log", "txt")
-    with open(log_path, "a") as f:
-        f.write(log_line + "\n")
+        log_line = (
+            f"[plot_n_debiased] ts={summary_json['timestamp']} divs={','.join(div_list)} struct={args.structural_type} "
+            f"eval={args.eval_mode} n_eval={n_eval} n_list={n_list} m={args.m} "
+            f"stat_grid={args.stat_grid} files={summary_json['files']}"
+        )
+        log_path = name_with_suffix("plot_n_debiased_log", "txt")
+        with open(log_path, "a") as f:
+            f.write(log_line + "\n")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        _log_active_step_error(use_tqdm=False)
+        raise

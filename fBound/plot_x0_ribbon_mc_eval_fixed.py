@@ -11,6 +11,8 @@ import datetime
 import json
 import os
 import pickle
+import sys
+import time
 import warnings
 from itertools import combinations
 
@@ -28,6 +30,79 @@ from data_generating import generate_data
 
 from scipy.interpolate import UnivariateSpline
 from statsmodels.nonparametric.smoothers_lowess import lowess
+
+# -------------------------
+# Lightweight progress/timing utilities
+# -------------------------
+_STEP_STACK: list[dict[str, object]] = []
+
+
+def _now_str() -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _log(msg: str, use_tqdm: bool) -> None:
+    if use_tqdm and hasattr(tqdm, "write"):
+        tqdm.write(msg)
+    else:
+        print(msg, flush=True)
+
+
+class StepTimer:
+    def __init__(self, name: str, use_tqdm: bool, enabled: bool = True) -> None:
+        self.name = name
+        self.use_tqdm = use_tqdm
+        self.enabled = enabled
+
+    def __enter__(self) -> "StepTimer":
+        if not self.enabled:
+            return self
+        entry = {
+            "name": self.name,
+            "start_wall": time.perf_counter(),
+            "start_cpu": time.process_time(),
+            "use_tqdm": self.use_tqdm,
+        }
+        _STEP_STACK.append(entry)
+        _log(f"[PROGRESS] START {self.name}", self.use_tqdm)
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        if not self.enabled:
+            return False
+        if not _STEP_STACK:
+            return False
+        entry = _STEP_STACK[-1]
+        if entry.get("name") != self.name:
+            return False
+        if exc_type is None:
+            wall = time.perf_counter() - float(entry["start_wall"])
+            cpu = time.process_time() - float(entry["start_cpu"])
+            _log(f"[PROGRESS] END {self.name} | wall={wall:.3f}s cpu={cpu:.3f}s", self.use_tqdm)
+            _STEP_STACK.pop()
+        return False
+
+
+def _log_active_step_error(use_tqdm: bool) -> None:
+    if not _STEP_STACK:
+        _log("[PROGRESS] ERROR during unknown step", use_tqdm)
+        return
+    entry = _STEP_STACK[-1]
+    wall = time.perf_counter() - float(entry["start_wall"])
+    cpu = time.process_time() - float(entry["start_cpu"])
+    _log(
+        f"[PROGRESS] ERROR during {entry['name']} | wall={wall:.3f}s cpu={cpu:.3f}s",
+        bool(entry["use_tqdm"]),
+    )
+    _STEP_STACK.clear()
+
+
+def _timing_enabled_from_argv(default: bool = True) -> bool:
+    if "--no-timing" in sys.argv:
+        return False
+    if "--timing" in sys.argv:
+        return True
+    return default
 
 # -------------------------
 # Phi definitions
@@ -436,7 +511,8 @@ def fit_two_pass_do1_cached(
     return L, U
 
 
-if __name__ == "__main__":
+
+def main() -> None:
     warnings.filterwarnings("ignore")
     parser = argparse.ArgumentParser(description="MC ribbon plot of causal bounds vs X0 (fixed evaluation grid).")
     parser.add_argument("--m", type=int, default=20, help="number of MC replicates")
@@ -505,8 +581,34 @@ if __name__ == "__main__":
     parser.add_argument("--lowess_frac", type=float, default=0.2, help="LOWESS frac parameter.")
     parser.add_argument("--lowess_it", type=int, default=1, help="LOWESS iterations.")
     parser.add_argument("--plot_raw_points", action="store_true", help="Overlay raw (unsmoothed) points on the plot.")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--timing",
+        dest="timing",
+        action="store_true",
+        default=True,
+        help="Enable progress/timing logs.",
+    )
+    parser.add_argument(
+        "--no-timing",
+        dest="timing",
+        action="store_false",
+        help="Disable progress/timing logs.",
+    )
+    parser.add_argument(
+        "--timing_detail",
+        "--timing-detail",
+        action="store_true",
+        default=False,
+        help="Enable per-divergence timing logs.",
+    )
+    pre_timing = _timing_enabled_from_argv(default=True)
+    with StepTimer("parse args", use_tqdm=False, enabled=pre_timing):
+        args = parser.parse_args()
+    timing_enabled = bool(args.timing)
+    timing_detail = bool(args.timing_detail)
 
+    config_timer = StepTimer("configure experiment", use_tqdm=False, enabled=timing_enabled)
+    config_timer.__enter__()
     torch_threads = args.torch_threads if args.torch_threads > 0 else max(1, os.cpu_count() or 1)
     try:
         torch.set_num_threads(torch_threads)
@@ -569,6 +671,7 @@ if __name__ == "__main__":
         "verbose": False,
         "log_every": 10,
     }
+    config_timer.__exit__(None, None, None)
 
     m = args.m
     n = args.n
@@ -587,16 +690,17 @@ if __name__ == "__main__":
     needs_base.update([div for div in div_list if div in base_divs])
 
     # Fixed evaluation set sampled from the DGP (shared across replicates)
-    eval_seed = args.base_seed + 10**6
-    eval_data = generate_data(
-        n=args.n_eval,
-        d=d,
-        seed=eval_seed,
-        structural_type=args.structural_type,
-        noise_dist=args.noise_dist,
-    )
-    X_eval = np.asarray(eval_data["X"], dtype=np.float32)
-    X0_eval = X_eval[:, 0]
+    with StepTimer("build X_eval grid", use_tqdm=False, enabled=timing_enabled):
+        eval_seed = args.base_seed + 10**6
+        eval_data = generate_data(
+            n=args.n_eval,
+            d=d,
+            seed=eval_seed,
+            structural_type=args.structural_type,
+            noise_dist=args.noise_dist,
+        )
+        X_eval = np.asarray(eval_data["X"], dtype=np.float32)
+        X0_eval = X_eval[:, 0]
 
     truth_mat = np.full((m, args.n_eval), np.nan, dtype=np.float32)
     seeds = []
@@ -604,361 +708,391 @@ if __name__ == "__main__":
     lower_dict = {div: np.full((m, args.n_eval), np.nan, dtype=np.float32) for div in div_list}
     valid_dict = {div: np.zeros((m, args.n_eval), dtype=bool) for div in div_list}
 
-    for j in tqdm(range(m), desc="MC replicates"):
-        seed = args.base_seed + j
-        seeds.append(seed)
-        data = generate_data(n=n, d=d, seed=seed, structural_type=args.structural_type, noise_dist=args.noise_dist)
-        X_tr = np.asarray(data["X"], dtype=np.float32)
-        A_tr = np.asarray(data["A"], dtype=np.float32)
-        Y_tr = np.asarray(data["Y"], dtype=np.float32)
-        truth_eval = np.asarray(data["GroundTruth"](1, X_eval), dtype=np.float32).reshape(-1)
+    with StepTimer("MC replicate loop", use_tqdm=True, enabled=timing_enabled):
+        for j in tqdm(range(m), desc="MC replicates"):
+            seed = args.base_seed + j
+            seeds.append(seed)
+            with StepTimer(f"replicate {j}", use_tqdm=True, enabled=timing_enabled):
+                with StepTimer("data generation", use_tqdm=True, enabled=timing_enabled):
+                    data = generate_data(
+                        n=n,
+                        d=d,
+                        seed=seed,
+                        structural_type=args.structural_type,
+                        noise_dist=args.noise_dist,
+                    )
+                    X_tr = np.asarray(data["X"], dtype=np.float32)
+                    A_tr = np.asarray(data["A"], dtype=np.float32)
+                    Y_tr = np.asarray(data["Y"], dtype=np.float32)
+                    truth_eval = np.asarray(data["GroundTruth"](1, X_eval), dtype=np.float32).reshape(-1)
 
-        prop_cache = prefit_propensity_cache(
-            X=X_tr,
-            A=A_tr,
-            propensity_model=propensity_model,
-            propensity_config=fit_config["propensity_config"],
-            n_folds=fit_config["n_folds"],
-            seed=seed,
-            eps_propensity=fit_config["eps_propensity"],
-        )
+                with StepTimer("nuisance fits", use_tqdm=True, enabled=timing_enabled):
+                    prop_cache = prefit_propensity_cache(
+                        X=X_tr,
+                        A=A_tr,
+                        propensity_model=propensity_model,
+                        propensity_config=fit_config["propensity_config"],
+                        n_folds=fit_config["n_folds"],
+                        seed=seed,
+                        eps_propensity=fit_config["eps_propensity"],
+                    )
 
-        base_outputs = {}
-        for div in needs_base:
-            L_div, U_div = fit_two_pass_do1_cached(
-                DebiasedCausalBoundEstimator,
-                div,
-                X_tr,
-                A_tr,
-                Y_tr,
-                X_eval,
-                dual_net_config,
-                fit_config,
-                seed=seed,
-                propensity_model=propensity_model,
-                m_model=m_model,
-                propensity_cache=prop_cache,
-            )
-            base_outputs[div] = (L_div, U_div)
+                with StepTimer("bounds per divergence", use_tqdm=True, enabled=timing_enabled):
+                    base_outputs = {}
+                    for div in needs_base:
+                        with StepTimer(
+                            f"fit {div}",
+                            use_tqdm=True,
+                            enabled=timing_enabled and timing_detail,
+                        ):
+                            L_div, U_div = fit_two_pass_do1_cached(
+                                DebiasedCausalBoundEstimator,
+                                div,
+                                X_tr,
+                                A_tr,
+                                Y_tr,
+                                X_eval,
+                                dual_net_config,
+                                fit_config,
+                                seed=seed,
+                                propensity_model=propensity_model,
+                                m_model=m_model,
+                                propensity_cache=prop_cache,
+                            )
+                        base_outputs[div] = (L_div, U_div)
 
-        lower_base = None
-        upper_base = None
+                    lower_base = None
+                    upper_base = None
+                    for div in div_list:
+                        if div in base_outputs:
+                            L, U = base_outputs[div]
+                        elif div == "combined":
+                            if lower_base is None:
+                                lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
+                                upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
+                            L, U = combined_cwise_intersection(lower_base, upper_base, c=3)
+                        elif div == "cluster":
+                            if lower_base is None:
+                                lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
+                                upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
+                            L, U = cluster_per_sample_fast1d(
+                                lower_base, upper_base, k_candidates=(2, 3, 4), penalty_singleton=0.2
+                            )
+                        else:
+                            raise ValueError(f"Unsupported divergence '{div}'")
+
+                        W = U - L
+                        valid = np.isfinite(U) & np.isfinite(L) & (W > 0)
+
+                        upper_dict[div][j, :] = U
+                        lower_dict[div][j, :] = L
+                        valid_dict[div][j, :] = valid
+
+                with StepTimer("store truth", use_tqdm=True, enabled=timing_enabled):
+                    truth_mat[j, :] = truth_eval
+
+    with StepTimer("aggregate + smooth ribbons", use_tqdm=False, enabled=timing_enabled):
+        if args.stat == "mean":
+            agg_fn = np.nanmean
+        else:
+            agg_fn = np.nanmedian
+
+        aggregated_results = []
         for div in div_list:
-            if div in base_outputs:
-                L, U = base_outputs[div]
-            elif div == "combined":
-                if lower_base is None:
-                    lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
-                    upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
-                L, U = combined_cwise_intersection(lower_base, upper_base, c=3)
-            elif div == "cluster":
-                if lower_base is None:
-                    lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
-                    upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
-                L, U = cluster_per_sample_fast1d(lower_base, upper_base, k_candidates=(2, 3, 4), penalty_singleton=0.2)
+            upper_mat = upper_dict[div]
+            lower_mat = lower_dict[div]
+            valid_mat = valid_dict[div]
+
+            coverage_rate = valid_mat.mean(axis=0)
+            S_mask = valid_mat.all(axis=0)
+            if not np.any(S_mask):
+                for relax in [args.min_valid_rate, 0.9, 0.5]:
+                    S_mask = coverage_rate >= relax
+                    if np.any(S_mask):
+                        break
+
+            lower_masked = np.where(valid_mat, lower_mat, np.nan)
+            upper_masked = np.where(valid_mat, upper_mat, np.nan)
+
+            idx_sel = np.where(S_mask)[0]
+            if idx_sel.size == 0:
+                warnings.warn(f"No evaluation points met validity criteria for divergence {div}; outputs will be empty.")
+
+            l_bar = agg_fn(lower_masked[:, idx_sel], axis=0)
+            u_bar = agg_fn(upper_masked[:, idx_sel], axis=0)
+            theta_bar = agg_fn(truth_mat[:, idx_sel], axis=0)
+            width_bar = u_bar - l_bar
+            valid_rate_sel = coverage_rate[idx_sel]
+            x0_sel = X0_eval[idx_sel]
+
+            order = np.argsort(x0_sel)
+            x0_plot = x0_sel[order]
+            l_plot = l_bar[order]
+            u_plot = u_bar[order]
+            theta_plot = theta_bar[order]
+            width_plot = width_bar[order]
+            valid_plot = valid_rate_sel[order]
+
+            # Bound-preserving smoothing via mid/halfwidth reparameterization
+            mid_raw = 0.5 * (u_plot + l_plot)
+            half_raw = 0.5 * (u_plot - l_plot)
+            log_half_raw = np.log(np.clip(half_raw, 1e-6, None))
+
+            x_mid, mid_s = smooth_xy(
+                x0_plot,
+                mid_raw,
+                method=args.smooth_method,
+                smooth_grid_n=args.smooth_grid_n,
+                window=args.smooth_window,
+                spline_k=args.spline_k,
+                spline_s=args.spline_s,
+                lowess_frac=args.lowess_frac,
+                lowess_it=args.lowess_it,
+            )
+
+            x_log, log_half_s = smooth_xy(
+                x0_plot,
+                log_half_raw,
+                method=args.smooth_method,
+                smooth_grid_n=args.smooth_grid_n,
+                window=args.smooth_window,
+                spline_k=args.spline_k,
+                spline_s=args.spline_s,
+                lowess_frac=args.lowess_frac,
+                lowess_it=args.lowess_it,
+            )
+
+            if x_mid.size == 0:
+                x_s = x0_plot
+                mid_s = mid_raw
+                log_half_s = log_half_raw
             else:
-                raise ValueError(f"Unsupported divergence '{div}'")
+                x_s = x_mid
+                if x_log.size > 0:
+                    log_half_s = np.interp(x_s, x_log, log_half_s)
+                else:
+                    log_half_s = np.interp(x_s, x0_plot, log_half_raw)
 
-            W = U - L
-            valid = np.isfinite(U) & np.isfinite(L) & (W > 0)
+            half_s = np.exp(log_half_s)
+            l_smooth = mid_s - half_s
+            u_smooth = mid_s + half_s
 
-            upper_dict[div][j, :] = U
-            lower_dict[div][j, :] = L
-            valid_dict[div][j, :] = valid
-
-        truth_mat[j, :] = truth_eval
-
-    if args.stat == "mean":
-        agg_fn = np.nanmean
-    else:
-        agg_fn = np.nanmedian
-
-    aggregated_results = []
-    for div in div_list:
-        upper_mat = upper_dict[div]
-        lower_mat = lower_dict[div]
-        valid_mat = valid_dict[div]
-
-        coverage_rate = valid_mat.mean(axis=0)
-        S_mask = valid_mat.all(axis=0)
-        if not np.any(S_mask):
-            for relax in [args.min_valid_rate, 0.9, 0.5]:
-                S_mask = coverage_rate >= relax
-                if np.any(S_mask):
-                    break
-
-        lower_masked = np.where(valid_mat, lower_mat, np.nan)
-        upper_masked = np.where(valid_mat, upper_mat, np.nan)
-
-        idx_sel = np.where(S_mask)[0]
-        if idx_sel.size == 0:
-            warnings.warn(f"No evaluation points met validity criteria for divergence {div}; outputs will be empty.")
-
-        l_bar = agg_fn(lower_masked[:, idx_sel], axis=0)
-        u_bar = agg_fn(upper_masked[:, idx_sel], axis=0)
-        theta_bar = agg_fn(truth_mat[:, idx_sel], axis=0)
-        width_bar = u_bar - l_bar
-        valid_rate_sel = coverage_rate[idx_sel]
-        x0_sel = X0_eval[idx_sel]
-
-        order = np.argsort(x0_sel)
-        x0_plot = x0_sel[order]
-        l_plot = l_bar[order]
-        u_plot = u_bar[order]
-        theta_plot = theta_bar[order]
-        width_plot = width_bar[order]
-        valid_plot = valid_rate_sel[order]
-
-        # Bound-preserving smoothing via mid/halfwidth reparameterization
-        mid_raw = 0.5 * (u_plot + l_plot)
-        half_raw = 0.5 * (u_plot - l_plot)
-        log_half_raw = np.log(np.clip(half_raw, 1e-6, None))
-
-        x_mid, mid_s = smooth_xy(
-            x0_plot,
-            mid_raw,
-            method=args.smooth_method,
-            smooth_grid_n=args.smooth_grid_n,
-            window=args.smooth_window,
-            spline_k=args.spline_k,
-            spline_s=args.spline_s,
-            lowess_frac=args.lowess_frac,
-            lowess_it=args.lowess_it,
-        )
-
-        x_log, log_half_s = smooth_xy(
-            x0_plot,
-            log_half_raw,
-            method=args.smooth_method,
-            smooth_grid_n=args.smooth_grid_n,
-            window=args.smooth_window,
-            spline_k=args.spline_k,
-            spline_s=args.spline_s,
-            lowess_frac=args.lowess_frac,
-            lowess_it=args.lowess_it,
-        )
-
-        if x_mid.size == 0:
-            x_s = x0_plot
-            mid_s = mid_raw
-            log_half_s = log_half_raw
-        else:
-            x_s = x_mid
-            if x_log.size > 0:
-                log_half_s = np.interp(x_s, x_log, log_half_s)
+            # Smooth truth on same x-grid for plotting
+            x_theta, theta_s = smooth_xy(
+                x0_plot,
+                theta_plot,
+                method=args.smooth_method,
+                smooth_grid_n=args.smooth_grid_n,
+                window=args.smooth_window,
+                spline_k=args.spline_k,
+                spline_s=args.spline_s,
+                lowess_frac=args.lowess_frac,
+                lowess_it=args.lowess_it,
+            )
+            if x_theta.size > 0 and x_s.size > 0:
+                theta_s = np.interp(x_s, x_theta, theta_s)
+            elif x_s.size > 0:
+                theta_s = np.interp(x_s, x0_plot, theta_plot)
             else:
-                log_half_s = np.interp(x_s, x0_plot, log_half_raw)
+                x_s = x0_plot
+                theta_s = theta_plot
 
-        half_s = np.exp(log_half_s)
-        l_smooth = mid_s - half_s
-        u_smooth = mid_s + half_s
+            width_smooth = u_smooth - l_smooth
 
-        # Smooth truth on same x-grid for plotting
-        x_theta, theta_s = smooth_xy(
-            x0_plot,
-            theta_plot,
-            method=args.smooth_method,
-            smooth_grid_n=args.smooth_grid_n,
-            window=args.smooth_window,
-            spline_k=args.spline_k,
-            spline_s=args.spline_s,
-            lowess_frac=args.lowess_frac,
-            lowess_it=args.lowess_it,
-        )
-        if x_theta.size > 0 and x_s.size > 0:
-            theta_s = np.interp(x_s, x_theta, theta_s)
-        elif x_s.size > 0:
-            theta_s = np.interp(x_s, x0_plot, theta_plot)
-        else:
-            x_s = x0_plot
-            theta_s = theta_plot
-
-        width_smooth = u_smooth - l_smooth
-
-        aggregated_results.append(
-            {
-                "div": div,
-                "idx_plot": idx_sel[order],
-                "x_raw": x0_plot,
-                "l_raw": l_plot,
-                "u_raw": u_plot,
-                "theta_raw": theta_plot,
-                "valid_raw": valid_plot,
-                "x_s": x_s,
-                "l_s": l_smooth,
-                "u_s": u_smooth,
-                "theta_s": theta_s,
-                "width_s": width_smooth,
-            }
-        )
-
-    # Save table (long format over divergences)
-    table_rows = []
-    for res in aggregated_results:
-        div = res["div"]
-        for i, x0, th, lo, up, wd, vr in zip(
-            res["idx_plot"], res["x_raw"], res["theta_raw"], res["l_raw"], res["u_raw"], res["u_raw"] - res["l_raw"], res["valid_raw"]
-        ):
-            table_rows.append(
+            aggregated_results.append(
                 {
-                    "method": div,
-                    "i": int(i),
-                    "X0": float(x0),
-                    "theta": float(th),
-                    "lower": float(lo),
-                    "upper": float(up),
-                    "width": float(wd),
-                    "valid_rate": float(vr),
+                    "div": div,
+                    "idx_plot": idx_sel[order],
+                    "x_raw": x0_plot,
+                    "l_raw": l_plot,
+                    "u_raw": u_plot,
+                    "theta_raw": theta_plot,
+                    "valid_raw": valid_plot,
+                    "x_s": x_s,
+                    "l_s": l_smooth,
+                    "u_s": u_smooth,
+                    "theta_s": theta_s,
+                    "width_s": width_smooth,
                 }
             )
-    table_path = name_with_suffix("plot_x0_ribbon_mc_eval_fixed_table", "csv")
-    try:
-        import pandas as pd
 
-        pd.DataFrame(table_rows).to_csv(table_path, index=False)
-    except Exception:
-        header = "method,i,X0,theta,lower,upper,width,valid_rate"
-        with open(table_path, "w") as f:
-            f.write(header + "\n")
-            for row in table_rows:
-                f.write(
-                    f"{row['method']},{row['i']},{row['X0']},{row['theta']},{row['lower']},{row['upper']},{row['width']},{row['valid_rate']}\n"
+    with StepTimer("save tables", use_tqdm=False, enabled=timing_enabled):
+        # Save table (long format over divergences)
+        table_rows = []
+        for res in aggregated_results:
+            div = res["div"]
+            for i, x0, th, lo, up, wd, vr in zip(
+                res["idx_plot"], res["x_raw"], res["theta_raw"], res["l_raw"], res["u_raw"], res["u_raw"] - res["l_raw"], res["valid_raw"]
+            ):
+                table_rows.append(
+                    {
+                        "method": div,
+                        "i": int(i),
+                        "X0": float(x0),
+                        "theta": float(th),
+                        "lower": float(lo),
+                        "upper": float(up),
+                        "width": float(wd),
+                        "valid_rate": float(vr),
+                    }
                 )
+        table_path = name_with_suffix("plot_x0_ribbon_mc_eval_fixed_table", "csv")
+        try:
+            import pandas as pd
 
-    # Smoothed table (dense grid)
-    sm_table_rows = []
-    for res in aggregated_results:
-        div = res["div"]
-        xg = res["x_s"]
-        lg = res["l_s"]
-        ug = res["u_s"]
-        tg = res["theta_s"]
-        wg = ug - lg
-        for x0, th, lo, up, wd in zip(xg, tg, lg, ug, wg):
-            sm_table_rows.append(
-                {
-                    "method": div,
-                    "X0": float(x0),
-                    "theta": float(th),
-                    "lower": float(lo),
-                    "upper": float(up),
-                    "width": float(wd),
-                }
+            pd.DataFrame(table_rows).to_csv(table_path, index=False)
+        except Exception:
+            header = "method,i,X0,theta,lower,upper,width,valid_rate"
+            with open(table_path, "w") as f:
+                f.write(header + "\n")
+                for row in table_rows:
+                    f.write(
+                        f"{row['method']},{row['i']},{row['X0']},{row['theta']},{row['lower']},{row['upper']},{row['width']},{row['valid_rate']}\n"
+                    )
+
+        # Smoothed table (dense grid)
+        sm_table_rows = []
+        for res in aggregated_results:
+            div = res["div"]
+            xg = res["x_s"]
+            lg = res["l_s"]
+            ug = res["u_s"]
+            tg = res["theta_s"]
+            wg = ug - lg
+            for x0, th, lo, up, wd in zip(xg, tg, lg, ug, wg):
+                sm_table_rows.append(
+                    {
+                        "method": div,
+                        "X0": float(x0),
+                        "theta": float(th),
+                        "lower": float(lo),
+                        "upper": float(up),
+                        "width": float(wd),
+                    }
+                )
+        sm_table_path = name_with_suffix("plot_x0_ribbon_mc_eval_fixed_smoothed_table", "csv")
+        try:
+            import pandas as pd
+
+            pd.DataFrame(sm_table_rows).to_csv(sm_table_path, index=False)
+        except Exception:
+            header = "method,X0,theta,lower,upper,width"
+            with open(sm_table_path, "w") as f:
+                f.write(header + "\n")
+                for row in sm_table_rows:
+                    f.write(
+                        f"{row['method']},{row['X0']},{row['theta']},{row['lower']},{row['upper']},{row['width']}\n"
+                    )
+
+    with StepTimer("plot ribbons", use_tqdm=False, enabled=timing_enabled):
+        # Plot
+        plt.figure(figsize=(7.0, 4.0))
+        color_map = {
+            "combined": "tab:blue",
+            "cluster": "tab:orange",
+            "KL": "tab:green",
+            "TV": "tab:red",
+            "Hellinger": "tab:purple",
+            "Chi2": "tab:brown",
+            "JS": "tab:pink",
+        }
+        for res in aggregated_results:
+            if res["idx_plot"].size == 0:
+                continue
+            c = color_map.get(res["div"], None)
+            plt.fill_between(res["x_s"], res["l_s"], res["u_s"], alpha=0.2, color=c, label=f"{res['div']} bounds")
+            plt.plot(res["x_s"], res["l_s"], color=c, alpha=0.7, linewidth=1.0)
+            plt.plot(res["x_s"], res["u_s"], color=c, alpha=0.7, linewidth=1.0)
+            if args.plot_raw_points:
+                plt.scatter(res["x_raw"], res["l_raw"], color=c, alpha=0.2, s=8)
+                plt.scatter(res["x_raw"], res["u_raw"], color=c, alpha=0.2, s=8)
+        # Truth line (smoothed on bounds grid of first method)
+        if aggregated_results and aggregated_results[0]["x_s"].size > 0:
+            plt.plot(
+                aggregated_results[0]["x_s"],
+                aggregated_results[0]["theta_s"],
+                color="k",
+                linewidth=1.5,
+                label="Truth",
             )
-    sm_table_path = name_with_suffix("plot_x0_ribbon_mc_eval_fixed_smoothed_table", "csv")
-    try:
-        import pandas as pd
-
-        pd.DataFrame(sm_table_rows).to_csv(sm_table_path, index=False)
-    except Exception:
-        header = "method,X0,theta,lower,upper,width"
-        with open(sm_table_path, "w") as f:
-            f.write(header + "\n")
-            for row in sm_table_rows:
-                f.write(
-                    f"{row['method']},{row['X0']},{row['theta']},{row['lower']},{row['upper']},{row['width']}\n"
-                )
-
-    # Plot
-    plt.figure(figsize=(7.0, 4.0))
-    color_map = {
-        "combined": "tab:blue",
-        "cluster": "tab:orange",
-        "KL": "tab:green",
-        "TV": "tab:red",
-        "Hellinger": "tab:purple",
-        "Chi2": "tab:brown",
-        "JS": "tab:pink",
-    }
-    for res in aggregated_results:
-        if res["idx_plot"].size == 0:
-            continue
-        c = color_map.get(res["div"], None)
-        plt.fill_between(res["x_s"], res["l_s"], res["u_s"], alpha=0.2, color=c, label=f"{res['div']} bounds")
-        plt.plot(res["x_s"], res["l_s"], color=c, alpha=0.7, linewidth=1.0)
-        plt.plot(res["x_s"], res["u_s"], color=c, alpha=0.7, linewidth=1.0)
-        if args.plot_raw_points:
-            plt.scatter(res["x_raw"], res["l_raw"], color=c, alpha=0.2, s=8)
-            plt.scatter(res["x_raw"], res["u_raw"], color=c, alpha=0.2, s=8)
-    # Truth line (smoothed on bounds grid of first method)
-    if aggregated_results and aggregated_results[0]["x_s"].size > 0:
-        plt.plot(
-            aggregated_results[0]["x_s"],
-            aggregated_results[0]["theta_s"],
-            color="k",
-            linewidth=1.5,
-            label="Truth",
+        plt.xlabel("X0")
+        plt.ylabel("E[Y | do(A=1), X]")
+        plt.title(
+            f"Causal bounds vs X0 (stat={args.stat}, divs={','.join(div_list)}, struct={args.structural_type})"
         )
-    plt.xlabel("X0")
-    plt.ylabel("E[Y | do(A=1), X]")
-    plt.title(
-        f"Causal bounds vs X0 (stat={args.stat}, divs={','.join(div_list)}, struct={args.structural_type})"
-    )
-    plt.legend()
-    plt.tight_layout()
-    fig_path = name_with_suffix("plot_x0_ribbon_mc_eval_fixed", "png")
-    plt.savefig(fig_path, dpi=200)
-    plt.close()
+        plt.legend()
+        plt.tight_layout()
+        fig_path = name_with_suffix("plot_x0_ribbon_mc_eval_fixed", "png")
+        plt.savefig(fig_path, dpi=200)
+        plt.close()
 
-    # Artifacts
-    artifacts = {
-        "X_eval": X_eval,
-        "lower_dict": lower_dict,
-        "upper_dict": upper_dict,
-        "truth_mat": truth_mat,
-        "valid_dict": valid_dict,
-        "args": vars(args),
-        "fit_config": fit_config,
-        "dual_net_config": dual_net_config,
-        "seeds": seeds,
-        "aggregated_results": aggregated_results,
-        "timestamp": stamp,
-        "divergences": div_list,
-        "smoothed_table_csv": sm_table_path,
-        "smooth_method": args.smooth_method,
-        "smooth_grid_n": args.smooth_grid_n,
-        "spline_k": args.spline_k,
-        "spline_s": args.spline_s,
-        "lowess_frac": args.lowess_frac,
-        "lowess_it": args.lowess_it,
-    }
-    artifacts_path = name_with_suffix("plot_x0_ribbon_mc_eval_fixed_artifacts", "pkl")
-    with open(artifacts_path, "wb") as f:
-        pickle.dump(artifacts, f, protocol=pickle.HIGHEST_PROTOCOL)
-
-    summary = {
-        "timestamp": stamp or datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
-        "files": {
-            "table_csv": table_path,
+    with StepTimer("save artifacts", use_tqdm=False, enabled=timing_enabled):
+        # Artifacts
+        artifacts = {
+            "X_eval": X_eval,
+            "lower_dict": lower_dict,
+            "upper_dict": upper_dict,
+            "truth_mat": truth_mat,
+            "valid_dict": valid_dict,
+            "args": vars(args),
+            "fit_config": fit_config,
+            "dual_net_config": dual_net_config,
+            "seeds": seeds,
+            "aggregated_results": aggregated_results,
+            "timestamp": stamp,
+            "divergences": div_list,
             "smoothed_table_csv": sm_table_path,
-            "plot_png": fig_path,
-            "artifacts_pkl": artifacts_path,
-        },
-        "args": vars(args),
-        "n": n,
-        "d": d,
-        "m": m,
-        "divergences": div_list,
-        "structural_type": args.structural_type,
-        "stat": args.stat,
-        "min_valid_rate": args.min_valid_rate,
-        "selected_counts": {res["div"]: int(len(res["idx_plot"])) for res in aggregated_results},
-        "smooth_method": args.smooth_method,
-        "smooth_grid_n": args.smooth_grid_n,
-        "spline_k": args.spline_k,
-        "spline_s": args.spline_s,
-        "lowess_frac": args.lowess_frac,
-        "lowess_it": args.lowess_it,
-    }
-    summary_path = name_with_suffix("plot_x0_ribbon_mc_eval_fixed_summary", "json")
-    with open(summary_path, "w") as f:
-        json.dump(summary, f, indent=2)
+            "smooth_method": args.smooth_method,
+            "smooth_grid_n": args.smooth_grid_n,
+            "spline_k": args.spline_k,
+            "spline_s": args.spline_s,
+            "lowess_frac": args.lowess_frac,
+            "lowess_it": args.lowess_it,
+        }
+        artifacts_path = name_with_suffix("plot_x0_ribbon_mc_eval_fixed_artifacts", "pkl")
+        with open(artifacts_path, "wb") as f:
+            pickle.dump(artifacts, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    log_line = (
-        f"[plot_x0_ribbon_mc_eval_fixed] ts={summary['timestamp']} m={m} n={n} d={d} stat={args.stat} "
-        f"divs={','.join(div_list)} struct={args.structural_type} selected={summary['selected_counts']} "
-        f"args={vars(args)} files={summary['files']}"
-    )
-    log_path = name_with_suffix("plot_x0_ribbon_mc_eval_fixed_log", "txt")
-    with open(log_path, "a") as f:
-        f.write(log_line + "\n")
+        summary = {
+            "timestamp": stamp or datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
+            "files": {
+                "table_csv": table_path,
+                "smoothed_table_csv": sm_table_path,
+                "plot_png": fig_path,
+                "artifacts_pkl": artifacts_path,
+            },
+            "args": vars(args),
+            "n": n,
+            "d": d,
+            "m": m,
+            "divergences": div_list,
+            "structural_type": args.structural_type,
+            "stat": args.stat,
+            "min_valid_rate": args.min_valid_rate,
+            "selected_counts": {res["div"]: int(len(res["idx_plot"])) for res in aggregated_results},
+            "smooth_method": args.smooth_method,
+            "smooth_grid_n": args.smooth_grid_n,
+            "spline_k": args.spline_k,
+            "spline_s": args.spline_s,
+            "lowess_frac": args.lowess_frac,
+            "lowess_it": args.lowess_it,
+        }
+        summary_path = name_with_suffix("plot_x0_ribbon_mc_eval_fixed_summary", "json")
+        with open(summary_path, "w") as f:
+            json.dump(summary, f, indent=2)
+
+        log_line = (
+            f"[plot_x0_ribbon_mc_eval_fixed] ts={summary['timestamp']} m={m} n={n} d={d} stat={args.stat} "
+            f"divs={','.join(div_list)} struct={args.structural_type} selected={summary['selected_counts']} "
+            f"args={vars(args)} files={summary['files']}"
+        )
+        log_path = name_with_suffix("plot_x0_ribbon_mc_eval_fixed_log", "txt")
+        with open(log_path, "a") as f:
+            f.write(log_line + "\n")
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:
+        _log_active_step_error(use_tqdm=False)
+        raise

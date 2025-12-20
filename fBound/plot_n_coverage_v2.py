@@ -22,6 +22,8 @@ import inspect
 import json
 import os
 import pickle
+import sys
+import time
 import warnings
 from itertools import combinations
 from typing import Any, Dict, Optional, Tuple, List
@@ -37,6 +39,80 @@ except Exception:  # pragma: no cover
 
 from causal_bound import DebiasedCausalBoundEstimator, prefit_propensity_cache
 from data_generating import generate_data
+
+
+# -------------------------
+# Lightweight progress/timing utilities
+# -------------------------
+_STEP_STACK: List[Dict[str, Any]] = []
+
+
+def _now_str() -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _log(msg: str, use_tqdm: bool) -> None:
+    if use_tqdm and hasattr(tqdm, "write"):
+        tqdm.write(msg)
+    else:
+        print(msg, flush=True)
+
+
+class StepTimer:
+    def __init__(self, name: str, use_tqdm: bool, enabled: bool = True) -> None:
+        self.name = name
+        self.use_tqdm = use_tqdm
+        self.enabled = enabled
+
+    def __enter__(self) -> "StepTimer":
+        if not self.enabled:
+            return self
+        entry = {
+            "name": self.name,
+            "start_wall": time.perf_counter(),
+            "start_cpu": time.process_time(),
+            "use_tqdm": self.use_tqdm,
+        }
+        _STEP_STACK.append(entry)
+        _log(f"[PROGRESS] START {self.name}", self.use_tqdm)
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        if not self.enabled:
+            return False
+        if not _STEP_STACK:
+            return False
+        entry = _STEP_STACK[-1]
+        if entry.get("name") != self.name:
+            return False
+        if exc_type is None:
+            wall = time.perf_counter() - float(entry["start_wall"])
+            cpu = time.process_time() - float(entry["start_cpu"])
+            _log(f"[PROGRESS] END {self.name} | wall={wall:.3f}s cpu={cpu:.3f}s", self.use_tqdm)
+            _STEP_STACK.pop()
+        return False
+
+
+def _log_active_step_error(use_tqdm: bool) -> None:
+    if not _STEP_STACK:
+        _log("[PROGRESS] ERROR during unknown step", use_tqdm)
+        return
+    entry = _STEP_STACK[-1]
+    wall = time.perf_counter() - float(entry["start_wall"])
+    cpu = time.process_time() - float(entry["start_cpu"])
+    _log(
+        f"[PROGRESS] ERROR during {entry['name']} | wall={wall:.3f}s cpu={cpu:.3f}s",
+        bool(entry["use_tqdm"]),
+    )
+    _STEP_STACK.clear()
+
+
+def _timing_enabled_from_argv(default: bool = True) -> bool:
+    if "--no-timing" in sys.argv:
+        return False
+    if "--timing" in sys.argv:
+        return True
+    return default
 
 
 # -------------------------
@@ -508,7 +584,8 @@ def _make_X_eval(
 # Main
 # -------------------------
 
-if __name__ == "__main__":
+
+def main() -> None:
     warnings.filterwarnings("ignore")
     parser = argparse.ArgumentParser(description="Coverage/width/score vs n for causal bounds (fixed X_eval).")
     parser.add_argument("--n_list", type=str, required=True, help="Comma-separated sample sizes, e.g. '200,500,1000'.")
@@ -588,9 +665,36 @@ if __name__ == "__main__":
     parser.add_argument("--xgb_n_jobs", type=int, default=-1, help="n_jobs for xgboost (-1 all cores).")
     parser.add_argument("--torch_threads", type=int, default=0, help="Torch intra-op threads (0 uses all cores).")
     parser.add_argument("--device", type=str, default="cpu", choices=["cpu", "cuda"], help="Device for dual nets.")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--timing",
+        dest="timing",
+        action="store_true",
+        default=True,
+        help="Enable progress/timing logs.",
+    )
+    parser.add_argument(
+        "--no-timing",
+        dest="timing",
+        action="store_false",
+        help="Disable progress/timing logs.",
+    )
+    parser.add_argument(
+        "--timing_detail",
+        "--timing-detail",
+        action="store_true",
+        default=False,
+        help="Enable per-divergence timing logs.",
+    )
+
+    pre_timing = _timing_enabled_from_argv(default=True)
+    with StepTimer("parse args", use_tqdm=False, enabled=pre_timing):
+        args = parser.parse_args()
+    timing_enabled = bool(args.timing)
+    timing_detail = bool(args.timing_detail)
 
     # Torch threads
+    config_timer = StepTimer("configure experiment", use_tqdm=False, enabled=timing_enabled)
+    config_timer.__enter__()
     torch_threads = args.torch_threads if args.torch_threads > 0 else max(1, os.cpu_count() or 1)
     try:
         torch.set_num_threads(torch_threads)
@@ -673,6 +777,7 @@ if __name__ == "__main__":
         "verbose": False,
         "log_every": 10,
     }
+    config_timer.__exit__(None, None, None)
 
     # Determine which base divergences we need to compute.
     needs_base = any(div in {"combined", "cluster"} for div in div_list)
@@ -693,106 +798,147 @@ if __name__ == "__main__":
     warn_state: Dict[str, bool] = {}
 
     for idx_n, n in enumerate(n_list):
-        for j in tqdm(range(args.m), desc=f"n={n}", leave=False):
-            # Seed schedule: ensure different n use different seed blocks.
-            seed_tr = int(args.base_seed + 100000 * idx_n + j)
-            seeds_used.append(seed_tr)
+        n_timer = StepTimer(f"n={n} loop", use_tqdm=True, enabled=timing_enabled)
+        n_timer.__enter__()
+        try:
+            for j in tqdm(range(args.m), desc=f"n={n}", leave=False):
+                rep_timer = StepTimer(f"replicate n={n} rep={j}", use_tqdm=True, enabled=timing_enabled)
+                rep_timer.__enter__()
+                try:
+                    # Seed schedule: ensure different n use different seed blocks.
+                    seed_tr = int(args.base_seed + 100000 * idx_n + j)
+                    seeds_used.append(seed_tr)
 
-            data = _call_generate_data_compat(
-                n=n,
-                d=args.d,
-                seed=seed_tr,
-                structural_type=args.structural_type,
-                x_range=args.x_range,
-                noise_dist=args.noise_dist,
-                _warn_state=warn_state,
-            )
-            X_tr = np.asarray(data["X"], dtype=np.float32)
-            A_tr = np.asarray(data["A"], dtype=np.float32)
-            Y_tr = np.asarray(data["Y"], dtype=np.float32)
-
-            # Truth evaluated at fixed X_eval (replicate-specific GroundTruth)
-            theta_eval = np.asarray(data["GroundTruth"](1, X_eval), dtype=np.float32).reshape(-1)
-            if theta_eval.shape[0] != n_eval:
-                raise RuntimeError(f"GroundTruth returned shape {theta_eval.shape}, expected ({n_eval},).")
-            theta_store[n][j, :] = theta_eval
-
-            # Prefit/cached propensity on TRAINING data only.
-            prop_cache = prefit_propensity_cache(
-                X=X_tr,
-                A=A_tr,
-                propensity_model=propensity_model,
-                propensity_config=fit_config["propensity_config"],
-                n_folds=fit_config["n_folds"],
-                seed=seed_tr,
-                eps_propensity=fit_config["eps_propensity"],
-            )
-
-            # Fit required base divergences once per (n,j), evaluate at X_eval.
-            base_outputs: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
-            for dname in required_base:
-                L_div, U_div = fit_two_pass_do1_cached(
-                    DebiasedCausalBoundEstimator,
-                    dname,
-                    X_train=X_tr,
-                    A_train=A_tr,
-                    Y_train=Y_tr,
-                    X_eval=X_eval,
-                    dual_net_config=dual_net_config,
-                    fit_config=fit_config,
-                    seed=seed_tr,
-                    propensity_model=propensity_model,
-                    m_model=m_model,
-                    propensity_cache=prop_cache,
-                )
-                base_outputs[dname] = (L_div, U_div)
-
-            # Now compute requested divergences (including aggregators).
-            lower_base = None
-            upper_base = None
-            for div in div_list:
-                if div in base_outputs:
-                    L, U = base_outputs[div]
-                elif div == "combined":
-                    if lower_base is None:
-                        lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
-                        upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
-                    L, U = combined_cwise_intersection(lower_base, upper_base, c=3)
-                elif div == "cluster":
-                    if lower_base is None:
-                        lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
-                        upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
-                    L, U = cluster_per_sample_fast1d(
-                        lower_base, upper_base, k_candidates=(2, 3, 4), penalty_singleton=0.2
-                    )
-                else:
-                    # Should not happen due to parsing, but keep safe.
-                    L, U = fit_two_pass_do1_cached(
-                        DebiasedCausalBoundEstimator,
-                        div,
-                        X_train=X_tr,
-                        A_train=A_tr,
-                        Y_train=Y_tr,
-                        X_eval=X_eval,
-                        dual_net_config=dual_net_config,
-                        fit_config=fit_config,
+                    data_timer = StepTimer("data generation", use_tqdm=True, enabled=timing_enabled)
+                    data_timer.__enter__()
+                    data = _call_generate_data_compat(
+                        n=n,
+                        d=args.d,
                         seed=seed_tr,
-                        propensity_model=propensity_model,
-                        m_model=m_model,
-                        propensity_cache=prop_cache,
+                        structural_type=args.structural_type,
+                        x_range=args.x_range,
+                        noise_dist=args.noise_dist,
+                        _warn_state=warn_state,
                     )
+                    X_tr = np.asarray(data["X"], dtype=np.float32)
+                    A_tr = np.asarray(data["A"], dtype=np.float32)
+                    Y_tr = np.asarray(data["Y"], dtype=np.float32)
 
-                width = U - L
-                valid = np.isfinite(L) & np.isfinite(U) & np.isfinite(theta_eval) & (width > 0)
-                covered = valid & (theta_eval >= L) & (theta_eval <= U)
+                    # Truth evaluated at fixed X_eval (replicate-specific GroundTruth)
+                    theta_eval = np.asarray(data["GroundTruth"](1, X_eval), dtype=np.float32).reshape(-1)
+                    if theta_eval.shape[0] != n_eval:
+                        raise RuntimeError(f"GroundTruth returned shape {theta_eval.shape}, expected ({n_eval},).")
+                    theta_store[n][j, :] = theta_eval
+                    data_timer.__exit__(None, None, None)
 
-                # Save stores
-                upper_store[n][div][j, :] = U
-                lower_store[n][div][j, :] = L
-                width_store[n][div][j, :] = width
-                valid_store[n][div][j, :] = valid.astype(np.int32)
-                cover_store[n][div][j, :] = covered.astype(np.int32)
+                    nuisance_timer = StepTimer("nuisance fits", use_tqdm=True, enabled=timing_enabled)
+                    nuisance_timer.__enter__()
+                    # Prefit/cached propensity on TRAINING data only.
+                    prop_cache = prefit_propensity_cache(
+                        X=X_tr,
+                        A=A_tr,
+                        propensity_model=propensity_model,
+                        propensity_config=fit_config["propensity_config"],
+                        n_folds=fit_config["n_folds"],
+                        seed=seed_tr,
+                        eps_propensity=fit_config["eps_propensity"],
+                    )
+                    nuisance_timer.__exit__(None, None, None)
 
+                    bounds_timer = StepTimer("bounds per divergence", use_tqdm=True, enabled=timing_enabled)
+                    bounds_timer.__enter__()
+                    # Fit required base divergences once per (n,j), evaluate at X_eval.
+                    base_outputs: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
+                    for dname in required_base:
+                        if timing_enabled and timing_detail:
+                            with StepTimer(f"fit div={dname}", use_tqdm=True, enabled=True):
+                                L_div, U_div = fit_two_pass_do1_cached(
+                                    DebiasedCausalBoundEstimator,
+                                    dname,
+                                    X_train=X_tr,
+                                    A_train=A_tr,
+                                    Y_train=Y_tr,
+                                    X_eval=X_eval,
+                                    dual_net_config=dual_net_config,
+                                    fit_config=fit_config,
+                                    seed=seed_tr,
+                                    propensity_model=propensity_model,
+                                    m_model=m_model,
+                                    propensity_cache=prop_cache,
+                                )
+                        else:
+                            L_div, U_div = fit_two_pass_do1_cached(
+                                DebiasedCausalBoundEstimator,
+                                dname,
+                                X_train=X_tr,
+                                A_train=A_tr,
+                                Y_train=Y_tr,
+                                X_eval=X_eval,
+                                dual_net_config=dual_net_config,
+                                fit_config=fit_config,
+                                seed=seed_tr,
+                                propensity_model=propensity_model,
+                                m_model=m_model,
+                                propensity_cache=prop_cache,
+                            )
+                        base_outputs[dname] = (L_div, U_div)
+                    bounds_timer.__exit__(None, None, None)
+
+                    coverage_timer = StepTimer("coverage/width computation", use_tqdm=True, enabled=timing_enabled)
+                    coverage_timer.__enter__()
+                    # Now compute requested divergences (including aggregators).
+                    lower_base = None
+                    upper_base = None
+                    for div in div_list:
+                        if div in base_outputs:
+                            L, U = base_outputs[div]
+                        elif div == "combined":
+                            if lower_base is None:
+                                lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
+                                upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
+                            L, U = combined_cwise_intersection(lower_base, upper_base, c=3)
+                        elif div == "cluster":
+                            if lower_base is None:
+                                lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
+                                upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
+                            L, U = cluster_per_sample_fast1d(
+                                lower_base, upper_base, k_candidates=(2, 3, 4), penalty_singleton=0.2
+                            )
+                        else:
+                            # Should not happen due to parsing, but keep safe.
+                            L, U = fit_two_pass_do1_cached(
+                                DebiasedCausalBoundEstimator,
+                                div,
+                                X_train=X_tr,
+                                A_train=A_tr,
+                                Y_train=Y_tr,
+                                X_eval=X_eval,
+                                dual_net_config=dual_net_config,
+                                fit_config=fit_config,
+                                seed=seed_tr,
+                                propensity_model=propensity_model,
+                                m_model=m_model,
+                                propensity_cache=prop_cache,
+                            )
+
+                        width = U - L
+                        valid = np.isfinite(L) & np.isfinite(U) & np.isfinite(theta_eval) & (width > 0)
+                        covered = valid & (theta_eval >= L) & (theta_eval <= U)
+
+                        # Save stores
+                        upper_store[n][div][j, :] = U
+                        lower_store[n][div][j, :] = L
+                        width_store[n][div][j, :] = width
+                        valid_store[n][div][j, :] = valid.astype(np.int32)
+                        cover_store[n][div][j, :] = covered.astype(np.int32)
+                    coverage_timer.__exit__(None, None, None)
+                finally:
+                    rep_timer.__exit__(None, None, None)
+        finally:
+            n_timer.__exit__(None, None, None)
+
+    scalars_timer = StepTimer("precompute replicate scalars", use_tqdm=False, enabled=timing_enabled)
+    scalars_timer.__enter__()
     # Precompute per-replicate scalars to avoid repeated reductions.
     covu_store = {n: {div: np.full((args.m,), np.nan, dtype=np.float64) for div in div_list} for n in n_list}
     covc_store = {n: {div: np.full((args.m,), np.nan, dtype=np.float64) for div in div_list} for n in n_list}
@@ -837,6 +983,7 @@ if __name__ == "__main__":
                 width_median_store[n][div][j] = width_median
                 score_mean_store[n][div][j] = score_mean
                 score_median_store[n][div][j] = score_median
+    scalars_timer.__exit__(None, None, None)
 
     def _stat_suffix(stat_within: str, stat_over_reps: str) -> str:
         return f"stat_{stat_within}_over_{stat_over_reps}"
@@ -980,6 +1127,12 @@ if __name__ == "__main__":
     score_fig = ""
 
     for stat_within, stat_over_reps in stat_pairs:
+        stat_timer = StepTimer(
+            f"summary+plots stat={stat_within}/{stat_over_reps}",
+            use_tqdm=False,
+            enabled=timing_enabled,
+        )
+        stat_timer.__enter__()
         suffix = _stat_suffix(stat_within, stat_over_reps) if use_suffix else ""
         key = suffix or "default"
         rep_rows, sum_rows = _build_rows(stat_within, stat_over_reps)
@@ -1112,6 +1265,7 @@ if __name__ == "__main__":
             width_fig = width_fig_run
             score_fig = score_fig_run
             default_files = run_files
+        stat_timer.__exit__(None, None, None)
 
     if default_key is None and runs:
         default_key = list(summary_rows_by_stat.keys())[0]
@@ -1126,6 +1280,8 @@ if __name__ == "__main__":
         score_fig = runs[0]["files"]["score_png"]
         default_files = runs[0]["files"]
 
+    save_timer = StepTimer("save outputs", use_tqdm=False, enabled=timing_enabled)
+    save_timer.__enter__()
     # Artifacts
     artifacts = {
         "X_eval": X_eval,
@@ -1177,3 +1333,11 @@ if __name__ == "__main__":
     log_path = name_with_suffix("plot_n_coverage_log", "txt")
     with open(log_path, "a") as f:
         f.write(log_line + "\n")
+    save_timer.__exit__(None, None, None)
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:
+        _log_active_step_error(use_tqdm=False)
+        raise
