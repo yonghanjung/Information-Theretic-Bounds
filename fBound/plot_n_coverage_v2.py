@@ -793,6 +793,51 @@ if __name__ == "__main__":
                 valid_store[n][div][j, :] = valid.astype(np.int32)
                 cover_store[n][div][j, :] = covered.astype(np.int32)
 
+    # Precompute per-replicate scalars to avoid repeated reductions.
+    covu_store = {n: {div: np.full((args.m,), np.nan, dtype=np.float64) for div in div_list} for n in n_list}
+    covc_store = {n: {div: np.full((args.m,), np.nan, dtype=np.float64) for div in div_list} for n in n_list}
+    valid_rate_store = {n: {div: np.full((args.m,), np.nan, dtype=np.float64) for div in div_list} for n in n_list}
+    n_valid_store = {n: {div: np.zeros((args.m,), dtype=np.int32) for div in div_list} for n in n_list}
+    width_mean_store = {n: {div: np.full((args.m,), np.nan, dtype=np.float64) for div in div_list} for n in n_list}
+    width_median_store = {n: {div: np.full((args.m,), np.nan, dtype=np.float64) for div in div_list} for n in n_list}
+    score_mean_store = {n: {div: np.full((args.m,), np.nan, dtype=np.float64) for div in div_list} for n in n_list}
+    score_median_store = {n: {div: np.full((args.m,), np.nan, dtype=np.float64) for div in div_list} for n in n_list}
+
+    for n in n_list:
+        for div in div_list:
+            for j in range(args.m):
+                width = width_store[n][div][j, :]
+                valid = valid_store[n][div][j, :].astype(bool)
+                covered = cover_store[n][div][j, :].astype(bool)
+
+                covu = float(np.mean(covered))
+                covc = float(np.mean(covered[valid])) if np.any(valid) else float("nan")
+                valid_rate = float(np.mean(valid))
+                n_valid = int(np.sum(valid))
+                width_mean = _stat_reduce(width[valid], "mean")
+                width_median = _stat_reduce(width[valid], "median")
+                score_mean = _score_penalized_width(
+                    width=width_mean,
+                    coverage_uncond=covu,
+                    lam=args.score_lambda,
+                    alpha=args.score_alpha,
+                )
+                score_median = _score_penalized_width(
+                    width=width_median,
+                    coverage_uncond=covu,
+                    lam=args.score_lambda,
+                    alpha=args.score_alpha,
+                )
+
+                covu_store[n][div][j] = covu
+                covc_store[n][div][j] = covc
+                valid_rate_store[n][div][j] = valid_rate
+                n_valid_store[n][div][j] = n_valid
+                width_mean_store[n][div][j] = width_mean
+                width_median_store[n][div][j] = width_median
+                score_mean_store[n][div][j] = score_mean
+                score_median_store[n][div][j] = score_median
+
     def _stat_suffix(stat_within: str, stat_over_reps: str) -> str:
         return f"stat_{stat_within}_over_{stat_over_reps}"
 
@@ -808,20 +853,16 @@ if __name__ == "__main__":
                 val_list: List[float] = []
                 for j in range(args.m):
                     seed_tr = int(args.base_seed + 100000 * idx_n + j)
-                    width = width_store[n][div][j, :]
-                    valid = valid_store[n][div][j, :].astype(bool)
-                    covered = cover_store[n][div][j, :].astype(bool)
-
-                    valid_rate_j = float(np.mean(valid))
-                    coverage_uncond_j = float(np.mean(covered))
-                    coverage_cond_j = float(np.mean(covered[valid])) if np.any(valid) else float("nan")
-                    width_j = _stat_reduce(width[valid], stat_within) if np.any(valid) else float("nan")
-                    score_j = _score_penalized_width(
-                        width=width_j,
-                        coverage_uncond=coverage_uncond_j,
-                        lam=args.score_lambda,
-                        alpha=args.score_alpha,
-                    )
+                    coverage_uncond_j = float(covu_store[n][div][j])
+                    coverage_cond_j = float(covc_store[n][div][j])
+                    valid_rate_j = float(valid_rate_store[n][div][j])
+                    n_valid_j = int(n_valid_store[n][div][j])
+                    if stat_within == "mean":
+                        width_j = float(width_mean_store[n][div][j])
+                        score_j = float(score_mean_store[n][div][j])
+                    else:
+                        width_j = float(width_median_store[n][div][j])
+                        score_j = float(score_median_store[n][div][j])
 
                     replicate_rows.append(
                         {
@@ -835,7 +876,7 @@ if __name__ == "__main__":
                             "width": width_j,
                             "score": score_j,
                             "valid_rate": valid_rate_j,
-                            "n_valid": int(np.sum(valid)),
+                            "n_valid": n_valid_j,
                         }
                     )
 
