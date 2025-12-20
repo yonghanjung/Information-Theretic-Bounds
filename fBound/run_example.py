@@ -321,6 +321,9 @@ def _best_kmeans_partition_1d(values: list[float], k: int) -> tuple[list[list[fl
     return best_clusters, best_labels, xs
 
 
+_SELECT_K_CACHE: dict[tuple[tuple[float, ...], tuple[int, ...], float], tuple[int, tuple[tuple[float, ...], ...]]] = {}
+
+
 def _select_k_and_clusters_1d(
     values: list[float],
     k_candidates: tuple[int, ...] = (2, 3, 4),
@@ -333,6 +336,13 @@ def _select_k_and_clusters_1d(
       - choose best k
     Here we compute the global-optimum 1D k-means partition by brute-force (m is tiny).
     """
+    values_key = tuple(float(v) for v in values)
+    cache_key = (values_key, k_candidates, float(penalty_singleton))
+    cached = _SELECT_K_CACHE.get(cache_key)
+    if cached is not None:
+        best_k, clusters = cached
+        return int(best_k), [list(c) for c in clusters]
+
     m = len(values)
     if m == 0:
         return 1, [[]]
@@ -361,6 +371,7 @@ def _select_k_and_clusters_1d(
         # Fallback: use best_k=min(2,m) and the corresponding min-SSE partition.
         best_clusters, _, _ = _best_kmeans_partition_1d(values, k=best_k)
 
+    _SELECT_K_CACHE[cache_key] = (int(best_k), tuple(tuple(c) for c in best_clusters))
     return int(best_k), best_clusters
 
 
@@ -515,11 +526,11 @@ def fit_bounds_with_masks_fast(
 if __name__ == "__main__":
     # Keep defaults identical to the original run_example.py
     seed = 190602
-    n = 1000
-    d = 5
+    n = 10000
+    d = 10
     div = "KL"  # KL, TV, Hellinger, Chi2, JS, combined, cluster
 
-    data = generate_data(n=n, d=d, seed=seed, structural_type="cyclic")
+    data = generate_data(n=n, d=d, seed=seed, structural_type="cyclic2")
     keep_cols = None  # choose feature subset; set to None to use all
     full_X = data["X"]
     X = full_X[:, keep_cols] if keep_cols is not None else full_X
@@ -554,7 +565,7 @@ if __name__ == "__main__":
 
     fit_config = {
         "n_folds": 3,
-        "num_epochs": 100,
+        "num_epochs": 200,
         "batch_size": 256,
         "lr": 5e-4,
         "weight_decay": 1e-4,
@@ -699,19 +710,25 @@ if __name__ == "__main__":
     penalty_singleton = 0.2
     k_candidates = (2, 3, 4)
 
-    # Pre-extract stacks into Python lists-of-arrays for faster inner loop
-    lower_arrs = [np.asarray(results[f"lower_{dv}"], dtype=np.float32) for dv in base_divs]
-    upper_arrs = [np.asarray(results[f"upper_{dv}"], dtype=np.float32) for dv in base_divs]
-
+    cluster_cache: dict[
+        tuple[tuple[float, ...], tuple[float, ...], tuple[int, ...], float],
+        tuple[float, float, int, int],
+    ] = {}
     for i in range(X.shape[0]):
-        lowers_i = [float(arr[i]) for arr in lower_arrs]
-        uppers_i = [float(arr[i]) for arr in upper_arrs]
-        lc, uc, kL, kU = cluster_bounds_fast(
-            lowers=lowers_i,
-            uppers=uppers_i,
-            k_candidates=k_candidates,
-            penalty_singleton=penalty_singleton,
-        )
+        lowers_key = tuple(float(v) for v in lower_mat[:, i])
+        uppers_key = tuple(float(v) for v in upper_mat[:, i])
+        cache_key = (lowers_key, uppers_key, k_candidates, penalty_singleton)
+        cached = cluster_cache.get(cache_key)
+        if cached is None:
+            lc, uc, kL, kU = cluster_bounds_fast(
+                lowers=list(lowers_key),
+                uppers=list(uppers_key),
+                k_candidates=k_candidates,
+                penalty_singleton=penalty_singleton,
+            )
+            cluster_cache[cache_key] = (lc, uc, kL, kU)
+        else:
+            lc, uc, kL, kU = cached
         cluster_lower[i] = np.float32(lc)
         cluster_upper[i] = np.float32(uc)
         cluster_kL[i] = int(kL)
@@ -894,3 +911,5 @@ if __name__ == "__main__":
     summary_df.to_csv("experiments/run_example_gstar_bounds_summary.csv", index=False)
     print("Coverage/width summary by divergence:")
     print(summary_df)
+    
+    # print(table_df[["i","lower_cluster","truth_do1","upper_cluster","lower_combined","truth_do1","upper_combined"]])
