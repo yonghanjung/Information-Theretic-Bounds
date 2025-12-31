@@ -1,3 +1,4 @@
+
 """
 End-to-end example with extra diagnostics (optimized).
 
