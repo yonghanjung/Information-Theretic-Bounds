@@ -95,8 +95,6 @@ class StepTimer:
         if not _STEP_STACK:
             return False
         entry = _STEP_STACK[-1]
-        if entry.get("name") != self.name:
-            return False
         if exc_type is None:
             wall = time.perf_counter() - float(entry["start_wall"])
             cpu = time.process_time() - float(entry["start_cpu"])
@@ -281,6 +279,69 @@ def combined_cwise_intersection(lower_mat: np.ndarray, upper_mat: np.ndarray, c:
             upper_out[i] = np.float32(np.max(uppers_v))
 
     return lower_out, upper_out
+
+
+# -------------------------
+# Kth aggregator (order-statistic bounds)
+# -------------------------
+def kth(lower_values, upper_values, k):
+    lowers = np.asarray(lower_values, dtype=np.float64).reshape(-1)
+    uppers = np.asarray(upper_values, dtype=np.float64).reshape(-1)
+
+    if lowers.size != uppers.size:
+        raise ValueError("lower_values and upper_values must have same length.")
+    n = int(lowers.size)
+    if n == 0:
+        return float("nan"), float("nan")
+
+    # clamp k into [1, n]
+    k = int(k)
+    if k < 1:
+        k = 1
+    if k > n:
+        k = n
+
+    # Precompute sorted order-statistics once (O(n log n)).
+    # This is simpler and avoids repeated partition work in recursion.
+    lowers_sorted = np.sort(lowers)
+    uppers_sorted = np.sort(uppers)
+
+    while k >= 1:
+        l_k = float(lowers_sorted[k - 1])       # k-th smallest
+        u_k = float(uppers_sorted[n - k])       # (n-k+1)-th smallest
+
+        if l_k <= u_k:
+            return l_k, u_k
+        k -= 1
+
+    # No feasible k found
+    return float("nan"), float("nan")
+
+
+def tight_kth(lower_values, upper_values, k=None):
+    lowers = np.asarray(lower_values, dtype=np.float64).reshape(-1)
+    uppers = np.asarray(upper_values, dtype=np.float64).reshape(-1)
+    if lowers.size != uppers.size:
+        raise ValueError("tight_kth requires lower_values and upper_values to have same length.")
+    n = int(lowers.size)
+    if n == 0:
+        return float("nan"), float("nan")
+    if k is None:
+        k = n
+    k = int(k)
+    if k < 1:
+        raise ValueError("k must be >= 1.")
+    if k > n:
+        k = n
+
+    last = (float("nan"), float("nan"))
+    while k >= 1:
+        l_k, u_k = kth(lowers, uppers, k)
+        last = (l_k, u_k)
+        if l_k <= u_k:
+            break
+        k -= 1
+    return last
 
 
 # -------------------------
@@ -613,16 +674,17 @@ def fit_bounds_with_masks_fast(
         "mask_lower": mask_lower,
     }
 
-def main() -> None:
+if __name__ == "__main__":
     timing_enabled = _timing_enabled_from_argv(default=True)
     timing_detail = _timing_detail_from_argv(default=False)
 
     with StepTimer("configure experiment", use_tqdm=False, enabled=timing_enabled):
         # Keep defaults identical to the original run_example.py
-        seed = 190602
-        n = 10000
+        seed = 300132
+        n = 2000
         d = 10
-        div = "KL"  # KL, TV, Hellinger, Chi2, JS, combined, cluster
+        div = "kth"  # KL, TV, Hellinger, Chi2, JS, combined, cluster, kth, tight_kth
+        k = 4
         structural_type = "cyclic2"
 
         dual_net_config = {
@@ -696,7 +758,7 @@ def main() -> None:
         }
 
     with StepTimer("data generation", use_tqdm=False, enabled=timing_enabled):
-        data = generate_data(n=n, d=d, seed=seed, structural_type=structural_type)
+        data = generate_data(n=n, d=d, seed=seed, structural_type=structural_type, noise_dist="normal")
         keep_cols = None  # choose feature subset; set to None to use all
         full_X = data["X"]
         X = full_X[:, keep_cols] if keep_cols is not None else full_X
@@ -843,9 +905,43 @@ def main() -> None:
         results["k_cluster_lower"] = cluster_kL
         results["k_cluster_upper"] = cluster_kU
 
+    with StepTimer("aggregate kth bounds", use_tqdm=False, enabled=timing_enabled):
+        # Kth order-statistic aggregator over divergence bounds.
+        kth_k = k
+        kth_lower = np.empty(X.shape[0], dtype=np.float32)
+        kth_upper = np.empty(X.shape[0], dtype=np.float32)
+        for i in range(X.shape[0]):
+            lo, up = kth(lower_mat[:, i], upper_mat[:, i], kth_k)
+            kth_lower[i] = np.float32(lo)
+            kth_upper[i] = np.float32(up)
+        results["lower_kth"] = kth_lower
+        results["upper_kth"] = kth_upper
+
+    with StepTimer("aggregate tight_kth bounds", use_tqdm=False, enabled=timing_enabled):
+        # Tightened kth aggregator (decrease k until interval is non-inverted).
+        tight_lower = np.empty(X.shape[0], dtype=np.float32)
+        tight_upper = np.empty(X.shape[0], dtype=np.float32)
+        for i in range(X.shape[0]):
+            lo, up = tight_kth(lower_mat[:, i], upper_mat[:, i], k=lower_mat.shape[0])
+            tight_lower[i] = np.float32(lo)
+            tight_upper[i] = np.float32(up)
+        results["lower_tight_kth"] = tight_lower
+        results["upper_tight_kth"] = tight_upper
+
     with StepTimer("compute metrics", use_tqdm=False, enabled=timing_enabled):
         # Basic sanity checks (mirror the original checks, but on computed outputs).
-        for key in ["lower_combined", "upper_combined", "lower_cluster", "upper_cluster", "lower_Manski", "upper_Manski"]:
+        for key in [
+            "lower_combined",
+            "upper_combined",
+            "lower_cluster",
+            "upper_cluster",
+            "lower_kth",
+            "upper_kth",
+            "lower_tight_kth",
+            "upper_tight_kth",
+            "lower_Manski",
+            "upper_Manski",
+        ]:
             arr = np.asarray(results[key], dtype=np.float32)
             assert np.isfinite(arr).all(), f"{key} has non-finite values"
 
@@ -867,8 +963,14 @@ def main() -> None:
         elif div_key.lower() == "cluster":
             lo = np.asarray(results["lower_cluster"], dtype=np.float32)
             up = np.asarray(results["upper_cluster"], dtype=np.float32)
+        elif div_key.lower() == "kth":
+            lo = np.asarray(results["lower_kth"], dtype=np.float32)
+            up = np.asarray(results["upper_kth"], dtype=np.float32)
+        elif div_key.lower() == "tight_kth":
+            lo = np.asarray(results["lower_tight_kth"], dtype=np.float32)
+            up = np.asarray(results["upper_tight_kth"], dtype=np.float32)
         else:
-            raise ValueError(f"Unknown div='{div}'. Choose one of {base_divs + ['combined','cluster']}.")
+            raise ValueError(f"Unknown div='{div}'. Choose one of {base_divs + ['combined','cluster','kth','tight_kth']}.")
 
         width = float(np.mean(up - lo))
         cover = float(np.mean((truth_do1 >= lo) & (truth_do1 <= up)))
@@ -894,6 +996,10 @@ def main() -> None:
             "upper_Manski",
             "lower_cluster",
             "upper_cluster",
+            "lower_kth",
+            "upper_kth",
+            "lower_tight_kth",
+            "upper_tight_kth",
         ]
 
         table_df = pd.DataFrame({col: results[col] for col in ordered_cols})
@@ -921,6 +1027,14 @@ def main() -> None:
         table_df["coverage_cluster"] = (
             (table_df["lower_cluster"] <= table_df["truth_do1"])
             & (table_df["truth_do1"] <= table_df["upper_cluster"])
+        )
+        table_df["coverage_kth"] = (
+            (table_df["lower_kth"] <= table_df["truth_do1"])
+            & (table_df["truth_do1"] <= table_df["upper_kth"])
+        )
+        table_df["coverage_tight_kth"] = (
+            (table_df["lower_tight_kth"] <= table_df["truth_do1"])
+            & (table_df["truth_do1"] <= table_df["upper_tight_kth"])
         )
 
         summary_rows = []
@@ -954,7 +1068,23 @@ def main() -> None:
             {
                 "divergence": "cluster",
                 "coverage_rate": float(table_df["coverage_cluster"].mean()),
-                "mean_width": float(widths_cluster.mean()),
+                "mean_width": float(widths_cluster.mean())
+            }
+        )
+        widths_kth = table_df["upper_kth"] - table_df["lower_kth"]
+        summary_rows.append(
+            {
+                "divergence": "kth",
+                "coverage_rate": float(table_df["coverage_kth"].mean()),
+                "mean_width": float(widths_kth.mean())
+            }
+        )
+        widths_tight_kth = table_df["upper_tight_kth"] - table_df["lower_tight_kth"]
+        summary_rows.append(
+            {
+                "divergence": "tight_kth",
+                "coverage_rate": float(table_df["coverage_tight_kth"].mean()),
+                "mean_width": float(widths_tight_kth.mean())
             }
         )
         summary_df = pd.DataFrame(summary_rows)
@@ -976,8 +1106,11 @@ def main() -> None:
             "lower_combined", "upper_combined",
             "lower_Manski", "upper_Manski",
             "lower_cluster", "upper_cluster",
+            "lower_kth", "upper_kth",
+            "lower_tight_kth", "upper_tight_kth",
             "coverage_KL", "coverage_TV", "coverage_Hellinger", "coverage_Chi2", "coverage_JS",
             "coverage_combined", "coverage_Manski", "coverage_cluster",
+            "coverage_kth", "coverage_tight_kth",
             "any_invalid_gstar",
         ]
         table_df = table_df[final_columns]
@@ -991,6 +1124,8 @@ def main() -> None:
             "lower_Chi2", "upper_Chi2",
             "lower_JS", "upper_JS",
             "lower_cluster", "upper_cluster",
+            "lower_kth", "upper_kth",
+            "lower_tight_kth", "upper_tight_kth",
             "lower_combined", "upper_combined",
             "lower_Manski", "upper_Manski",
             "valid_gstar_lower_KL", "valid_gstar_upper_KL",
@@ -1019,11 +1154,3 @@ def main() -> None:
         print(summary_df)
 
         # print(table_df[["i","lower_cluster","truth_do1","upper_cluster","lower_combined","truth_do1","upper_combined"]])
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except Exception:
-        _log_active_step_error(use_tqdm=False)
-        raise

@@ -97,6 +97,8 @@ def generate_data(
 
         Y = (5.0 * (2.0 * A.astype(np.float32) - 1.0) * np.sin(eX) + (X @ B) / float(d) + delta * U + eps).astype(np.float32)
 
+        G_mean = 0.5
+
         def GroundTruth(a: int, X_query: np.ndarray) -> np.ndarray:
             if a not in (0, 1):
                 raise ValueError("a must be 0 or 1.")
@@ -157,6 +159,7 @@ def generate_data(
 
         L = _sigmoid((X @ beta) / float(d))
         G = _sigmoid(gamma_s * U)
+        G_mean = 0.5  # E[sigmoid(gamma_s * U)] for symmetric U ~ N(0,1).
         p = _enforce_margin(_sigmoid(alpha + theta * np.sin(X[:, 0]) + eta * G))
         A = rng.binomial(1, p, size=(n,)).astype(np.int64)
 
@@ -170,7 +173,7 @@ def generate_data(
             if Xq.ndim != 2 or Xq.shape[1] != d:
                 raise ValueError(f"X_query must have shape (m,{d}). Got {Xq.shape}.")
             Lq = _sigmoid((Xq @ beta) / float(d))
-            return (5.0 * (2.0 * float(a) - 1.0) * np.sin(Xq[:, 0]) + 0.25 * (Lq + np.mean(G))).astype(np.float32)
+            return (5.0 * (2.0 * float(a) - 1.0) * np.sin(Xq[:, 0]) + 0.25 * (Lq + G_mean)).astype(np.float32)
 
         def propensity_true(X_query: np.ndarray) -> np.ndarray:
             """True propensity P(A=1|X) under the cyclic2 DGP."""

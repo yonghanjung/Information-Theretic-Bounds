@@ -56,6 +56,7 @@ class FDivergence(FDivergenceLike):
     _dB_numpy: Callable[[np.ndarray], np.ndarray]
     _g_star: Callable[[torch.Tensor], torch.Tensor]
     _valid_mask: Callable[[torch.Tensor], torch.Tensor]
+    t_max: float = float("inf")
 
     def B_torch(self, e: torch.Tensor) -> torch.Tensor:
         return self._B_torch(e)
@@ -79,6 +80,11 @@ class FDivergence(FDivergenceLike):
         """
         t = _ensure_tensor(t)
         return self._g_star(t), self._valid_mask(t)
+
+    def domain_violation(self, t: torch.Tensor) -> torch.Tensor:
+        """Return nonnegative violation magnitude for t above the valid domain."""
+        t = _ensure_tensor(t)
+        return torch.relu(t - self.t_max)
 
 
 def _ensure_tensor(x: torch.Tensor) -> torch.Tensor:
@@ -135,6 +141,7 @@ def _kl_divergence(cfg: PenaltyConfig, eps_e: float) -> FDivergence:
         _dB_numpy=dB_n,
         _g_star=g_star,
         _valid_mask=valid_mask,
+        t_max=-cfg.boundary_eps,
     )
 
 
@@ -178,6 +185,7 @@ def _hellinger_divergence(cfg: PenaltyConfig, eps_e: float) -> FDivergence:
         _dB_numpy=dB_n,
         _g_star=g_star,
         _valid_mask=valid_mask,
+        t_max=0.5 - cfg.boundary_eps,
     )
 
 
@@ -222,6 +230,7 @@ def _chi2_divergence(cfg: PenaltyConfig, eps_e: float) -> FDivergence:
         _dB_numpy=dB_n,
         _g_star=g_star,
         _valid_mask=valid_mask,
+        t_max=0.5 - cfg.boundary_eps,
     )
 
 
@@ -282,6 +291,7 @@ def _tv_divergence(cfg: PenaltyConfig, eps_e: float, scaled: bool) -> FDivergenc
             _dB_numpy=dB_n,
             _g_star=g_star,
             _valid_mask=valid_mask,
+            t_max=thr,
         )
 
     def B_t(e: torch.Tensor) -> torch.Tensor:
@@ -324,6 +334,7 @@ def _tv_divergence(cfg: PenaltyConfig, eps_e: float, scaled: bool) -> FDivergenc
         _dB_numpy=dB_n,
         _g_star=g_star,
         _valid_mask=valid_mask,
+        t_max=thr,
     )
 
 
@@ -376,6 +387,7 @@ def _js_divergence(cfg: PenaltyConfig, eps_e: float) -> FDivergence:
         _dB_numpy=dB_n,
         _g_star=g_star,
         _valid_mask=valid_mask,
+        t_max=log4 - cfg.boundary_eps,
     )
 
 
@@ -441,6 +453,7 @@ def register_divergence(name: str, divergence: FDivergenceLike) -> None:
         _dB_numpy=divergence.dB_numpy,
         _g_star=divergence.g_star,
         _valid_mask=valid_mask,
+        t_max=float(getattr(divergence, "t_max", float("inf"))),
     )
 
 
@@ -500,4 +513,5 @@ def get_divergence(divergence: Union[str, FDivergenceLike]) -> FDivergence:
         _dB_numpy=divergence.dB_numpy,
         _g_star=divergence.g_star,
         _valid_mask=valid_mask,
+        t_max=float(getattr(divergence, "t_max", float("inf"))),
     )

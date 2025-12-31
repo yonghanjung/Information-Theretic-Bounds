@@ -12,9 +12,15 @@ venv/
 ENV/
 env/
 
+# Project artifacts
+fBound/archive/
+
 # Experiments artifacts
 experiments/
 
 # Plots / binary artifacts
 *.png
 *.pkl
+
+# Archived code (keep locally, ignore in Git)
+archive/

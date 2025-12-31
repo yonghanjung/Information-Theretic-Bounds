@@ -42,6 +42,7 @@ class DualNetConfig:
     dropout: float
     h_clip: float
     device: str
+    lambda_min: float = 1e-2
 
     @staticmethod
     def from_dict(d: Dict[str, Any]) -> "DualNetConfig":
@@ -53,6 +54,7 @@ class DualNetConfig:
             dropout=float(d["dropout"]),
             h_clip=float(d["h_clip"]),
             device=str(d["device"]),
+            lambda_min=float(d.get("lambda_min", 1e-2)),
         )
 
 
@@ -71,6 +73,7 @@ class FitConfig:
     m_config: Dict[str, Any]
     verbose: bool
     log_every: int
+    domain_penalty_weight: float = 1e4
 
     @staticmethod
     def from_dict(d: Dict[str, Any]) -> "FitConfig":
@@ -110,6 +113,7 @@ class FitConfig:
             m_config=dict(d["m_config"]),
             verbose=bool(d["verbose"]),
             log_every=int(d["log_every"]),
+            domain_penalty_weight=float(d.get("domain_penalty_weight", 1e4)),
         )
 
 
@@ -289,6 +293,7 @@ class DebiasedCausalBoundEstimator:
         A: np.ndarray,
         Y: np.ndarray,
         propensity_cache: Optional[Dict[str, Any]] = None,
+        e_train_true: Optional[np.ndarray] = None,
     ) -> "DebiasedCausalBoundEstimator":
         """
         Fit the estimator on observational data.
@@ -309,12 +314,19 @@ class DebiasedCausalBoundEstimator:
 
         set_global_seed(self.seed, deterministic_torch=self.fit_cfg.deterministic_torch)
 
+        e_true = None
+        if e_train_true is not None:
+            e_true = np.asarray(e_train_true, dtype=np.float32).reshape(-1)
+            if e_true.shape[0] != n:
+                raise ValueError(f"e_train_true must have length n={n}. Got {e_true.shape[0]}.")
+            e_true = np.clip(e_true, self.fit_cfg.eps_propensity, 1.0 - self.fit_cfg.eps_propensity)
+
         # Cross-fitting splits / propensity models (can be cached).
-        if propensity_cache is None:
+        if propensity_cache is None and e_true is None:
             self.splits_ = make_kfold_splits(n=n, n_splits=self.fit_cfg.n_folds, seed=self.seed, shuffle=True)
             prop_models: Optional[list[Any]] = None
             e1_oof = np.empty(n, dtype=np.float32)
-        else:
+        elif e_true is None:
             splits = propensity_cache.get("splits", None)
             models = propensity_cache.get("models", None)
             e1_oof_in = propensity_cache.get("e1_oof", None)
@@ -338,6 +350,10 @@ class DebiasedCausalBoundEstimator:
 
             self.splits_ = splits
             prop_models = list(models)
+        else:
+            self.splits_ = make_kfold_splits(n=n, n_splits=self.fit_cfg.n_folds, seed=self.seed, shuffle=True)
+            prop_models = [None] * len(self.splits_)
+            e1_oof = e_true
 
         # Fold alignment
         fold_id = np.empty(n, dtype=int)
@@ -348,6 +364,8 @@ class DebiasedCausalBoundEstimator:
         # Reset fitted components (keep propensity models if cached).
         if propensity_cache is None:
             self.propensity_models_.clear()
+            if prop_models is not None:
+                self.propensity_models_ = prop_models
         else:
             self.propensity_models_ = prop_models if prop_models is not None else []
 
@@ -358,7 +376,7 @@ class DebiasedCausalBoundEstimator:
 
         # Cross-fitting loop: fit nuisance models on train folds, evaluate dual loss on held-out fold.
         for k, (train_idx, fold_idx) in enumerate(self.splits_):
-            if propensity_cache is None:
+            if propensity_cache is None and e_true is None:
                 A_train = Ac[train_idx]
                 classes = np.unique(A_train)
                 if classes.size < 2:
@@ -377,9 +395,11 @@ class DebiasedCausalBoundEstimator:
                 )
                 e1_oof[fold_idx] = e1_fold
                 self.propensity_models_.append(prop_model)
-            else:
+            elif e_true is None:
                 # Cache mode: propensity models + e1_oof are provided.
                 _ = self.propensity_models_[k]  # used later at prediction time
+                e1_fold = e1_oof[fold_idx]
+            else:
                 e1_fold = e1_oof[fold_idx]
 
             h_net, u_net, last_loss = self._fit_dual_nets_on_fold(
@@ -536,27 +556,32 @@ class DebiasedCausalBoundEstimator:
         h1 = torch.clamp(h_net(ax1), min=-self.dual_net_cfg.h_clip, max=self.dual_net_cfg.h_clip)
 
         h_ax = torch.where(A >= 0.5, h1, h0)
-        lam_ax = torch.exp(h_ax)
+        lam_ax = torch.exp(h_ax).clamp(min=self.dual_net_cfg.lambda_min)
 
         phi_y = self.phi(Y)
         t = (phi_y - u_ax) / lam_ax
         g_star_val = self.divergence.g_star(t)
+        domain_pen = self.fit_cfg.domain_penalty_weight * self.divergence.domain_violation(t).pow(2)
 
         eA = torch.where(A >= 0.5, e1, e0)
         eta = self.divergence.B_torch(eA)
 
-        main = lam_ax * (eta + g_star_val) + u_ax
+        main = lam_ax * (eta + g_star_val) + u_ax + domain_pen
 
-        lam0 = torch.exp(h0)
-        lam1 = torch.exp(h1)
-
-        eta_prime0 = self.divergence.dB_torch(e0)
-        eta_prime1 = self.divergence.dB_torch(e1)
+        lam0 = torch.exp(h0).clamp(min=self.dual_net_cfg.lambda_min)
+        lam1 = torch.exp(h1).clamp(min=self.dual_net_cfg.lambda_min)
 
         I0 = 1.0 - A
         I1 = A
 
-        corr = e0 * lam0 * eta_prime0 * (I0 - e0) + e1 * lam1 * eta_prime1 * (I1 - e1)
+        # Eq. (23) in the paper: derivative evaluated at observed A
+        # eta_primeA = self.divergence.dB_torch(eA)
+        # corr = eta_primeA * (e0 * lam0 * (I0 - e0) + e1 * lam1 * (I1 - e1))
+        
+        # Eq. (23) in the paper: derivative evaluated at observed a
+        eta_prime0 = self.divergence.dB_torch(e0)
+        eta_prime1 = self.divergence.dB_torch(e1)
+        corr = eta_prime0 * (e0 * lam0 * (I0 - e0)) + eta_prime1 * (e1 * lam1 * (I1 - e1))
 
         loss = (main + corr).mean()
         if not torch.isfinite(loss):
@@ -587,7 +612,7 @@ class DebiasedCausalBoundEstimator:
         ax = _concat_ax(A_t, X_t)
         h = h_net(ax)
         h = torch.clamp(h, min=-self.dual_net_cfg.h_clip, max=self.dual_net_cfg.h_clip)
-        lam = torch.exp(h)
+        lam = torch.exp(h).clamp(min=self.dual_net_cfg.lambda_min)
         u = u_net(ax)
 
         t = (self.phi(Y_t) - u) / lam
@@ -627,7 +652,7 @@ class DebiasedCausalBoundEstimator:
 
         ax = _concat_ax(A_t, X_t)
         h = torch.clamp(h_net(ax), min=-self.dual_net_cfg.h_clip, max=self.dual_net_cfg.h_clip)
-        lam = torch.exp(h)
+        lam = torch.exp(h).clamp(min=self.dual_net_cfg.lambda_min)
         u = u_net(ax)
 
         t = (self.phi(Y_t) - u) / lam
@@ -715,7 +740,7 @@ class DebiasedCausalBoundEstimator:
         with torch.no_grad():
             h = h_net(ax_t)
             h = torch.clamp(h, min=-self.dual_net_cfg.h_clip, max=self.dual_net_cfg.h_clip)
-            lam = torch.exp(h).cpu().numpy().astype(np.float64, copy=False)
+            lam = torch.exp(h).clamp(min=self.dual_net_cfg.lambda_min).cpu().numpy().astype(np.float64, copy=False)
             u = u_net(ax_t).cpu().numpy().astype(np.float64, copy=False)
 
         m = m_reg.predict(AX64).astype(np.float64, copy=False)
@@ -977,3 +1002,287 @@ def compute_causal_bounds(
             return _combined_robust(base_divs, c=3)
 
     return _compute_for_div(divergence)
+
+
+def _fit_def6_upper_only(
+    Y: np.ndarray,
+    A: np.ndarray,
+    divergence: Union[str, FDivergenceLike],
+    phi: PhiFn,
+    *,
+    e0_hat: float,
+    e1_hat: float,
+    seed: int = 0,
+    num_epochs: int = 3000,
+    lr: float = 1e-2,
+    weight_decay: float = 0.0,
+    max_grad_norm: Optional[float] = 10.0,
+    h_clip: float = 20.0,
+    device: str = "cpu",
+    verbose: bool = False,
+    log_every: int = 200,
+) -> tuple[Dict[int, float], Dict[str, Any], Dict[str, Any]]:
+    div = get_divergence(divergence)
+    set_global_seed(seed, deterministic_torch=False)
+
+    Y_arr = np.asarray(Y, dtype=np.float32).reshape(-1)
+    A_arr = np.asarray(A, dtype=np.int64).reshape(-1)
+
+    Y_t = torch.as_tensor(Y_arr, dtype=torch.float32, device=device)
+    A_t = torch.as_tensor(A_arr, dtype=torch.int64, device=device)
+
+    h = torch.nn.Parameter(torch.zeros(2, device=device))
+    u = torch.nn.Parameter(torch.zeros(2, device=device))
+
+    optimizer = torch.optim.Adam([h, u], lr=lr, weight_decay=weight_decay)
+
+    eta0_t = div.B_torch(torch.tensor(float(e0_hat), dtype=torch.float32, device=device))
+    eta1_t = div.B_torch(torch.tensor(float(e1_hat), dtype=torch.float32, device=device))
+    etaA = torch.where(A_t == 1, eta1_t, eta0_t)
+
+    phiY = phi(Y_t)
+
+    last_loss = None
+    for epoch in range(int(num_epochs)):
+        optimizer.zero_grad(set_to_none=True)
+
+        hA = h[A_t]
+        uA = u[A_t]
+        hA_clamped = torch.clamp(hA, min=-h_clip, max=h_clip)
+        lamA = torch.exp(hA_clamped)
+
+        t = (phiY - uA) / lamA
+        gstar = div.g_star(t)
+        loss = torch.mean(lamA * (etaA + gstar) + uA)
+
+        if not torch.isfinite(loss).item():
+            raise FloatingPointError(
+                "Non-finite loss in Definition 6 optimization. "
+                "Try reducing lr or increasing h_clip/eps_propensity."
+            )
+
+        loss.backward()
+        if max_grad_norm is not None:
+            torch.nn.utils.clip_grad_norm_([h, u], max_grad_norm)
+        optimizer.step()
+
+        last_loss = float(loss.detach().cpu().item())
+        if verbose and log_every > 0:
+            if epoch % log_every == 0 or epoch == int(num_epochs) - 1:
+                print(f"[def6] epoch={epoch} loss={last_loss:.6f}")
+
+    with torch.no_grad():
+        h_clamped = torch.clamp(h, min=-h_clip, max=h_clip)
+        lam_hat = torch.exp(h_clamped)
+        u_hat = u.detach()
+
+        t = (phiY - u_hat[A_t]) / lam_hat[A_t]
+        if hasattr(div, "g_star_with_valid"):
+            gstar, valid_mask = div.g_star_with_valid(t)
+            gstar_valid_frac = float(valid_mask.float().mean().item())
+        else:
+            gstar = div.g_star(t)
+            gstar_valid_frac = float("nan")
+
+        mask0 = A_t == 0
+        mask1 = A_t == 1
+        m_hat0 = torch.mean(gstar[mask0])
+        m_hat1 = torch.mean(gstar[mask1])
+
+        mu0 = lam_hat[0] * (eta0_t + m_hat0) + u_hat[0]
+        mu1 = lam_hat[1] * (eta1_t + m_hat1) + u_hat[1]
+
+    mu_upper = {0: float(mu0.item()), 1: float(mu1.item())}
+    diagnostics = {
+        "final_loss": last_loss,
+        "epochs": int(num_epochs),
+        "gstar_valid_frac": gstar_valid_frac,
+    }
+    fitted_params = {
+        "h": h.detach().cpu().numpy(),
+        "u": u.detach().cpu().numpy(),
+        "lambda": lam_hat.detach().cpu().numpy(),
+    }
+    return mu_upper, diagnostics, fitted_params
+
+
+def compute_marginal_bounds_def6(
+    Y: np.ndarray,
+    A: np.ndarray,
+    divergence: Union[str, FDivergenceLike],
+    phi: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
+    *,
+    seed: int = 0,
+    num_epochs: int = 3000,
+    lr: float = 1e-2,
+    weight_decay: float = 0.0,
+    max_grad_norm: Optional[float] = 10.0,
+    eps_propensity: float = 1e-6,
+    h_clip: float = 20.0,
+    device: str = "cpu",
+    verbose: bool = False,
+    log_every: int = 200,
+) -> Dict[str, Any]:
+    """
+    Implements Definition 6 (X=∅) estimator for marginal causal bounds; lower bound via sign flip.
+    """
+    if not (0.0 < eps_propensity < 0.5):
+        raise ValueError("eps_propensity must be in (0, 0.5).")
+
+    A_arr = np.asarray(A).reshape(-1)
+    Y_arr = np.asarray(Y).reshape(-1)
+
+    if A_arr.shape[0] != Y_arr.shape[0]:
+        raise ValueError(
+            f"Shape mismatch: len(Y)={Y_arr.shape[0]}, len(A)={A_arr.shape[0]}."
+        )
+
+    unique = set(np.unique(A_arr).tolist())
+    if not unique.issubset({0, 1}):
+        raise ValueError(f"A must be binary in {{0,1}}. Found unique values: {sorted(unique)}")
+
+    finite_mask = np.isfinite(Y_arr)
+    if not np.all(finite_mask):
+        bad = int(Y_arr.shape[0] - np.count_nonzero(finite_mask))
+        raise ValueError(f"Y must be finite. Found {bad} non-finite values.")
+
+    n = int(Y_arr.shape[0])
+    n1 = int(np.sum(A_arr == 1))
+    n0 = int(np.sum(A_arr == 0))
+    if n0 == 0 or n1 == 0:
+        raise ValueError("Definition 6 requires both treatment arms present in the data.")
+
+    e1_hat = float(n1) / float(n)
+    e0_hat = float(n0) / float(n)
+    e1_hat = float(np.clip(e1_hat, eps_propensity, 1.0 - eps_propensity))
+    e0_hat = float(np.clip(e0_hat, eps_propensity, 1.0 - eps_propensity))
+
+    if phi is None:
+        def _phi_identity(y: torch.Tensor) -> torch.Tensor:
+            return y
+        phi_fn = _phi_identity
+    else:
+        phi_fn = phi
+
+    mu_upper_pos, diag_pos, params_pos = _fit_def6_upper_only(
+        Y=Y_arr,
+        A=A_arr,
+        divergence=divergence,
+        phi=phi_fn,
+        e0_hat=e0_hat,
+        e1_hat=e1_hat,
+        seed=seed,
+        num_epochs=num_epochs,
+        lr=lr,
+        weight_decay=weight_decay,
+        max_grad_norm=max_grad_norm,
+        h_clip=h_clip,
+        device=device,
+        verbose=verbose,
+        log_every=log_every,
+    )
+
+    def _phi_neg(y: torch.Tensor) -> torch.Tensor:
+        return -phi_fn(y)
+
+    mu_upper_neg, diag_neg, params_neg = _fit_def6_upper_only(
+        Y=Y_arr,
+        A=A_arr,
+        divergence=divergence,
+        phi=_phi_neg,
+        e0_hat=e0_hat,
+        e1_hat=e1_hat,
+        seed=seed,
+        num_epochs=num_epochs,
+        lr=lr,
+        weight_decay=weight_decay,
+        max_grad_norm=max_grad_norm,
+        h_clip=h_clip,
+        device=device,
+        verbose=verbose,
+        log_every=log_every,
+    )
+
+    mu0_upper = mu_upper_pos[0]
+    mu1_upper = mu_upper_pos[1]
+    mu0_lower = -mu_upper_neg[0]
+    mu1_lower = -mu_upper_neg[1]
+
+    div = get_divergence(divergence)
+
+    return {
+        "mu0_lower": mu0_lower,
+        "mu0_upper": mu0_upper,
+        "mu1_lower": mu1_lower,
+        "mu1_upper": mu1_upper,
+        "e0_hat": e0_hat,
+        "e1_hat": e1_hat,
+        "divergence": div.name,
+        "gstar_valid_frac_pos": diag_pos.get("gstar_valid_frac"),
+        "gstar_valid_frac_neg": diag_neg.get("gstar_valid_frac"),
+        "opt": {
+            "final_loss_pos": diag_pos.get("final_loss"),
+            "final_loss_neg": diag_neg.get("final_loss"),
+            "epochs": diag_pos.get("epochs"),
+            "lr": float(lr),
+            "weight_decay": float(weight_decay),
+            "max_grad_norm": max_grad_norm,
+            "h_clip": float(h_clip),
+            "device": str(device),
+            "params_pos": params_pos,
+            "params_neg": params_neg,
+        },
+    }
+
+
+def compute_ate_bounds_def6(
+    Y: np.ndarray,
+    A: np.ndarray,
+    divergence: Union[str, FDivergenceLike],
+    *,
+    seed: int = 0,
+    num_epochs: int = 3000,
+    lr: float = 1e-2,
+    weight_decay: float = 0.0,
+    max_grad_norm: Optional[float] = 10.0,
+    eps_propensity: float = 1e-6,
+    h_clip: float = 20.0,
+    device: str = "cpu",
+    verbose: bool = False,
+    log_every: int = 200,
+) -> Dict[str, Any]:
+    """
+    Implements Definition 6 (X=∅) estimator for marginal causal bounds; lower bound via sign flip.
+    """
+    out = compute_marginal_bounds_def6(
+        Y=Y,
+        A=A,
+        divergence=divergence,
+        phi=None,
+        seed=seed,
+        num_epochs=num_epochs,
+        lr=lr,
+        weight_decay=weight_decay,
+        max_grad_norm=max_grad_norm,
+        eps_propensity=eps_propensity,
+        h_clip=h_clip,
+        device=device,
+        verbose=verbose,
+        log_every=log_every,
+    )
+
+    ate_lower = out["mu1_lower"] - out["mu0_upper"]
+    ate_upper = out["mu1_upper"] - out["mu0_lower"]
+
+    ate_order_fixed = False
+    if ate_lower > ate_upper:
+        mid = 0.5 * (ate_lower + ate_upper)
+        ate_lower = mid
+        ate_upper = mid
+        ate_order_fixed = True
+
+    out["ate_lower"] = ate_lower
+    out["ate_upper"] = ate_upper
+    out["ate_width"] = ate_upper - ate_lower
+    out["ate_order_fixed"] = ate_order_fixed
+    return out
