@@ -1,18 +1,18 @@
 from __future__ import annotations
-from dataclasses import dataclass
-from typing import Any, Dict, Optional
-import numpy as np
 
-@dataclass(frozen=True)
-class BoundResult:
-    """
-    Container for bound outputs and validity masks.
+from pathlib import Path
+import sys as _sys
 
-    Arrays are expected to be broadcastable to the same shape.
-    """
-    upper: np.ndarray
-    lower: np.ndarray
-    valid_up: np.ndarray
-    valid_lo: np.ndarray
-    valid_interval: np.ndarray
-    diagnostics: Optional[Dict[str, Any]] = None
+_ROOT = Path(__file__).resolve().parent
+_SRC = _ROOT / "src"
+if str(_SRC) not in _sys.path:
+    _sys.path.insert(0, str(_SRC))
+
+from fbound.utils import result as _mod
+
+for _name, _value in _mod.__dict__.items():
+    if _name.startswith("__"):
+        continue
+    globals()[_name] = _value
+
+__all__ = [name for name in _mod.__dict__ if not name.startswith("__")]
