@@ -24,6 +24,7 @@ from divergences import FDivergence, FDivergenceLike, get_divergence
 from models import TorchMLP, make_classifier, make_regressor
 from utils import check_shapes, make_kfold_splits, set_global_seed
 
+from result import BoundResult
 
 PhiFn = Callable[[torch.Tensor], torch.Tensor]
 
@@ -1286,3 +1287,53 @@ def compute_ate_bounds_def6(
     out["ate_width"] = ate_upper - ate_lower
     out["ate_order_fixed"] = ate_order_fixed
     return out
+
+
+def run_bound_with_result(*args, **kwargs) -> BoundResult:
+    """
+    Temporary wrapper to expose a stable API required by AGENTS P0 tests.
+
+    IMPORTANT:
+    - This wrapper should call the existing implementation.
+    - It should not change training, optimization, or math.
+    """
+    # TODO: Replace this call with your current entrypoint.
+    # Example:
+    # out = run_bound(*args, **kwargs)
+    out = run_bound(*args, **kwargs)  # adjust if your function name differs
+
+    # TODO: Map your existing outputs to upper/lower arrays.
+    # If you currently have only an interval (lower, upper) with a single validity mask,
+    # temporarily map it as follows:
+    upper = np.asarray(out["upper"], dtype=float) if isinstance(out, dict) else np.asarray(out.upper, dtype=float)
+    lower = np.asarray(out["lower"], dtype=float) if isinstance(out, dict) else np.asarray(out.lower, dtype=float)
+
+    # TEMPORARY mapping (will be fixed in Step 8):
+    # If your current code has a single mask, map it to both valid_up/valid_lo for now.
+    if isinstance(out, dict) and "valid_mask" in out:
+        valid_mask = np.asarray(out["valid_mask"], dtype=bool)
+    elif hasattr(out, "valid_mask"):
+        valid_mask = np.asarray(out.valid_mask, dtype=bool)
+    else:
+        # If no mask exists, treat finite endpoints + ordering as valid (temporary)
+        valid_mask = np.isfinite(lower) & np.isfinite(upper) & (lower <= upper)
+
+    valid_up = valid_mask.copy()
+    valid_lo = valid_mask.copy()
+
+    valid_interval = valid_up & valid_lo & np.isfinite(lower) & np.isfinite(upper) & (lower <= upper)
+
+    # blank invalid endpoints
+    lower2 = lower.copy()
+    upper2 = upper.copy()
+    lower2[~valid_interval] = np.nan
+    upper2[~valid_interval] = np.nan
+
+    return BoundResult(
+        upper=upper2,
+        lower=lower2,
+        valid_up=valid_up,
+        valid_lo=valid_lo,
+        valid_interval=valid_interval,
+        diagnostics=getattr(out, "diagnostics", None) if not isinstance(out, dict) else out.get("diagnostics", None),
+    )
