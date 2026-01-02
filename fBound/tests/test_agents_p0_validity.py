@@ -1,5 +1,10 @@
 import numpy as np
 import pytest
+import torch
+
+from causal_bound import compute_causal_bounds
+from data_generating import generate_data
+from result import BoundResult
 
 def _run_tiny_bound():
     """
@@ -10,19 +15,79 @@ def _run_tiny_bound():
     - Do NOT modify estimator logic; only call it.
     - Keep runtime < 10s.
     """
-    np.random.seed(123)
+    data = generate_data(n=60, d=3, seed=123, structural_type="linear")
 
-    # TODO: change these imports to match your repo
-    # from fBound.data_generating import make_toy_data
-    # from fBound.causal_bound import run_bound
+    def _phi_identity(y: torch.Tensor) -> torch.Tensor:
+        return y
 
-    n = 30
-    # X, A, Y = make_toy_data(n=n, seed=123)
-    # result = run_bound(X=X, A=A, Y=Y)
+    dual_net_config = {
+        "hidden_sizes": (16, 16),
+        "activation": "relu",
+        "dropout": 0.0,
+        "h_clip": 10.0,
+        "device": "cpu",
+    }
+    fit_config = {
+        "n_folds": 2,
+        "num_epochs": 2,
+        "batch_size": 32,
+        "lr": 5e-3,
+        "weight_decay": 0.0,
+        "max_grad_norm": 5.0,
+        "eps_propensity": 1e-3,
+        "deterministic_torch": True,
+        "train_m_on_fold": True,
+        "propensity_config": {
+            "C": 1.0,
+            "max_iter": 200,
+            "penalty": "l2",
+            "solver": "lbfgs",
+            "n_jobs": 1,
+        },
+        "m_config": {
+            "alpha": 1.0,
+        },
+        "verbose": False,
+        "log_every": 1,
+    }
 
-    # TODO: return whatever object your code currently returns
-    # return result
-    raise NotImplementedError("Wire this to your current bound runner.")
+    df = compute_causal_bounds(
+        Y=data["Y"],
+        A=data["A"],
+        X=data["X"],
+        divergence="KL",
+        phi=_phi_identity,
+        propensity_model="logistic",
+        m_model="linear",
+        dual_net_config=dual_net_config,
+        fit_config=fit_config,
+        seed=123,
+        GroundTruth=None,
+    )
+
+    upper = df["upper"].to_numpy(dtype=np.float32)
+    lower = df["lower"].to_numpy(dtype=np.float32)
+    valid_up = np.isfinite(upper)
+    valid_lo = np.isfinite(lower)
+    valid_interval = valid_up & valid_lo & (lower <= upper)
+
+    upper = upper.copy()
+    lower = lower.copy()
+    upper[~valid_interval] = np.nan
+    lower[~valid_interval] = np.nan
+
+    valid_up = np.isfinite(upper)
+    valid_lo = np.isfinite(lower)
+    valid_interval = valid_up & valid_lo & (lower <= upper)
+
+    return BoundResult(
+        upper=upper,
+        lower=lower,
+        valid_up=valid_up,
+        valid_lo=valid_lo,
+        valid_interval=valid_interval,
+        diagnostics=None,
+    )
 
 def test_agents_requires_separate_valid_up_valid_lo():
     """
