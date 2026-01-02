@@ -67,18 +67,9 @@ def _run_tiny_bound():
 
     upper = df["upper"].to_numpy(dtype=np.float32)
     lower = df["lower"].to_numpy(dtype=np.float32)
-    valid_up = np.isfinite(upper)
-    valid_lo = np.isfinite(lower)
-    valid_interval = valid_up & valid_lo & (lower <= upper)
-
-    upper = upper.copy()
-    lower = lower.copy()
-    upper[~valid_interval] = np.nan
-    lower[~valid_interval] = np.nan
-
-    valid_up = np.isfinite(upper)
-    valid_lo = np.isfinite(lower)
-    valid_interval = valid_up & valid_lo & (lower <= upper)
+    valid_up = df["valid_up"].to_numpy(dtype=bool)
+    valid_lo = df["valid_lo"].to_numpy(dtype=bool)
+    valid_interval = df["valid_interval"].to_numpy(dtype=bool)
 
     return BoundResult(
         upper=upper,

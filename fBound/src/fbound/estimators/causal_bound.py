@@ -148,6 +148,111 @@ def _concat_ax(A: torch.Tensor, X: torch.Tensor) -> torch.Tensor:
     return torch.cat([A.reshape(-1, 1), X], dim=1)
 
 
+def _apply_interval_validity(
+    lower_raw: np.ndarray,
+    upper_raw: np.ndarray,
+    valid_up: np.ndarray,
+    valid_lo: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    lower_raw = np.asarray(lower_raw, dtype=np.float64).reshape(-1)
+    upper_raw = np.asarray(upper_raw, dtype=np.float64).reshape(-1)
+    valid_up = np.asarray(valid_up, dtype=bool).reshape(-1)
+    valid_lo = np.asarray(valid_lo, dtype=bool).reshape(-1)
+
+    finite_lower = np.isfinite(lower_raw)
+    finite_upper = np.isfinite(upper_raw)
+    inverted = finite_lower & finite_upper & (lower_raw > upper_raw)
+    valid_interval = valid_lo & valid_up & finite_lower & finite_upper & (~inverted)
+
+    lower = np.where(valid_interval, lower_raw, np.nan).astype(np.float32)
+    upper = np.where(valid_interval, upper_raw, np.nan).astype(np.float32)
+    return lower, upper, valid_interval, inverted
+
+
+def aggregate_endpointwise(
+    lower_mat: np.ndarray,
+    upper_mat: np.ndarray,
+    valid_up: np.ndarray,
+    valid_lo: np.ndarray,
+    *,
+    k_up: int = 1,
+    k_lo: int = 1,
+) -> dict[str, np.ndarray]:
+    lower_mat = np.asarray(lower_mat, dtype=np.float64)
+    upper_mat = np.asarray(upper_mat, dtype=np.float64)
+    valid_up = np.asarray(valid_up, dtype=bool)
+    valid_lo = np.asarray(valid_lo, dtype=bool)
+    if lower_mat.shape != upper_mat.shape or lower_mat.shape != valid_up.shape or lower_mat.shape != valid_lo.shape:
+        raise ValueError("All inputs must have the same shape (n_div, n_obs).")
+    n_div, n_obs = lower_mat.shape
+
+    inverted = np.isfinite(lower_mat) & np.isfinite(upper_mat) & (lower_mat > upper_mat)
+
+    lower_out = np.full(n_obs, np.nan, dtype=np.float64)
+    upper_out = np.full(n_obs, np.nan, dtype=np.float64)
+    n_eff_up = np.zeros(n_obs, dtype=int)
+    n_eff_lo = np.zeros(n_obs, dtype=int)
+    invalid_up = np.zeros(n_obs, dtype=int)
+    invalid_lo = np.zeros(n_obs, dtype=int)
+    nonfinite_upper = np.zeros(n_obs, dtype=int)
+    nonfinite_lower = np.zeros(n_obs, dtype=int)
+    inverted_count = np.zeros(n_obs, dtype=int)
+
+    k_up = int(k_up)
+    k_lo = int(k_lo)
+    k_used_up = np.full(n_obs, k_up, dtype=int)
+    k_used_lo = np.full(n_obs, k_lo, dtype=int)
+
+    for i in range(n_obs):
+        up_i = upper_mat[:, i]
+        lo_i = lower_mat[:, i]
+        valid_up_i = valid_up[:, i]
+        valid_lo_i = valid_lo[:, i]
+        inverted_i = inverted[:, i]
+
+        invalid_up[i] = int(np.count_nonzero(~valid_up_i))
+        invalid_lo[i] = int(np.count_nonzero(~valid_lo_i))
+        nonfinite_upper[i] = int(np.count_nonzero(~np.isfinite(up_i)))
+        nonfinite_lower[i] = int(np.count_nonzero(~np.isfinite(lo_i)))
+        inverted_count[i] = int(np.count_nonzero(inverted_i))
+
+        upper_candidates = up_i[valid_up_i & np.isfinite(up_i) & (~inverted_i)]
+        lower_candidates = lo_i[valid_lo_i & np.isfinite(lo_i) & (~inverted_i)]
+
+        n_eff_up[i] = int(upper_candidates.size)
+        n_eff_lo[i] = int(lower_candidates.size)
+
+        if upper_candidates.size > 0:
+            upper_sorted = np.sort(upper_candidates)
+            k_eff = min(max(k_up, 1), upper_sorted.size)
+            k_used_up[i] = int(k_eff)
+            upper_out[i] = float(upper_sorted[k_eff - 1])
+
+        if lower_candidates.size > 0:
+            lower_sorted = np.sort(lower_candidates)
+            k_eff = min(max(k_lo, 1), lower_sorted.size)
+            k_used_lo[i] = int(k_eff)
+            lower_out[i] = float(lower_sorted[-k_eff])
+
+        if not np.isfinite(lower_out[i]) or not np.isfinite(upper_out[i]) or (lower_out[i] > upper_out[i]):
+            lower_out[i] = np.nan
+            upper_out[i] = np.nan
+
+    return {
+        "lower": lower_out.astype(np.float32),
+        "upper": upper_out.astype(np.float32),
+        "n_eff_up": n_eff_up,
+        "n_eff_lo": n_eff_lo,
+        "k_used_up": k_used_up,
+        "k_used_lo": k_used_lo,
+        "invalid_up": invalid_up,
+        "invalid_lo": invalid_lo,
+        "nonfinite_upper": nonfinite_upper,
+        "nonfinite_lower": nonfinite_lower,
+        "inverted_filtered": inverted_count,
+    }
+
+
 def _predict_proba_class1(model: Any, X: np.ndarray) -> np.ndarray:
     """Return P(A=1|X) while respecting sklearn's class ordering."""
     proba = model.predict_proba(X)
@@ -947,7 +1052,7 @@ def compute_causal_bounds(
             eps_propensity=fit_cfg.eps_propensity,
         )
 
-    def _compute_for_div(div_name: Union[str, FDivergenceLike]) -> pd.DataFrame:
+    def _compute_for_div(div_name: Union[str, FDivergenceLike]) -> dict[str, Any]:
         """Run the standard two-pass (phi and -phi) pipeline for a single divergence."""
         est = DebiasedCausalBoundEstimator(
             divergence=div_name,
@@ -982,12 +1087,29 @@ def compute_causal_bounds(
         if not np.array_equal(df_upper["i"].values, df_upper_neg["i"].values):
             raise RuntimeError("Internal alignment error between phi and -phi runs.")
 
-        lower = -df_upper_neg["upper"].to_numpy(dtype=np.float32)
+        upper_raw = df_upper["upper"].to_numpy(dtype=np.float64)
+        upper_neg = df_upper_neg["upper"].to_numpy(dtype=np.float64)
+        lower_raw = -upper_neg
+
+        valid_up = np.isfinite(upper_raw)
+        valid_lo = np.isfinite(upper_neg)
+
+        lower, upper, valid_interval, inverted = _apply_interval_validity(
+            lower_raw=lower_raw,
+            upper_raw=upper_raw,
+            valid_up=valid_up,
+            valid_lo=valid_lo,
+        )
 
         out = df_upper.copy()
         out["truth_do1"] = truth
         out["lower"] = lower
-        out["width"] = (out["upper"] - out["lower"]).astype(np.float32)
+        out["upper"] = upper
+        out["width"] = (upper - lower).astype(np.float32)
+        out["valid_up"] = valid_up
+        out["valid_lo"] = valid_lo
+        out["valid_interval"] = valid_interval
+        out["inverted"] = inverted
 
         cols = [
             "i",
@@ -997,17 +1119,80 @@ def compute_causal_bounds(
             "width",
             "ehat1_oof",
             "dual_loss_fold",
+            "valid_up",
+            "valid_lo",
+            "valid_interval",
+            "inverted",
             "divergence",
         ]
-        return out[cols]
+        return {
+            "df": out[cols],
+            "upper_raw": upper_raw,
+            "lower_raw": lower_raw,
+            "valid_up": valid_up,
+            "valid_lo": valid_lo,
+            "inverted": inverted,
+        }
 
-    def _stack_divergence_runs(div_names: Sequence[str]) -> list[pd.DataFrame]:
-        div_dfs = [_compute_for_div(div_name) for div_name in div_names]
-        i_ref = div_dfs[0]["i"].to_numpy()
-        for df_other in div_dfs[1:]:
-            if not np.array_equal(i_ref, df_other["i"].to_numpy()):
+    def _stack_divergence_runs(div_names: Sequence[str]) -> list[dict[str, Any]]:
+        div_runs = [_compute_for_div(div_name) for div_name in div_names]
+        i_ref = div_runs[0]["df"]["i"].to_numpy()
+        for other in div_runs[1:]:
+            if not np.array_equal(i_ref, other["df"]["i"].to_numpy()):
                 raise RuntimeError("Alignment error when combining divergences.")
-        return div_dfs
+        return div_runs
+
+    def _combined_endpointwise(
+        div_names: Sequence[str],
+        *,
+        k_up: int = 1,
+        k_lo: int = 1,
+    ) -> pd.DataFrame:
+        div_runs = _stack_divergence_runs(div_names)
+        base = div_runs[0]["df"]
+
+        upper_stack = np.vstack([run["upper_raw"] for run in div_runs])
+        lower_stack = np.vstack([run["lower_raw"] for run in div_runs])
+        valid_up_stack = np.vstack([run["valid_up"] for run in div_runs])
+        valid_lo_stack = np.vstack([run["valid_lo"] for run in div_runs])
+
+        agg = aggregate_endpointwise(
+            lower_mat=lower_stack,
+            upper_mat=upper_stack,
+            valid_up=valid_up_stack,
+            valid_lo=valid_lo_stack,
+            k_up=k_up,
+            k_lo=k_lo,
+        )
+
+        combined = base.copy()
+        lower = agg["lower"].astype(np.float32)
+        upper = agg["upper"].astype(np.float32)
+        combined["lower"] = lower
+        combined["upper"] = upper
+        combined["width"] = (upper - lower).astype(np.float32)
+        combined["divergence"] = "combined"
+
+        valid_up = np.isfinite(upper)
+        valid_lo = np.isfinite(lower)
+        combined["valid_up"] = valid_up
+        combined["valid_lo"] = valid_lo
+        combined["valid_interval"] = valid_up & valid_lo & (lower <= upper)
+        combined["inverted"] = np.isfinite(lower) & np.isfinite(upper) & (lower > upper)
+
+        for key in (
+            "n_eff_up",
+            "n_eff_lo",
+            "k_used_up",
+            "k_used_lo",
+            "invalid_up",
+            "invalid_lo",
+            "nonfinite_upper",
+            "nonfinite_lower",
+            "inverted_filtered",
+        ):
+            combined[key] = agg[key]
+        return combined
 
     def _combined_robust(div_names: Sequence[str], c: int = 3) -> pd.DataFrame:
         """
@@ -1018,10 +1203,10 @@ def compute_causal_bounds(
         (ties broken by sum of widths, then lexicographic), and return [L_hat, U_hat].
         If infeasible, fallback to the hull over valid intervals.
         """
-        div_dfs = _stack_divergence_runs(div_names)
-        base = div_dfs[0]
-        upper_stack = np.vstack([df["upper"].to_numpy(dtype=np.float32) for df in div_dfs])
-        lower_stack = np.vstack([df["lower"].to_numpy(dtype=np.float32) for df in div_dfs])
+        div_runs = _stack_divergence_runs(div_names)
+        base = div_runs[0]["df"]
+        upper_stack = np.vstack([run["df"]["upper"].to_numpy(dtype=np.float32) for run in div_runs])
+        lower_stack = np.vstack([run["df"]["lower"].to_numpy(dtype=np.float32) for run in div_runs])
         n_obs = upper_stack.shape[1]
 
         lower_out = np.full(n_obs, np.nan, dtype=np.float32)
@@ -1100,16 +1285,18 @@ def compute_causal_bounds(
         combined["upper"] = upper_out
         combined["lower"] = lower_out
         combined["width"] = (combined["upper"] - combined["lower"]).astype(np.float32)
-        combined["divergence"] = "combined"
+        combined["divergence"] = "combined_intersection"
         return combined
 
     if isinstance(divergence, str):
         div_key = divergence.strip().lower()
         base_divs = ["KL", "Chi2", "JS", "TV", "Hellinger"]
         if div_key == "combined":
+            return _combined_endpointwise(base_divs)
+        if div_key in {"combined_intersection", "combined_robust"}:
             return _combined_robust(base_divs, c=3)
 
-    return _compute_for_div(divergence)
+    return _compute_for_div(divergence)["df"]
 
 
 def _fit_def6_upper_only(
