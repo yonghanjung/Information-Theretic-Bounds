@@ -22,7 +22,13 @@ import torch.nn as nn
 
 from ..utils.divergences import FDivergence, FDivergenceLike, get_divergence
 from ..utils.models import TorchMLP, make_classifier, make_regressor
-from ..utils.utils import check_shapes, make_kfold_splits, set_global_seed
+from ..utils.utils import (
+    check_shapes,
+    choose_batch_size,
+    make_domain_penalty_schedule,
+    make_kfold_splits,
+    set_global_seed,
+)
 from ..utils.result import BoundResult
 
 PhiFn = Callable[[torch.Tensor], torch.Tensor]
@@ -74,6 +80,9 @@ class FitConfig:
     verbose: bool
     log_every: int
     domain_penalty_weight: float = 1e4
+    domain_penalty_w1: float = 1e6
+    domain_penalty_w2: float = 1e4
+    domain_penalty_rho: float = 0.3
 
     @staticmethod
     def from_dict(d: Dict[str, Any]) -> "FitConfig":
@@ -99,10 +108,17 @@ class FitConfig:
         max_grad_norm = d["max_grad_norm"]
         if max_grad_norm is not None:
             max_grad_norm = float(max_grad_norm)
+        batch_raw = d["batch_size"]
+        if batch_raw is None:
+            batch_size = 0
+        elif isinstance(batch_raw, str) and batch_raw.strip().lower() == "auto":
+            batch_size = 0
+        else:
+            batch_size = int(batch_raw)
         return FitConfig(
             n_folds=int(d["n_folds"]),
             num_epochs=int(d["num_epochs"]),
-            batch_size=int(d["batch_size"]),
+            batch_size=batch_size,
             lr=float(d["lr"]),
             weight_decay=float(d["weight_decay"]),
             max_grad_norm=max_grad_norm,
@@ -114,6 +130,9 @@ class FitConfig:
             verbose=bool(d["verbose"]),
             log_every=int(d["log_every"]),
             domain_penalty_weight=float(d.get("domain_penalty_weight", 1e4)),
+            domain_penalty_w1=float(d.get("domain_penalty_w1", 1e6)),
+            domain_penalty_w2=float(d.get("domain_penalty_w2", d.get("domain_penalty_weight", 1e4))),
+            domain_penalty_rho=float(d.get("domain_penalty_rho", 0.3)),
         )
 
 
@@ -261,8 +280,6 @@ class DebiasedCausalBoundEstimator:
 
         if self.fit_cfg.n_folds < 2:
             raise ValueError("fit_config['n_folds'] must be >= 2.")
-        if self.fit_cfg.batch_size <= 0:
-            raise ValueError("fit_config['batch_size'] must be positive.")
         if self.fit_cfg.num_epochs <= 0:
             raise ValueError("fit_config['num_epochs'] must be positive.")
         if self.fit_cfg.lr <= 0:
@@ -281,6 +298,9 @@ class DebiasedCausalBoundEstimator:
         self.fold_id_: Optional[np.ndarray] = None
         self.e1_hat_oof_: Optional[np.ndarray] = None
         self.final_dual_loss_: list[float] = []
+        self.valid_frac_epoch_: list[list[float]] = []
+        self.valid_frac_stage1_: list[float] = []
+        self.valid_frac_stage2_: list[float] = []
 
         self.X_: Optional[np.ndarray] = None
         self.A_: Optional[np.ndarray] = None
@@ -373,6 +393,9 @@ class DebiasedCausalBoundEstimator:
         self.u_nets_.clear()
         self.m_models_.clear()
         self.final_dual_loss_.clear()
+        self.valid_frac_epoch_.clear()
+        self.valid_frac_stage1_.clear()
+        self.valid_frac_stage2_.clear()
 
         # Cross-fitting loop: fit nuisance models on train folds, evaluate dual loss on held-out fold.
         for k, (train_idx, fold_idx) in enumerate(self.splits_):
@@ -402,7 +425,7 @@ class DebiasedCausalBoundEstimator:
             else:
                 e1_fold = e1_oof[fold_idx]
 
-            h_net, u_net, last_loss = self._fit_dual_nets_on_fold(
+            h_net, u_net, last_loss, valid_frac_epoch, valid_frac_stage1, valid_frac_stage2 = self._fit_dual_nets_on_fold(
                 X_fold=Xc[fold_idx],
                 A_fold=Ac[fold_idx],
                 Y_fold=Yc[fold_idx],
@@ -439,6 +462,9 @@ class DebiasedCausalBoundEstimator:
             self.u_nets_.append(u_net)
             self.m_models_.append(m_reg)
             self.final_dual_loss_.append(float(last_loss))
+            self.valid_frac_epoch_.append(valid_frac_epoch)
+            self.valid_frac_stage1_.append(valid_frac_stage1)
+            self.valid_frac_stage2_.append(valid_frac_stage2)
 
             if self.fit_cfg.verbose:
                 print(
@@ -457,7 +483,7 @@ class DebiasedCausalBoundEstimator:
                 Y_fold: np.ndarray,
                 e1_fold: np.ndarray,
                 fold_seed: int,
-    ) -> tuple[nn.Module, nn.Module, float]:
+    ) -> tuple[nn.Module, nn.Module, float, list[float], float, float]:
         """Train dual networks (h, u) on one held-out fold."""
         if X_fold.ndim != 2:
             raise ValueError("X_fold must be 2D.")
@@ -493,11 +519,27 @@ class DebiasedCausalBoundEstimator:
 
         rng = np.random.default_rng(fold_seed)
 
+        batch_cap = min(choose_batch_size(n_fold), n_fold)
+        if self.fit_cfg.batch_size is None or self.fit_cfg.batch_size <= 0:
+            batch_size = batch_cap
+        else:
+            batch_size = min(int(self.fit_cfg.batch_size), batch_cap)
+        batch_size = max(1, min(batch_size, n_fold))
+
+        stage1_epochs, w_dom = make_domain_penalty_schedule(
+            self.fit_cfg.num_epochs,
+            rho=self.fit_cfg.domain_penalty_rho,
+            w1=self.fit_cfg.domain_penalty_w1,
+            w2=self.fit_cfg.domain_penalty_w2,
+        )
+
+        valid_frac_epoch: list[float] = []
         last_loss = float("nan")
         for epoch in range(self.fit_cfg.num_epochs):
             perm = rng.permutation(n_fold)
-            for start in range(0, n_fold, self.fit_cfg.batch_size):
-                idx = perm[start : start + self.fit_cfg.batch_size]
+            valid_frac_epoch.append(float("nan"))
+            for start in range(0, n_fold, batch_size):
+                idx = perm[start : start + batch_size]
                 idx_t = torch.tensor(idx, dtype=torch.int64, device=device)
 
                 loss = self._debiased_loss_batch(
@@ -508,6 +550,7 @@ class DebiasedCausalBoundEstimator:
                     e0=e0_t.index_select(0, idx_t),
                     h_net=h_net,
                     u_net=u_net,
+                    domain_penalty_weight=w_dom(epoch),
                 )
 
                 opt.zero_grad(set_to_none=True)
@@ -520,9 +563,19 @@ class DebiasedCausalBoundEstimator:
             if self.fit_cfg.verbose and (epoch + 1) % max(1, self.fit_cfg.log_every) == 0:
                 print(f"  epoch {epoch+1}/{self.fit_cfg.num_epochs} loss={last_loss:.6f}")
 
+        valid_frac_stage1 = float(np.nanmean(valid_frac_epoch[:stage1_epochs]))
+        valid_frac_stage2 = float(np.nanmean(valid_frac_epoch[stage1_epochs:]))
+
         h_net_cpu = h_net.to("cpu").eval()
         u_net_cpu = u_net.to("cpu").eval()
-        return h_net_cpu, u_net_cpu, float(last_loss)
+        return (
+            h_net_cpu,
+            u_net_cpu,
+            float(last_loss),
+            valid_frac_epoch,
+            valid_frac_stage1,
+            valid_frac_stage2,
+        )
 
     def _debiased_loss_batch(
         self,
@@ -533,6 +586,7 @@ class DebiasedCausalBoundEstimator:
         e0: torch.Tensor,
         h_net: nn.Module,
         u_net: nn.Module,
+        domain_penalty_weight: float,
     ) -> torch.Tensor:
         """Compute the debiased dual loss for one minibatch."""
         if X.ndim != 2:
@@ -561,7 +615,7 @@ class DebiasedCausalBoundEstimator:
         phi_y = self.phi(Y)
         t = (phi_y - u_ax) / lam_ax
         g_star_val = self.divergence.g_star(t)
-        domain_pen = self.fit_cfg.domain_penalty_weight * self.divergence.domain_violation(t).pow(2)
+        domain_pen = domain_penalty_weight * self.divergence.domain_violation(t).pow(2)
 
         eA = torch.where(A >= 0.5, e1, e0)
         eta = self.divergence.B_torch(eA)

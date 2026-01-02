@@ -10,9 +10,10 @@ Important note on macOS thread-safety knobs:
 """
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Callable, Tuple
 import os
 import sys
+import math
 
 
 _MACOS_THREAD_ENV_KEYS = (
@@ -90,6 +91,37 @@ def set_global_seed(seed: int, deterministic_torch: bool) -> "numpy.random.Gener
                 pass
 
     return rng
+
+
+def choose_batch_size(n: int) -> int:
+    if n <= 0:
+        raise ValueError("n must be positive.")
+    if n <= 1000:
+        return 16
+    if n <= 5000:
+        return 32
+    if n <= 10000:
+        return 64
+    return min(128, int(n**0.5))
+
+
+def make_domain_penalty_schedule(
+    num_epochs: int,
+    *,
+    rho: float = 0.3,
+    w1: float = 1e6,
+    w2: float = 1e4,
+) -> tuple[int, Callable[[int], float]]:
+    if num_epochs <= 0:
+        raise ValueError("num_epochs must be positive.")
+    if not (0.0 <= rho <= 1.0):
+        raise ValueError("rho must be in [0, 1].")
+    stage1_epochs = int(math.ceil(rho * num_epochs))
+
+    def w_dom(epoch: int) -> float:
+        return w1 if epoch < stage1_epochs else w2
+
+    return stage1_epochs, w_dom
 
 
 def check_shapes(
