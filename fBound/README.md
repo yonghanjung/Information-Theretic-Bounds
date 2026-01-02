@@ -6,6 +6,85 @@ This folder is a modular refactor of the original monolithic `fBound.py` into a 
 - Implements the full estimator pipeline in **Definition 4 (Step 1–6)**,
 - Preserves the working design decisions in the script (PyTorch dual nets + sklearn propensity + sklearn regressor).
 
+## Quick start (minimal, fast)
+
+```bash
+python3 - <<'PY'
+import numpy as np
+import torch
+from data_generating import generate_data
+from causal_bound import compute_causal_bounds
+
+data = generate_data(n=200, d=3, seed=123, structural_type="linear")
+dual_net_config = {
+    "hidden_sizes": (16, 16),
+    "activation": "relu",
+    "dropout": 0.0,
+    "h_clip": 10.0,
+    "device": "cpu",
+}
+fit_config = {
+    "n_folds": 2,
+    "num_epochs": 3,
+    "batch_size": 32,
+    "lr": 5e-3,
+    "weight_decay": 0.0,
+    "max_grad_norm": 5.0,
+    "eps_propensity": 1e-3,
+    "deterministic_torch": True,
+    "train_m_on_fold": True,
+    "propensity_config": {"C": 1.0, "max_iter": 200, "penalty": "l2", "solver": "lbfgs", "n_jobs": 1},
+    "m_config": {"alpha": 1.0},
+    "verbose": False,
+    "log_every": 1,
+}
+
+def phi_identity(y: torch.Tensor) -> torch.Tensor:
+    return y
+
+df = compute_causal_bounds(
+    Y=data["Y"],
+    A=data["A"],
+    X=data["X"],
+    divergence="KL",
+    phi=phi_identity,
+    propensity_model="logistic",
+    m_model="linear",
+    dual_net_config=dual_net_config,
+    fit_config=fit_config,
+    seed=123,
+)
+print(df[["lower", "upper"]].head())
+PY
+```
+
+## End-to-end example
+
+```bash
+python3 run_example.py
+```
+
+Notes:
+- `combined` uses the AGENTS P0 endpoint-wise aggregation by default.
+- `combined_intersection` is available as an explicit legacy option in experiment scripts.
+
+## Validity + NaN semantics (AGENTS P0)
+
+- Upper and lower bounds are computed independently: upper uses `+phi`, lower uses `-phi` then sign-flip.
+- `valid_up` and `valid_lo` are tracked separately per divergence.
+- Interval validity is `valid_interval = valid_up & valid_lo & isfinite(lower) & isfinite(upper) & (lower <= upper)`.
+- If `valid_interval` is false, both endpoints are blanked (set to NaN).
+- NaN/inf are never passed into aggregation; endpoints are filtered before sorting.
+
+## Diagnostics (AGENTS P0)
+
+Endpoint-wise aggregation (combined) reports per-point diagnostics:
+- `n_eff_up`, `n_eff_lo`: effective candidate counts after filtering.
+- `k_used_up`, `k_used_lo`: order-statistic index used (default 1).
+- `invalid_up`, `invalid_lo`, `nonfinite_upper`, `nonfinite_lower`, `inverted_filtered`: rejection counts.
+
+Run example outputs include validity masks and these diagnostics in the saved tables.
+
 ## What is implemented
 
 ### Debiased loss (Def. 12)
@@ -50,52 +129,40 @@ This is implemented by running the estimator twice: once for `phi`, once for `-p
 
 ## File guide
 
-- `divergences.py`  
-  Divergence registry providing `B(e)`, `dB(e)`, and `g_star(t)`. Supports: **KL**, **Hellinger**, **Chi2**, **TV**, **JS**, and custom divergences.
+- `src/fbound/estimators/causal_bound.py`  
+  Core estimator (`DebiasedCausalBoundEstimator`) and `compute_causal_bounds(...)`.
 
-- `models.py`  
+- `src/fbound/utils/divergences.py`  
+  Divergence registry providing `B(e)`, `dB(e)`, and domain-safe `g_star_with_valid(...)`.
+
+- `src/fbound/utils/models.py`  
   Model factories:
   - propensity: `"logistic"`, `"xgboost"` (optional)
   - regression: `"random_forest"`, `"linear"`, `"xgboost"` (optional)
   - includes the PyTorch `TorchMLP` used for dual nets.
 
-- `causal_bound.py`  
-  The estimator implementation (`DebiasedCausalBoundEstimator`) and a convenience function `compute_causal_bounds(...)`.
-
-- `data_generating.py`  
+- `src/fbound/utils/data_generating.py`  
   Toy generator with known `GroundTruth(a, X)` (analytic).
 
 - `run_example.py`  
-  End-to-end run on simulated data for all base divergences (KL/TV/Hellinger/Chi2/JS),
-  plus post-processing aggregators (combined intersection, cluster heuristic, empirical Manski).
+  End-to-end run on simulated data for base divergences plus post-processing aggregators
+  (combined endpoint-wise, cluster heuristic, empirical Manski).
 
-- `test_sanity.py`  
-  A small set of tests (3–6) covering reproducibility, shape checks, domain penalties, and bound ordering.
+- `tests/`  
+  Smoke and P0 validity tests (`pytest -q`).
 
-- `utils.py`  
-  Seeding, KFold splits, and a utility for macOS thread-safety knobs.
-
-- `manski.py`  
-  Empirical Manski bounds under bounded outcomes using propensity + outcome regression.
-
-## How to run
-
-From the `project/` directory:
-
-```bash
-python run_example.py
-python test_sanity.py
-```
+- Root shims (`causal_bound.py`, `divergences.py`, `models.py`, `data_generating.py`)  
+  Thin import shims for backward compatibility with prior scripts.
 
 ### `run_example.py` outputs
 
 - Prints mean width and empirical coverage for the selected `div` (set inside the script).
-- Saves per-sample tables with bounds, g* validity, coverage:
-  - `gstar_bounds_table.csv`: columns for each base divergence (lower/upper, validity masks, coverage),
-    plus post-process methods (`combined`, `cluster`, `Manski`).
-  - `gstar_bounds_any_invalid.csv`: subset where any g* validity flag is false.
+- Saves per-sample tables with bounds, validity, and diagnostics:
+  - `gstar_bounds_table.csv`: per-divergence lower/upper, `valid_up/valid_lo/valid_interval`, `inverted`,
+    g* validity masks, and combined diagnostics (`n_eff_*`, `invalid_*`, `nonfinite_*`, `inverted_filtered`).
+  - `gstar_bounds_any_invalid.csv`: subset where any g* validity flag or interval validity flag is false.
 - Saves a summary:
-  - `gstar_bounds_summary.csv`: coverage_rate and mean_width for each method
+  - `gstar_bounds_summary.csv`: coverage_rate, mean_width, and validity fractions per method
     (`KL`, `TV`, `Hellinger`, `Chi2`, `JS`, `combined`, `cluster`, `Manski_empirical`).
 
 ### Empirical Manski quick start

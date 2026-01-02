@@ -27,7 +27,12 @@ Outputs are kept compatible with the original script:
 Run
 ---
 From the project directory:
-    python run_example_optimized.py
+    python3 run_example.py
+
+Notes
+-----
+- "combined" uses the AGENTS P0 endpoint-wise aggregator (order-statistic on endpoints).
+- "combined_intersection" is available as an explicit legacy option.
 """
 from __future__ import annotations
 
@@ -53,7 +58,12 @@ from data_generating import generate_data
 from manski import empirical_extrema_manski_bounds
 
 # Prefer cached estimator (propensity cache reuse). Fall back to baseline if unavailable.
-from causal_bound import DebiasedCausalBoundEstimator, prefit_propensity_cache
+from causal_bound import (
+    DebiasedCausalBoundEstimator,
+    _apply_interval_validity,
+    aggregate_endpointwise,
+    prefit_propensity_cache,
+)
 _HAS_PROP_CACHE = True
 
 
@@ -197,10 +207,28 @@ def gstar_valid_mask_per_sample(
 
 
 # -------------------------
-# Robust c-wise intersection aggregation (same logic as causal_bound.compute_causal_bounds(..., "combined"))
+# Endpoint-wise aggregation (AGENTS P0 default) with diagnostics
 # -------------------------
 from itertools import combinations
 
+def combined_endpointwise(
+    lower_mat: np.ndarray,
+    upper_mat: np.ndarray,
+) -> dict[str, np.ndarray]:
+    valid_up = np.isfinite(upper_mat)
+    valid_lo = np.isfinite(lower_mat)
+    return aggregate_endpointwise(
+        lower_mat=lower_mat,
+        upper_mat=upper_mat,
+        valid_up=valid_up,
+        valid_lo=valid_lo,
+        k_up=1,
+        k_lo=1,
+    )
+
+
+# Legacy robust c-wise intersection aggregation (explicit opt-in)
+# -------------------------
 def combined_cwise_intersection(lower_mat: np.ndarray, upper_mat: np.ndarray, c: int = 3) -> tuple[np.ndarray, np.ndarray]:
     """
     lower_mat, upper_mat: shape (M, n)
@@ -684,7 +712,7 @@ if __name__ == "__main__":
         seed = 300132
         n = 2000
         d = 10
-        div = "kth"  # KL, TV, Hellinger, Chi2, JS, combined, cluster, kth, tight_kth
+        div = "kth"  # KL, TV, Hellinger, Chi2, JS, combined, combined_intersection, cluster, kth, tight_kth
         k = 4
         structural_type = "cyclic2"
 
@@ -804,8 +832,10 @@ if __name__ == "__main__":
             "truth_do1": truth_do1,
         }
 
-        lower_stack = []
-        upper_stack = []
+        lower_raw_stack = []
+        upper_raw_stack = []
+        valid_up_stack = []
+        valid_lo_stack = []
 
         for div_name in base_divs:
             with StepTimer(f"fit bounds div={div_name}", use_tqdm=False, enabled=timing_enabled):
@@ -823,13 +853,30 @@ if __name__ == "__main__":
                     timing=timing_enabled,
                     timing_detail=timing_detail,
                 )
-            results[f"lower_{div_name}"] = stats["lower"]
+            lower_raw = np.asarray(stats["lower"], dtype=np.float32)
+            upper_raw = np.asarray(stats["upper"], dtype=np.float32)
+            valid_up = np.isfinite(upper_raw)
+            valid_lo = np.isfinite(lower_raw)
+            lower, upper, valid_interval, inverted = _apply_interval_validity(
+                lower_raw=lower_raw,
+                upper_raw=upper_raw,
+                valid_up=valid_up,
+                valid_lo=valid_lo,
+            )
+
+            results[f"lower_{div_name}"] = lower
+            results[f"upper_{div_name}"] = upper
+            results[f"valid_up_{div_name}"] = valid_up
+            results[f"valid_lo_{div_name}"] = valid_lo
+            results[f"valid_interval_{div_name}"] = valid_interval
+            results[f"inverted_{div_name}"] = inverted
             results[f"valid_gstar_lower_{div_name}"] = stats["mask_lower"]
-            results[f"upper_{div_name}"] = stats["upper"]
             results[f"valid_gstar_upper_{div_name}"] = stats["mask_upper"]
 
-            lower_stack.append(stats["lower"])
-            upper_stack.append(stats["upper"])
+            lower_raw_stack.append(lower_raw)
+            upper_raw_stack.append(upper_raw)
+            valid_up_stack.append(valid_up)
+            valid_lo_stack.append(valid_lo)
 
             # Get ehat1_oof if we couldn't prefit it.
             if ehat1_oof is None:
@@ -840,14 +887,49 @@ if __name__ == "__main__":
                 except Exception:
                     pass
 
-        lower_mat = np.vstack([np.asarray(x, dtype=np.float32) for x in lower_stack])
-        upper_mat = np.vstack([np.asarray(x, dtype=np.float32) for x in upper_stack])
+        lower_mat = np.vstack([np.asarray(x, dtype=np.float32) for x in lower_raw_stack])
+        upper_mat = np.vstack([np.asarray(x, dtype=np.float32) for x in upper_raw_stack])
+        valid_up_mat = np.vstack([np.asarray(x, dtype=bool) for x in valid_up_stack])
+        valid_lo_mat = np.vstack([np.asarray(x, dtype=bool) for x in valid_lo_stack])
+
+    div_key = div.strip().lower()
+    use_combined_intersection = div_key in {"combined_intersection", "combined_robust"}
 
     with StepTimer("aggregate combined bounds", use_tqdm=False, enabled=timing_enabled):
-        # Combined robust interval (intersection across divergences).
-        lower_combined, upper_combined = combined_cwise_intersection(lower_mat, upper_mat, c=3)
-        results["lower_combined"] = lower_combined.astype(np.float32)
-        results["upper_combined"] = upper_combined.astype(np.float32)
+        # Default: endpoint-wise order-statistic aggregation with diagnostics.
+        agg = aggregate_endpointwise(
+            lower_mat=lower_mat,
+            upper_mat=upper_mat,
+            valid_up=valid_up_mat,
+            valid_lo=valid_lo_mat,
+            k_up=1,
+            k_lo=1,
+        )
+        lower_combined = agg["lower"].astype(np.float32)
+        upper_combined = agg["upper"].astype(np.float32)
+        results["lower_combined"] = lower_combined
+        results["upper_combined"] = upper_combined
+        results["n_eff_up_combined"] = agg["n_eff_up"]
+        results["n_eff_lo_combined"] = agg["n_eff_lo"]
+        results["k_used_up_combined"] = agg["k_used_up"]
+        results["k_used_lo_combined"] = agg["k_used_lo"]
+        results["invalid_up_combined"] = agg["invalid_up"]
+        results["invalid_lo_combined"] = agg["invalid_lo"]
+        results["nonfinite_upper_combined"] = agg["nonfinite_upper"]
+        results["nonfinite_lower_combined"] = agg["nonfinite_lower"]
+        results["inverted_filtered_combined"] = agg["inverted_filtered"]
+        valid_up_combined = np.isfinite(upper_combined)
+        valid_lo_combined = np.isfinite(lower_combined)
+        valid_interval_combined = valid_up_combined & valid_lo_combined & (lower_combined <= upper_combined)
+        results["valid_up_combined"] = valid_up_combined
+        results["valid_lo_combined"] = valid_lo_combined
+        results["valid_interval_combined"] = valid_interval_combined
+        results["blanked_combined"] = ~valid_interval_combined
+
+        if use_combined_intersection:
+            lower_ci, upper_ci = combined_cwise_intersection(lower_mat, upper_mat, c=3)
+            results["lower_combined_intersection"] = lower_ci.astype(np.float32)
+            results["upper_combined_intersection"] = upper_ci.astype(np.float32)
 
     with StepTimer("compute Manski bounds", use_tqdm=False, enabled=timing_enabled):
         # Empirical-extrema Manski heuristic.
@@ -944,7 +1026,7 @@ if __name__ == "__main__":
             "upper_Manski",
         ]:
             arr = np.asarray(results[key], dtype=np.float32)
-            assert np.isfinite(arr).all(), f"{key} has non-finite values"
+            assert not np.isinf(arr).any(), f"{key} has +/-inf values"
 
         # If we have ehat1_oof from cache, validate the clipping range.
         if ehat1_oof is not None:
@@ -954,62 +1036,98 @@ if __name__ == "__main__":
             ).all(), "propensity outside clipping range"
 
         # Print width/coverage for the user-selected divergence
-        div_key = div.strip()
-        if div_key in base_divs:
-            lo = np.asarray(results[f"lower_{div_key}"], dtype=np.float32)
-            up = np.asarray(results[f"upper_{div_key}"], dtype=np.float32)
-        elif div_key.lower() == "combined":
+        div_key_raw = div.strip()
+        if div_key_raw in base_divs:
+            lo = np.asarray(results[f"lower_{div_key_raw}"], dtype=np.float32)
+            up = np.asarray(results[f"upper_{div_key_raw}"], dtype=np.float32)
+        elif div_key == "combined":
             lo = np.asarray(results["lower_combined"], dtype=np.float32)
             up = np.asarray(results["upper_combined"], dtype=np.float32)
-        elif div_key.lower() == "cluster":
+        elif div_key in {"combined_intersection", "combined_robust"}:
+            lo = np.asarray(results["lower_combined_intersection"], dtype=np.float32)
+            up = np.asarray(results["upper_combined_intersection"], dtype=np.float32)
+        elif div_key == "cluster":
             lo = np.asarray(results["lower_cluster"], dtype=np.float32)
             up = np.asarray(results["upper_cluster"], dtype=np.float32)
-        elif div_key.lower() == "kth":
+        elif div_key == "kth":
             lo = np.asarray(results["lower_kth"], dtype=np.float32)
             up = np.asarray(results["upper_kth"], dtype=np.float32)
-        elif div_key.lower() == "tight_kth":
+        elif div_key == "tight_kth":
             lo = np.asarray(results["lower_tight_kth"], dtype=np.float32)
             up = np.asarray(results["upper_tight_kth"], dtype=np.float32)
         else:
-            raise ValueError(f"Unknown div='{div}'. Choose one of {base_divs + ['combined','cluster','kth','tight_kth']}.")
+            raise ValueError(
+                f"Unknown div='{div}'. Choose one of {base_divs + ['combined','combined_intersection','cluster','kth','tight_kth']}."
+            )
 
-        width = float(np.mean(up - lo))
+        width = float(np.nanmean(up - lo))
         cover = float(np.mean((truth_do1 >= lo) & (truth_do1 <= up)))
-        print(f"divergence={div_key:>8} | mean width={width:.4f} | coverage={cover:.3f}")
+        valid_frac = float(np.mean(np.isfinite(lo) & np.isfinite(up)))
+        print(f"divergence={div_key_raw:>8} | mean width={width:.4f} | coverage={cover:.3f} | valid_frac={valid_frac:.3f}")
 
-        # Build detailed table for conjecture: bounds + g* validity per divergence.
-        ordered_cols = [
-            "i",
-            "truth_do1",
-            "lower_KL", "valid_gstar_lower_KL",
-            "lower_TV", "valid_gstar_lower_TV",
-            "lower_Hellinger", "valid_gstar_lower_Hellinger",
-            "lower_Chi2", "valid_gstar_lower_Chi2",
-            "lower_JS", "valid_gstar_lower_JS",
-            "upper_KL", "valid_gstar_upper_KL",
-            "upper_TV", "valid_gstar_upper_TV",
-            "upper_Hellinger", "valid_gstar_upper_Hellinger",
-            "upper_Chi2", "valid_gstar_upper_Chi2",
-            "upper_JS", "valid_gstar_upper_JS",
-            "lower_combined",
-            "upper_combined",
-            "lower_Manski",
-            "upper_Manski",
-            "lower_cluster",
-            "upper_cluster",
-            "lower_kth",
-            "upper_kth",
-            "lower_tight_kth",
-            "upper_tight_kth",
-        ]
+        # Build detailed table for conjecture: bounds + validity diagnostics per divergence.
+        ordered_cols = ["i", "truth_do1"]
+        for dv in base_divs:
+            ordered_cols.extend(
+                [
+                    f"lower_{dv}",
+                    f"upper_{dv}",
+                    f"valid_up_{dv}",
+                    f"valid_lo_{dv}",
+                    f"valid_interval_{dv}",
+                    f"inverted_{dv}",
+                    f"valid_gstar_lower_{dv}",
+                    f"valid_gstar_upper_{dv}",
+                ]
+            )
+        ordered_cols.extend(
+            [
+                "lower_combined",
+                "upper_combined",
+                "valid_up_combined",
+                "valid_lo_combined",
+                "valid_interval_combined",
+                "blanked_combined",
+                "n_eff_up_combined",
+                "n_eff_lo_combined",
+                "k_used_up_combined",
+                "k_used_lo_combined",
+                "invalid_up_combined",
+                "invalid_lo_combined",
+                "nonfinite_upper_combined",
+                "nonfinite_lower_combined",
+                "inverted_filtered_combined",
+                "lower_Manski",
+                "upper_Manski",
+                "lower_cluster",
+                "upper_cluster",
+                "lower_kth",
+                "upper_kth",
+                "lower_tight_kth",
+                "upper_tight_kth",
+            ]
+        )
+        if use_combined_intersection:
+            ordered_cols.extend(["lower_combined_intersection", "upper_combined_intersection"])
 
-        table_df = pd.DataFrame({col: results[col] for col in ordered_cols})
+        table_data = {}
+        for col in ordered_cols:
+            if col in results:
+                table_data[col] = results[col]
+            else:
+                table_data[col] = np.full(X.shape[0], np.nan, dtype=np.float32)
+
+        table_df = pd.DataFrame(table_data)
 
         # Identify samples where any divergence had an invalid g* on lower or upper.
         any_invalid = np.zeros(X.shape[0], dtype=bool)
         for dv in base_divs:
             any_invalid |= (~table_df[f"valid_gstar_lower_{dv}"]) | (~table_df[f"valid_gstar_upper_{dv}"])
         table_df["any_invalid_gstar"] = any_invalid
+        any_invalid_interval = np.zeros(X.shape[0], dtype=bool)
+        for dv in base_divs:
+            any_invalid_interval |= ~table_df[f"valid_interval_{dv}"]
+        table_df["any_invalid_interval"] = any_invalid_interval
 
         # Per-divergence coverage flags: truth within [lower, upper].
         for dv in base_divs:
@@ -1021,6 +1139,11 @@ if __name__ == "__main__":
             (table_df["lower_combined"] <= table_df["truth_do1"])
             & (table_df["truth_do1"] <= table_df["upper_combined"])
         )
+        if use_combined_intersection:
+            table_df["coverage_combined_intersection"] = (
+                (table_df["lower_combined_intersection"] <= table_df["truth_do1"])
+                & (table_df["truth_do1"] <= table_df["upper_combined_intersection"])
+            )
         table_df["coverage_Manski"] = (
             (table_df["lower_Manski"] <= table_df["truth_do1"])
             & (table_df["truth_do1"] <= table_df["upper_Manski"])
@@ -1045,104 +1168,166 @@ if __name__ == "__main__":
                 {
                     "divergence": dv,
                     "coverage_rate": float(table_df[f"coverage_{dv}"].mean()),
-                    "mean_width": float(widths.mean()),
+                    "mean_width": float(np.nanmean(widths)),
+                    "valid_up_frac": float(table_df[f"valid_up_{dv}"].mean()),
+                    "valid_lo_frac": float(table_df[f"valid_lo_{dv}"].mean()),
+                    "valid_interval_frac": float(table_df[f"valid_interval_{dv}"].mean()),
+                    "blanked_frac": float((~table_df[f"valid_interval_{dv}"]).mean()),
                 }
             )
+
         widths_combined = table_df["upper_combined"] - table_df["lower_combined"]
         summary_rows.append(
             {
                 "divergence": "combined",
                 "coverage_rate": float(table_df["coverage_combined"].mean()),
-                "mean_width": float(widths_combined.mean()),
+                "mean_width": float(np.nanmean(widths_combined)),
+                "valid_up_frac": float(table_df["valid_up_combined"].mean()),
+                "valid_lo_frac": float(table_df["valid_lo_combined"].mean()),
+                "valid_interval_frac": float(table_df["valid_interval_combined"].mean()),
+                "blanked_frac": float(table_df["blanked_combined"].mean()),
+                "n_eff_up_mean": float(np.nanmean(table_df["n_eff_up_combined"])),
+                "n_eff_lo_mean": float(np.nanmean(table_df["n_eff_lo_combined"])),
             }
         )
+        if use_combined_intersection:
+            widths_ci = table_df["upper_combined_intersection"] - table_df["lower_combined_intersection"]
+            valid_ci = np.isfinite(table_df["upper_combined_intersection"]) & np.isfinite(table_df["lower_combined_intersection"]) & (
+                table_df["lower_combined_intersection"] <= table_df["upper_combined_intersection"]
+            )
+            summary_rows.append(
+                {
+                    "divergence": "combined_intersection",
+                    "coverage_rate": float(table_df["coverage_combined_intersection"].mean()),
+                    "mean_width": float(np.nanmean(widths_ci)),
+                    "valid_interval_frac": float(valid_ci.mean()),
+                    "blanked_frac": float((~valid_ci).mean()),
+                }
+            )
+
         widths_manski = table_df["upper_Manski"] - table_df["lower_Manski"]
+        valid_manski = np.isfinite(table_df["upper_Manski"]) & np.isfinite(table_df["lower_Manski"]) & (
+            table_df["lower_Manski"] <= table_df["upper_Manski"]
+        )
         summary_rows.append(
             {
                 "divergence": "Manski_empirical",
                 "coverage_rate": float(table_df["coverage_Manski"].mean()),
-                "mean_width": float(widths_manski.mean()),
+                "mean_width": float(np.nanmean(widths_manski)),
+                "valid_interval_frac": float(valid_manski.mean()),
+                "blanked_frac": float((~valid_manski).mean()),
             }
         )
         widths_cluster = table_df["upper_cluster"] - table_df["lower_cluster"]
+        valid_cluster = np.isfinite(table_df["upper_cluster"]) & np.isfinite(table_df["lower_cluster"]) & (
+            table_df["lower_cluster"] <= table_df["upper_cluster"]
+        )
         summary_rows.append(
             {
                 "divergence": "cluster",
                 "coverage_rate": float(table_df["coverage_cluster"].mean()),
-                "mean_width": float(widths_cluster.mean())
+                "mean_width": float(np.nanmean(widths_cluster)),
+                "valid_interval_frac": float(valid_cluster.mean()),
+                "blanked_frac": float((~valid_cluster).mean()),
             }
         )
         widths_kth = table_df["upper_kth"] - table_df["lower_kth"]
+        valid_kth = np.isfinite(table_df["upper_kth"]) & np.isfinite(table_df["lower_kth"]) & (
+            table_df["lower_kth"] <= table_df["upper_kth"]
+        )
         summary_rows.append(
             {
                 "divergence": "kth",
                 "coverage_rate": float(table_df["coverage_kth"].mean()),
-                "mean_width": float(widths_kth.mean())
+                "mean_width": float(np.nanmean(widths_kth)),
+                "valid_interval_frac": float(valid_kth.mean()),
+                "blanked_frac": float((~valid_kth).mean()),
             }
         )
         widths_tight_kth = table_df["upper_tight_kth"] - table_df["lower_tight_kth"]
+        valid_tight = np.isfinite(table_df["upper_tight_kth"]) & np.isfinite(table_df["lower_tight_kth"]) & (
+            table_df["lower_tight_kth"] <= table_df["upper_tight_kth"]
+        )
         summary_rows.append(
             {
                 "divergence": "tight_kth",
                 "coverage_rate": float(table_df["coverage_tight_kth"].mean()),
-                "mean_width": float(widths_tight_kth.mean())
+                "mean_width": float(np.nanmean(widths_tight_kth)),
+                "valid_interval_frac": float(valid_tight.mean()),
+                "blanked_frac": float((~valid_tight).mean()),
             }
         )
         summary_df = pd.DataFrame(summary_rows)
+        print(
+            "combined validity: "
+            f"valid_interval_frac={summary_df.loc[summary_df['divergence']=='combined','valid_interval_frac'].values[0]:.3f}, "
+            f"blanked_frac={summary_df.loc[summary_df['divergence']=='combined','blanked_frac'].values[0]:.3f}, "
+            f"n_eff_up_mean={summary_df.loc[summary_df['divergence']=='combined','n_eff_up_mean'].values[0]:.2f}, "
+            f"n_eff_lo_mean={summary_df.loc[summary_df['divergence']=='combined','n_eff_lo_mean'].values[0]:.2f}"
+        )
 
-        # Reorder columns for clarity before saving (same as original)
-        final_columns = [
-            "i",
-            "truth_do1",
-            "lower_KL", "valid_gstar_lower_KL",
-            "lower_TV", "valid_gstar_lower_TV",
-            "lower_Hellinger", "valid_gstar_lower_Hellinger",
-            "lower_Chi2", "valid_gstar_lower_Chi2",
-            "lower_JS", "valid_gstar_lower_JS",
-            "upper_KL", "valid_gstar_upper_KL",
-            "upper_TV", "valid_gstar_upper_TV",
-            "upper_Hellinger", "valid_gstar_upper_Hellinger",
-            "upper_Chi2", "valid_gstar_upper_Chi2",
-            "upper_JS", "valid_gstar_upper_JS",
-            "lower_combined", "upper_combined",
-            "lower_Manski", "upper_Manski",
-            "lower_cluster", "upper_cluster",
-            "lower_kth", "upper_kth",
-            "lower_tight_kth", "upper_tight_kth",
-            "coverage_KL", "coverage_TV", "coverage_Hellinger", "coverage_Chi2", "coverage_JS",
-            "coverage_combined", "coverage_Manski", "coverage_cluster",
-            "coverage_kth", "coverage_tight_kth",
-            "any_invalid_gstar",
-        ]
+        # Reorder columns for clarity before saving.
+        final_columns = ordered_cols.copy()
+        coverage_cols = [f"coverage_{dv}" for dv in base_divs]
+        coverage_cols.extend(
+            [
+                "coverage_combined",
+                "coverage_Manski",
+                "coverage_cluster",
+                "coverage_kth",
+                "coverage_tight_kth",
+            ]
+        )
+        if use_combined_intersection:
+            coverage_cols.append("coverage_combined_intersection")
+        final_columns.extend(coverage_cols)
+        final_columns.extend(["any_invalid_gstar", "any_invalid_interval"])
         table_df = table_df[final_columns]
 
-        invalid_cols = [
-            "i",
-            "truth_do1",
-            "lower_KL", "upper_KL",
-            "lower_TV", "upper_TV",
-            "lower_Hellinger", "upper_Hellinger",
-            "lower_Chi2", "upper_Chi2",
-            "lower_JS", "upper_JS",
-            "lower_cluster", "upper_cluster",
-            "lower_kth", "upper_kth",
-            "lower_tight_kth", "upper_tight_kth",
-            "lower_combined", "upper_combined",
-            "lower_Manski", "upper_Manski",
-            "valid_gstar_lower_KL", "valid_gstar_upper_KL",
-            "valid_gstar_lower_TV", "valid_gstar_upper_TV",
-            "valid_gstar_lower_Hellinger", "valid_gstar_upper_Hellinger",
-            "valid_gstar_lower_Chi2", "valid_gstar_upper_Chi2",
-            "valid_gstar_lower_JS", "valid_gstar_upper_JS",
-            "any_invalid_gstar",
-        ]
+        invalid_cols = ["i", "truth_do1"]
+        for dv in base_divs:
+            invalid_cols.extend(
+                [
+                    f"lower_{dv}",
+                    f"upper_{dv}",
+                    f"valid_interval_{dv}",
+                    f"valid_gstar_lower_{dv}",
+                    f"valid_gstar_upper_{dv}",
+                ]
+            )
+        invalid_cols.extend(
+            [
+                "lower_combined",
+                "upper_combined",
+                "valid_interval_combined",
+                "blanked_combined",
+                "n_eff_up_combined",
+                "n_eff_lo_combined",
+                "lower_cluster",
+                "upper_cluster",
+                "lower_kth",
+                "upper_kth",
+                "lower_tight_kth",
+                "upper_tight_kth",
+                "lower_Manski",
+                "upper_Manski",
+                "any_invalid_gstar",
+                "any_invalid_interval",
+            ]
+        )
+        if use_combined_intersection:
+            invalid_cols.extend(["lower_combined_intersection", "upper_combined_intersection"])
 
     with StepTimer("save outputs", use_tqdm=False, enabled=timing_enabled):
         os.makedirs("experiments", exist_ok=True)
 
-        invalid_df = table_df.loc[table_df["any_invalid_gstar"], invalid_cols].reset_index(drop=True)
+        invalid_mask = table_df["any_invalid_gstar"] | table_df["any_invalid_interval"]
+        invalid_df = table_df.loc[invalid_mask, invalid_cols].reset_index(drop=True)
         invalid_df.to_csv("experiments/run_example_gstar_bounds_any_invalid.csv", index=False)
-        print(f"Found {len(invalid_df)} samples with any invalid g*; saved to run_example_gstar_bounds_any_invalid.csv")
+        print(
+            f"Found {len(invalid_df)} samples with invalid g* or invalid intervals; "
+            "saved to run_example_gstar_bounds_any_invalid.csv"
+        )
         if len(invalid_df) > 0:
             print(invalid_df.head())
 

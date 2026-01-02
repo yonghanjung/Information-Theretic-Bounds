@@ -47,7 +47,7 @@ def _parse_n_list(raw: str) -> List[int]:
 
 
 def _parse_divergences(raw: str, base_divs: List[str]) -> List[str]:
-    allowed = set(base_divs + ["combined", "cluster"])
+    allowed = set(base_divs + ["combined", "combined_intersection", "cluster"])
     divs = [d.strip() for d in raw.split(",") if d.strip()]
     if not divs:
         divs = ["combined"]
@@ -182,7 +182,7 @@ def main() -> None:
         "--divergence",
         type=str,
         default="cluster",
-        help="Comma-separated divergences from {KL,TV,Hellinger,Chi2,JS,combined,cluster}.",
+        help="Comma-separated divergences from {KL,TV,Hellinger,Chi2,JS,combined,combined_intersection,cluster}.",
     )
     parser.add_argument(
         "--structural_type",

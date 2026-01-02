@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from causal_bound import DebiasedCausalBoundEstimator, _concat_ax, prefit_propensity_cache
+from causal_bound import DebiasedCausalBoundEstimator, _concat_ax, aggregate_endpointwise, prefit_propensity_cache
 from data_generating import generate_data
 
 try:
@@ -67,7 +67,22 @@ class NaiveCausalBoundEstimator(DebiasedCausalBoundEstimator):
 
 
 # -------------------------
-# Combined (c-wise) intersection aggregator
+# Endpoint-wise combined aggregator (AGENTS P0 default)
+# -------------------------
+def combined_endpointwise(lower_mat: np.ndarray, upper_mat: np.ndarray) -> dict[str, np.ndarray]:
+    valid_up = np.isfinite(upper_mat)
+    valid_lo = np.isfinite(lower_mat)
+    return aggregate_endpointwise(
+        lower_mat=lower_mat,
+        upper_mat=upper_mat,
+        valid_up=valid_up,
+        valid_lo=valid_lo,
+        k_up=1,
+        k_lo=1,
+    )
+
+
+# Legacy combined (c-wise) intersection aggregator (explicit opt-in)
 # -------------------------
 def combined_cwise_intersection(lower_mat: np.ndarray, upper_mat: np.ndarray, c: int = 3) -> tuple[np.ndarray, np.ndarray]:
     M, n = lower_mat.shape
@@ -485,7 +500,7 @@ def fit_bounds_for_divs_both_a(
     progress_prefix=None,
 ) -> Dict[int, Dict[str, Tuple[np.ndarray, np.ndarray]]]:
     bounds: Dict[int, Dict[str, Tuple[np.ndarray, np.ndarray]]] = {0: {}, 1: {}}
-    needs_base = any(div in {"combined", "cluster", "kth", "tight_kth"} for div in div_list)
+    needs_base = any(div in {"combined", "combined_intersection", "cluster", "kth", "tight_kth"} for div in div_list)
     base_outputs: Dict[str, Dict[int, Tuple[np.ndarray, np.ndarray]]] = {}
 
     if needs_base or any(dv in base_divs for dv in div_list):
@@ -515,7 +530,7 @@ def fit_bounds_for_divs_both_a(
                 bounds[a][div] = base_outputs[div][a]
             continue
 
-        if div in {"combined", "cluster", "kth", "tight_kth"}:
+        if div in {"combined", "combined_intersection", "cluster", "kth", "tight_kth"}:
             missing = [b for b in base_divs if b not in base_outputs]
             if missing:
                 raise ValueError(f"Missing base divergences for {div}: {missing}")
@@ -523,6 +538,17 @@ def fit_bounds_for_divs_both_a(
                 lower_base = np.vstack([base_outputs[b][a][0] for b in base_divs])
                 upper_base = np.vstack([base_outputs[b][a][1] for b in base_divs])
                 if div == "combined":
+                    agg = combined_endpointwise(lower_base, upper_base)
+                    L = agg["lower"].astype(np.float32)
+                    U = agg["upper"].astype(np.float32)
+                    blanked_frac = float(np.mean(~np.isfinite(L) | ~np.isfinite(U)))
+                    print(
+                        f"combined diagnostics (a={a}): "
+                        f"n_eff_up_mean={float(np.nanmean(agg['n_eff_up'])):.2f}, "
+                        f"n_eff_lo_mean={float(np.nanmean(agg['n_eff_lo'])):.2f}, "
+                        f"blanked_frac={blanked_frac:.3f}"
+                    )
+                elif div == "combined_intersection":
                     L, U = combined_cwise_intersection(lower_base, upper_base, c=3)
                 elif div == "cluster":
                     L, U = cluster_per_sample_fast1d(lower_base, upper_base, k_candidates=(2, 3, 4), penalty_singleton=0.2)
@@ -595,7 +621,7 @@ def _parse_n_list(raw: Union[str, Sequence[object]]) -> List[int]:
 
 
 def _parse_divergences(raw: str, base_divs: List[str]) -> List[str]:
-    allowed = set(base_divs + ["combined", "cluster", "kth", "tight_kth"])
+    allowed = set(base_divs + ["combined", "combined_intersection", "cluster", "kth", "tight_kth"])
     divs = [d.strip() for d in raw.split(",") if d.strip()]
     if not divs:
         divs = ["combined"]
@@ -1021,7 +1047,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--divergence",
         type=str,
         default="cluster",
-        help="Comma-separated divergences from {KL,TV,Hellinger,Chi2,JS,combined,cluster,kth,tight_kth}.",
+        help="Comma-separated divergences from {KL,TV,Hellinger,Chi2,JS,combined,combined_intersection,cluster,kth,tight_kth}.",
     )
     parser.add_argument("--outdir", type=str, default="experiments", help="Output directory.")
     parser.add_argument("--unique_save", action="store_true", help="Add unique timestamp suffix to outputs.")

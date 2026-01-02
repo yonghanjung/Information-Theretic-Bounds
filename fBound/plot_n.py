@@ -30,7 +30,13 @@ try:
 except Exception:  # pragma: no cover
     tqdm = lambda x, **k: x  # type: ignore
 
-from causal_bound import DebiasedCausalBoundEstimator, _concat_ax, _predict_proba_class1, prefit_propensity_cache
+from causal_bound import (
+    DebiasedCausalBoundEstimator,
+    _concat_ax,
+    _predict_proba_class1,
+    aggregate_endpointwise,
+    prefit_propensity_cache,
+)
 from data_generating import generate_data
 
 
@@ -156,7 +162,22 @@ class NaiveCausalBoundEstimator(DebiasedCausalBoundEstimator):
 
 
 # -------------------------
-# Combined (c-wise) intersection aggregator
+# Endpoint-wise combined aggregator (AGENTS P0 default)
+# -------------------------
+def combined_endpointwise(lower_mat: np.ndarray, upper_mat: np.ndarray) -> dict[str, np.ndarray]:
+    valid_up = np.isfinite(upper_mat)
+    valid_lo = np.isfinite(lower_mat)
+    return aggregate_endpointwise(
+        lower_mat=lower_mat,
+        upper_mat=upper_mat,
+        valid_up=valid_up,
+        valid_lo=valid_lo,
+        k_up=1,
+        k_lo=1,
+    )
+
+
+# Legacy combined (c-wise) intersection aggregator (explicit opt-in)
 # -------------------------
 def combined_cwise_intersection(lower_mat: np.ndarray, upper_mat: np.ndarray, c: int = 3) -> tuple[np.ndarray, np.ndarray]:
     M, n = lower_mat.shape
@@ -557,7 +578,7 @@ def _parse_n_list(raw: Union[str, Sequence[object]]) -> List[int]:
 
 
 def _parse_divergences(raw: str, base_divs: List[str]) -> List[str]:
-    allowed = set(base_divs + ["combined", "cluster", "kth", "tight_kth"])
+    allowed = set(base_divs + ["combined", "combined_intersection", "cluster", "kth", "tight_kth"])
     divs = [d.strip() for d in raw.split(",") if d.strip()]
     if not divs:
         divs = ["combined"]
@@ -817,7 +838,7 @@ def _fit_bounds_for_divs(
     use_tqdm: bool = False,
 ):
     outputs = {}
-    needs_base = any(div in {"combined", "cluster", "kth", "tight_kth"} for div in div_list)
+    needs_base = any(div in {"combined", "combined_intersection", "cluster", "kth", "tight_kth"} for div in div_list)
     base_outputs: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
     label = timing_label or progress_prefix or ""
     prefix = f"{label} " if label else ""
@@ -856,6 +877,25 @@ def _fit_bounds_for_divs(
         elif div == "combined":
             with StepTimer(
                 f"{prefix}aggregate combined".strip(),
+                use_tqdm=use_tqdm,
+                enabled=timing and timing_detail,
+            ):
+                if lower_base is None:
+                    lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
+                    upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
+                agg = combined_endpointwise(lower_base, upper_base)
+                L = agg["lower"].astype(np.float32)
+                U = agg["upper"].astype(np.float32)
+                blanked_frac = float(np.mean(~np.isfinite(L) | ~np.isfinite(U)))
+                print(
+                    f"{prefix}combined diagnostics: "
+                    f"n_eff_up_mean={float(np.nanmean(agg['n_eff_up'])):.2f}, "
+                    f"n_eff_lo_mean={float(np.nanmean(agg['n_eff_lo'])):.2f}, "
+                    f"blanked_frac={blanked_frac:.3f}"
+                )
+        elif div == "combined_intersection":
+            with StepTimer(
+                f"{prefix}aggregate combined_intersection".strip(),
                 use_tqdm=use_tqdm,
                 enabled=timing and timing_detail,
             ):
@@ -965,7 +1005,7 @@ if __name__ == "__main__":
         "--divergence",
         type=str,
         default="kth",
-        help="Comma-separated divergences from {KL,TV,Hellinger,Chi2,JS,combined,cluster,kth,tight_kth}.",
+        help="Comma-separated divergences from {KL,TV,Hellinger,Chi2,JS,combined,combined_intersection,cluster,kth,tight_kth}.",
     )
     parser.add_argument(
         "--structural_type",

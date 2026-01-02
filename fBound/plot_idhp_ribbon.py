@@ -28,7 +28,7 @@ try:
 except Exception:  # pragma: no cover
     tqdm = lambda x, **k: x  # type: ignore
 
-from causal_bound import DebiasedCausalBoundEstimator, prefit_propensity_cache
+from causal_bound import DebiasedCausalBoundEstimator, aggregate_endpointwise, prefit_propensity_cache
 
 from scipy.interpolate import UnivariateSpline
 from statsmodels.nonparametric.smoothers_lowess import lowess
@@ -153,7 +153,22 @@ def phi_neg(y: torch.Tensor) -> torch.Tensor:
 
 
 # -------------------------
-# Combined (c-wise) intersection aggregator
+# Endpoint-wise combined aggregator (AGENTS P0 default)
+# -------------------------
+def combined_endpointwise(lower_mat: np.ndarray, upper_mat: np.ndarray) -> dict[str, np.ndarray]:
+    valid_up = np.isfinite(upper_mat)
+    valid_lo = np.isfinite(lower_mat)
+    return aggregate_endpointwise(
+        lower_mat=lower_mat,
+        upper_mat=upper_mat,
+        valid_up=valid_up,
+        valid_lo=valid_lo,
+        k_up=1,
+        k_lo=1,
+    )
+
+
+# Legacy combined (c-wise) intersection aggregator (explicit opt-in)
 # -------------------------
 def combined_cwise_intersection(lower_mat: np.ndarray, upper_mat: np.ndarray, c: int = 3) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -635,7 +650,7 @@ if __name__ == "__main__":
         "--divergence",
         type=str,
         default="kth, tight_kth",
-        help="Comma-separated divergences from {KL,TV,Hellinger,Chi2,JS,combined,cluster,kth,tight_kth}.",
+        help="Comma-separated divergences from {KL,TV,Hellinger,Chi2,JS,combined,combined_intersection,cluster,kth,tight_kth}.",
     )
     parser.add_argument(
         "--stat",
@@ -812,7 +827,7 @@ if __name__ == "__main__":
     n = args.n
     d = args.d
     base_divs = ["KL", "TV", "Hellinger", "Chi2", "JS"]
-    allowed_divs = set(base_divs + ["combined", "cluster", "kth", "tight_kth"])
+    allowed_divs = set(base_divs + ["combined", "combined_intersection", "cluster", "kth", "tight_kth"])
     div_list = [div.strip() for div in args.divergence.split(",") if div.strip()]
     if not div_list:
         div_list = ["combined", "cluster"]
@@ -820,7 +835,7 @@ if __name__ == "__main__":
         if div not in allowed_divs:
             raise ValueError(f"Unknown divergence '{div}'. Allowed: {sorted(allowed_divs)}")
     needs_base = set()
-    if any(div in {"combined", "cluster", "kth", "tight_kth"} for div in div_list):
+    if any(div in {"combined", "combined_intersection", "cluster", "kth", "tight_kth"} for div in div_list):
         needs_base.update(base_divs)
     needs_base.update([div for div in div_list if div in base_divs])
 
@@ -846,6 +861,13 @@ if __name__ == "__main__":
     upper_dict = {div: np.full((m, n_eval), np.nan, dtype=np.float32) for div in div_list}
     lower_dict = {div: np.full((m, n_eval), np.nan, dtype=np.float32) for div in div_list}
     valid_dict = {div: np.zeros((m, n_eval), dtype=bool) for div in div_list}
+    combined_diag = None
+    if "combined" in div_list:
+        combined_diag = {
+            "n_eff_up": np.full((m, n_eval), np.nan, dtype=np.float32),
+            "n_eff_lo": np.full((m, n_eval), np.nan, dtype=np.float32),
+            "blanked": np.zeros((m, n_eval), dtype=bool),
+        }
 
     with StepTimer("MC replicate loop", use_tqdm=True, enabled=timing_enabled):
         for j in tqdm(range(m), desc="MC replicates"):
@@ -903,6 +925,17 @@ if __name__ == "__main__":
                             if lower_base is None:
                                 lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
                                 upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
+                            agg = combined_endpointwise(lower_base, upper_base)
+                            L = agg["lower"].astype(np.float32)
+                            U = agg["upper"].astype(np.float32)
+                            if combined_diag is not None:
+                                combined_diag["n_eff_up"][j, :] = agg["n_eff_up"]
+                                combined_diag["n_eff_lo"][j, :] = agg["n_eff_lo"]
+                                combined_diag["blanked"][j, :] = ~(np.isfinite(L) & np.isfinite(U))
+                        elif div == "combined_intersection":
+                            if lower_base is None:
+                                lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
+                                upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
                             L, U = combined_cwise_intersection(lower_base, upper_base, c=3)
                         elif div == "cluster":
                             if lower_base is None:
@@ -940,8 +973,7 @@ if __name__ == "__main__":
                         else:
                             raise ValueError(f"Unsupported divergence '{div}'")
 
-                        W = U - L
-                        valid = np.isfinite(U) & np.isfinite(L) & (W > 0)
+                        valid = np.isfinite(U) & np.isfinite(L) & (L <= U)
 
                         upper_dict[div][j, :] = U
                         lower_dict[div][j, :] = L
@@ -1016,6 +1048,13 @@ if __name__ == "__main__":
                 theta_plot = theta_bar[order]
                 width_plot = width_bar[order]
                 valid_plot = valid_rate_sel[order]
+                n_eff_up_mean = float("nan")
+                n_eff_lo_mean = float("nan")
+                blanked_frac = float("nan")
+                if div == "combined" and combined_diag is not None and idx_sel.size > 0:
+                    n_eff_up_mean = float(np.nanmean(combined_diag["n_eff_up"][:, idx_sel]))
+                    n_eff_lo_mean = float(np.nanmean(combined_diag["n_eff_lo"][:, idx_sel]))
+                    blanked_frac = float(np.mean(combined_diag["blanked"][:, idx_sel]))
 
                 # Bound-preserving smoothing via mid/halfwidth reparameterization
                 mid_raw = 0.5 * (u_plot + l_plot)
@@ -1090,9 +1129,6 @@ if __name__ == "__main__":
                         "x_raw": axis_plot,
                         "l_raw": l_plot,
                         "u_raw": u_plot,
-                        "x_raw": axis_plot,
-                        "l_raw": l_plot,
-                        "u_raw": u_plot,
                         "theta_raw": theta_plot,
                         "valid_raw": valid_plot,
                         "x_s": x_s,
@@ -1100,7 +1136,19 @@ if __name__ == "__main__":
                         "u_s": u_smooth,
                         "theta_s": theta_s,
                         "width_s": width_smooth,
+                        "n_eff_up_mean": n_eff_up_mean,
+                        "n_eff_lo_mean": n_eff_lo_mean,
+                        "blanked_frac": blanked_frac,
                     }
+                )
+
+        for res in aggregated_results:
+            if res["div"] == "combined":
+                print(
+                    f"[{axis_key}] combined diagnostics: "
+                    f"n_eff_up_mean={res['n_eff_up_mean']:.2f}, "
+                    f"n_eff_lo_mean={res['n_eff_lo_mean']:.2f}, "
+                    f"blanked_frac={res['blanked_frac']:.3f}"
                 )
 
         with StepTimer(f"save tables ({axis_key})", use_tqdm=False, enabled=timing_enabled):
