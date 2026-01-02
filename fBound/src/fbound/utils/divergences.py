@@ -209,7 +209,7 @@ def _chi2_divergence(cfg: PenaltyConfig, eps_e: float) -> FDivergence:
     def g_star(t: torch.Tensor) -> torch.Tensor:
         t = _ensure_tensor(t)
         bound = 0.5
-        valid = t <= (bound - cfg.boundary_eps)
+        valid = t < (bound - cfg.boundary_eps)
         inside = 1.0 - 2.0 * t
         sqrt_term = torch.sqrt(torch.clamp(inside, min=cfg.boundary_eps))
         val = -(1.0 + sqrt_term)
@@ -218,7 +218,7 @@ def _chi2_divergence(cfg: PenaltyConfig, eps_e: float) -> FDivergence:
     def valid_mask(t: torch.Tensor) -> torch.Tensor:
         t = _ensure_tensor(t)
         bound = 0.5
-        return t <= (bound - cfg.boundary_eps)
+        return t < (bound - cfg.boundary_eps)
 
     return FDivergence(
         name="Chi2",
@@ -274,12 +274,12 @@ def _tv_divergence(cfg: PenaltyConfig, eps_e: float, scaled: bool) -> FDivergenc
             left = torch.full_like(t, -c)
             mid = t
             val = torch.where(t <= -thr, left, mid)
-            valid = t <= thr
+            valid = t < (thr - cfg.boundary_eps)
             return torch.where(valid, val, _penalty_like(t, cfg))
 
         def valid_mask(t: torch.Tensor) -> torch.Tensor:
             t = _ensure_tensor(t)
-            return t <= thr
+            return t < (thr - cfg.boundary_eps)
 
         return FDivergence(
             name="TV",
@@ -291,7 +291,7 @@ def _tv_divergence(cfg: PenaltyConfig, eps_e: float, scaled: bool) -> FDivergenc
             _dB_numpy=dB_n,
             _g_star=g_star,
             _valid_mask=valid_mask,
-            t_max=thr,
+            t_max=thr - cfg.boundary_eps,
         )
 
     def B_t(e: torch.Tensor) -> torch.Tensor:
@@ -317,12 +317,12 @@ def _tv_divergence(cfg: PenaltyConfig, eps_e: float, scaled: bool) -> FDivergenc
         left = torch.full_like(t, -c)
         mid = t
         val = torch.where(t <= -thr, left, mid)
-        valid = t <= thr
+        valid = t < (thr - cfg.boundary_eps)
         return torch.where(valid, val, _penalty_like(t, cfg))
 
     def valid_mask(t: torch.Tensor) -> torch.Tensor:
         t = _ensure_tensor(t)
-        return t <= thr
+        return t < (thr - cfg.boundary_eps)
 
     return FDivergence(
         name="TV_unscaled",
@@ -334,7 +334,7 @@ def _tv_divergence(cfg: PenaltyConfig, eps_e: float, scaled: bool) -> FDivergenc
         _dB_numpy=dB_n,
         _g_star=g_star,
         _valid_mask=valid_mask,
-        t_max=thr,
+        t_max=thr - cfg.boundary_eps,
     )
 
 

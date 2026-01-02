@@ -83,6 +83,7 @@ class FitConfig:
     domain_penalty_w1: float = 1e6
     domain_penalty_w2: float = 1e4
     domain_penalty_rho: float = 0.3
+    min_valid_per_action: int = 5
 
     @staticmethod
     def from_dict(d: Dict[str, Any]) -> "FitConfig":
@@ -115,6 +116,7 @@ class FitConfig:
             batch_size = 0
         else:
             batch_size = int(batch_raw)
+        min_valid_per_action = int(d.get("min_valid_per_action", 5))
         return FitConfig(
             n_folds=int(d["n_folds"]),
             num_epochs=int(d["num_epochs"]),
@@ -133,6 +135,7 @@ class FitConfig:
             domain_penalty_w1=float(d.get("domain_penalty_w1", 1e6)),
             domain_penalty_w2=float(d.get("domain_penalty_w2", d.get("domain_penalty_weight", 1e4))),
             domain_penalty_rho=float(d.get("domain_penalty_rho", 0.3)),
+            min_valid_per_action=min_valid_per_action,
         )
 
 
@@ -286,6 +289,8 @@ class DebiasedCausalBoundEstimator:
             raise ValueError("fit_config['lr'] must be positive.")
         if not (0.0 < self.fit_cfg.eps_propensity < 0.5):
             raise ValueError("eps_propensity must be in (0, 0.5).")
+        if self.fit_cfg.min_valid_per_action <= 0:
+            raise ValueError("fit_config['min_valid_per_action'] must be positive.")
 
         self._fitted: bool = False
 
@@ -301,6 +306,8 @@ class DebiasedCausalBoundEstimator:
         self.valid_frac_epoch_: list[list[float]] = []
         self.valid_frac_stage1_: list[float] = []
         self.valid_frac_stage2_: list[float] = []
+        self.invalid_z_frac_: list[float] = []
+        self.valid_z_counts_: list[dict[int, int]] = []
 
         self.X_: Optional[np.ndarray] = None
         self.A_: Optional[np.ndarray] = None
@@ -396,6 +403,8 @@ class DebiasedCausalBoundEstimator:
         self.valid_frac_epoch_.clear()
         self.valid_frac_stage1_.clear()
         self.valid_frac_stage2_.clear()
+        self.invalid_z_frac_.clear()
+        self.valid_z_counts_.clear()
 
         # Cross-fitting loop: fit nuisance models on train folds, evaluate dual loss on held-out fold.
         for k, (train_idx, fold_idx) in enumerate(self.splits_):
@@ -442,7 +451,7 @@ class DebiasedCausalBoundEstimator:
                 A_m = Ac[train_idx]
                 Y_m = Yc[train_idx]
 
-            Z_m = self._compute_Z(
+            Z_m, valid_m = self._compute_Z(
                 X=X_m,
                 A=A_m,
                 Y=Y_m,
@@ -451,12 +460,29 @@ class DebiasedCausalBoundEstimator:
             )
             AX_m = np.concatenate([A_m.reshape(-1, 1).astype(np.float32), X_m.astype(np.float32)], axis=1)
 
-            m_reg = make_regressor(
-                self.m_model_spec,
-                config=self.fit_cfg.m_config,
-                seed=self.seed + 30_000 + k,
-            )
-            m_reg.fit(AX_m.astype(np.float64, copy=False), Z_m.astype(np.float64, copy=False))
+            valid_mask = valid_m & np.isfinite(Z_m)
+            total_count = int(valid_mask.shape[0])
+            valid_count = int(np.count_nonzero(valid_mask))
+            invalid_frac = 1.0 - (float(valid_count) / float(total_count)) if total_count > 0 else float("nan")
+
+            valid_counts = {
+                0: int(np.count_nonzero(valid_mask & (A_m == 0))),
+                1: int(np.count_nonzero(valid_mask & (A_m == 1))),
+            }
+
+            min_valid = self.fit_cfg.min_valid_per_action
+            if valid_count == 0 or min(valid_counts.values()) < min_valid:
+                m_reg = None
+            else:
+                m_reg = make_regressor(
+                    self.m_model_spec,
+                    config=self.fit_cfg.m_config,
+                    seed=self.seed + 30_000 + k,
+                )
+                m_reg.fit(
+                    AX_m[valid_mask].astype(np.float64, copy=False),
+                    Z_m[valid_mask].astype(np.float64, copy=False),
+                )
 
             self.h_nets_.append(h_net)
             self.u_nets_.append(u_net)
@@ -465,6 +491,8 @@ class DebiasedCausalBoundEstimator:
             self.valid_frac_epoch_.append(valid_frac_epoch)
             self.valid_frac_stage1_.append(valid_frac_stage1)
             self.valid_frac_stage2_.append(valid_frac_stage2)
+            self.invalid_z_frac_.append(float(invalid_frac))
+            self.valid_z_counts_.append(valid_counts)
 
             if self.fit_cfg.verbose:
                 print(
@@ -537,12 +565,13 @@ class DebiasedCausalBoundEstimator:
         last_loss = float("nan")
         for epoch in range(self.fit_cfg.num_epochs):
             perm = rng.permutation(n_fold)
-            valid_frac_epoch.append(float("nan"))
+            valid_count_epoch = 0
+            total_count_epoch = 0
             for start in range(0, n_fold, batch_size):
                 idx = perm[start : start + batch_size]
                 idx_t = torch.tensor(idx, dtype=torch.int64, device=device)
 
-                loss = self._debiased_loss_batch(
+                loss, valid_count, total_count = self._debiased_loss_batch(
                     X=X_t.index_select(0, idx_t),
                     A=A_t.index_select(0, idx_t),
                     Y=Y_t.index_select(0, idx_t),
@@ -559,12 +588,21 @@ class DebiasedCausalBoundEstimator:
                     torch.nn.utils.clip_grad_norm_(params, max_norm=self.fit_cfg.max_grad_norm)
                 opt.step()
                 last_loss = float(loss.detach().cpu().item())
+                valid_count_epoch += valid_count
+                total_count_epoch += total_count
 
             if self.fit_cfg.verbose and (epoch + 1) % max(1, self.fit_cfg.log_every) == 0:
                 print(f"  epoch {epoch+1}/{self.fit_cfg.num_epochs} loss={last_loss:.6f}")
 
-        valid_frac_stage1 = float(np.nanmean(valid_frac_epoch[:stage1_epochs]))
-        valid_frac_stage2 = float(np.nanmean(valid_frac_epoch[stage1_epochs:]))
+            if total_count_epoch > 0:
+                valid_frac_epoch.append(float(valid_count_epoch) / float(total_count_epoch))
+            else:
+                valid_frac_epoch.append(float("nan"))
+
+        valid_stage1 = valid_frac_epoch[:stage1_epochs]
+        valid_stage2 = valid_frac_epoch[stage1_epochs:]
+        valid_frac_stage1 = float(np.nan) if not valid_stage1 else float(np.nanmean(valid_stage1))
+        valid_frac_stage2 = float(np.nan) if not valid_stage2 else float(np.nanmean(valid_stage2))
 
         h_net_cpu = h_net.to("cpu").eval()
         u_net_cpu = u_net.to("cpu").eval()
@@ -587,7 +625,7 @@ class DebiasedCausalBoundEstimator:
         h_net: nn.Module,
         u_net: nn.Module,
         domain_penalty_weight: float,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, int, int]:
         """Compute the debiased dual loss for one minibatch."""
         if X.ndim != 2:
             raise ValueError("X must be 2D in batch.")
@@ -614,13 +652,18 @@ class DebiasedCausalBoundEstimator:
 
         phi_y = self.phi(Y)
         t = (phi_y - u_ax) / lam_ax
-        g_star_val = self.divergence.g_star(t)
-        domain_pen = domain_penalty_weight * self.divergence.domain_violation(t).pow(2)
+        g_star_val, valid_mask = self.divergence.g_star_with_valid(t)
+        valid_mask = valid_mask & torch.isfinite(g_star_val) & torch.isfinite(t)
+        g_star_safe = torch.where(valid_mask, g_star_val, torch.zeros_like(g_star_val))
+        invalid_pen = (~valid_mask).float()
+        domain_pen = domain_penalty_weight * (
+            self.divergence.domain_violation(t).pow(2) + invalid_pen
+        )
 
         eA = torch.where(A >= 0.5, e1, e0)
         eta = self.divergence.B_torch(eA)
 
-        main = lam_ax * (eta + g_star_val) + u_ax + domain_pen
+        main = lam_ax * (eta + g_star_safe) + u_ax + domain_pen
 
         lam0 = torch.exp(h0).clamp(min=self.dual_net_cfg.lambda_min)
         lam1 = torch.exp(h1).clamp(min=self.dual_net_cfg.lambda_min)
@@ -643,7 +686,9 @@ class DebiasedCausalBoundEstimator:
                 f"Non-finite loss encountered. divergence={self.divergence.name}. "
                 f"Try increasing eps_propensity, lowering lr, or adjusting penalty config in divergences."
             )
-        return loss
+        valid_count = int(valid_mask.sum().item())
+        total_count = int(valid_mask.numel())
+        return loss, valid_count, total_count
 
     @torch.no_grad()
     def _compute_Z(
@@ -653,8 +698,8 @@ class DebiasedCausalBoundEstimator:
         Y: np.ndarray,
         h_net: nn.Module,
         u_net: nn.Module,
-    ) -> np.ndarray:
-        """Compute pseudo-outcome Z for regression head m^k on a given fold."""
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Compute pseudo-outcome Z and validity mask for regression head m^k on a given fold."""
         Xc = np.asarray(X, dtype=np.float32)
         Ac = np.asarray(A, dtype=np.float32).reshape(-1)
         Yc = np.asarray(Y, dtype=np.float32).reshape(-1)
@@ -670,8 +715,13 @@ class DebiasedCausalBoundEstimator:
         u = u_net(ax)
 
         t = (self.phi(Y_t) - u) / lam
-        Z = self.divergence.g_star(t)
-        return Z.cpu().numpy().astype(np.float32)
+        g_star_val, valid_mask = self.divergence.g_star_with_valid(t)
+        valid_mask = valid_mask & torch.isfinite(g_star_val) & torch.isfinite(t)
+        z = torch.where(valid_mask, g_star_val, torch.full_like(g_star_val, float("nan")))
+        return (
+            z.cpu().numpy().astype(np.float32),
+            valid_mask.cpu().numpy(),
+        )
 
     @torch.no_grad()
     def debug_g_star_values(
@@ -781,6 +831,8 @@ class DebiasedCausalBoundEstimator:
         h_net = self.h_nets_[k]
         u_net = self.u_nets_[k]
         m_reg = self.m_models_[k]
+        if m_reg is None:
+            return np.full((int(Xq64.shape[0]),), np.nan, dtype=np.float64)
 
         if e1_eval is None:
             e1 = _predict_proba_class1(prop, Xq64)
@@ -800,6 +852,8 @@ class DebiasedCausalBoundEstimator:
         m = m_reg.predict(AX64).astype(np.float64, copy=False)
 
         theta = lam * (eta + m) + u
+        finite_mask = np.isfinite(theta) & np.isfinite(lam) & np.isfinite(u) & np.isfinite(eta) & np.isfinite(m)
+        theta = np.where(finite_mask, theta, np.nan)
         return theta
 
     def _predict_fold(self, k: int, a: int, Xq: np.ndarray) -> np.ndarray:
@@ -1106,8 +1160,11 @@ def _fit_def6_upper_only(
         lamA = torch.exp(hA_clamped)
 
         t = (phiY - uA) / lamA
-        gstar = div.g_star(t)
-        loss = torch.mean(lamA * (etaA + gstar) + uA)
+        gstar, valid_mask = div.g_star_with_valid(t)
+        valid_mask = valid_mask & torch.isfinite(gstar) & torch.isfinite(t)
+        gstar_safe = torch.where(valid_mask, gstar, torch.zeros_like(gstar))
+        domain_pen = 1e4 * (div.domain_violation(t).pow(2) + (~valid_mask).float())
+        loss = torch.mean(lamA * (etaA + gstar_safe) + uA + domain_pen)
 
         if not torch.isfinite(loss).item():
             raise FloatingPointError(

@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from causal_bound import compute_causal_bounds
+from causal_bound import DebiasedCausalBoundEstimator, compute_causal_bounds
 from data_generating import generate_data
 from divergences import _REGISTRY, _build_default_registry
 
@@ -92,3 +92,51 @@ def test_gstar_with_valid_masks():
         assert gstar.shape == t.shape
         if bool(valid.any().item()):
             assert torch.isfinite(gstar[valid]).all().item()
+
+
+class _AlwaysInvalidDivergence:
+    name = "AlwaysInvalid"
+    notes = "Test-only divergence with empty valid domain."
+    domain = "none"
+    t_max = 0.0
+
+    def B_torch(self, e: torch.Tensor) -> torch.Tensor:
+        return torch.zeros_like(e)
+
+    def dB_torch(self, e: torch.Tensor) -> torch.Tensor:
+        return torch.zeros_like(e)
+
+    def B_numpy(self, e: np.ndarray) -> np.ndarray:
+        return np.zeros_like(e, dtype=np.float64)
+
+    def dB_numpy(self, e: np.ndarray) -> np.ndarray:
+        return np.zeros_like(e, dtype=np.float64)
+
+    def g_star(self, t: torch.Tensor) -> torch.Tensor:
+        return torch.zeros_like(t)
+
+    def g_star_with_valid(self, t: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        return torch.zeros_like(t), torch.zeros_like(t, dtype=torch.bool)
+
+
+def test_invalid_domain_excludes_m_and_nan_predictions():
+    data = generate_data(n=40, d=2, seed=7, structural_type="linear")
+    dual_net_config, fit_config = _configs()
+    fit_config["num_epochs"] = 2
+    fit_config["min_valid_per_action"] = 1
+
+    def _phi_identity(y: torch.Tensor) -> torch.Tensor:
+        return y
+
+    est = DebiasedCausalBoundEstimator(
+        divergence=_AlwaysInvalidDivergence(),
+        phi=_phi_identity,
+        propensity_model="logistic",
+        m_model="linear",
+        dual_net_config=dual_net_config,
+        fit_config=fit_config,
+        seed=7,
+    ).fit(data["X"], data["A"], data["Y"])
+
+    preds = est.predict_bound(a=1, X=data["X"])
+    assert np.isnan(preds).all()
