@@ -319,69 +319,6 @@ def combined_cwise_intersection(lower_mat: np.ndarray, upper_mat: np.ndarray, c:
 
 
 # -------------------------
-# Kth aggregator (order-statistic bounds)
-# -------------------------
-def kth(lower_values, upper_values, k):
-    lowers = np.asarray(lower_values, dtype=np.float64).reshape(-1)
-    uppers = np.asarray(upper_values, dtype=np.float64).reshape(-1)
-
-    if lowers.size != uppers.size:
-        raise ValueError("lower_values and upper_values must have same length.")
-    n = int(lowers.size)
-    if n == 0:
-        return float("nan"), float("nan")
-
-    # clamp k into [1, n]
-    k = int(k)
-    if k < 1:
-        k = 1
-    if k > n:
-        k = n
-
-    # Precompute sorted order-statistics once (O(n log n)).
-    # This is simpler and avoids repeated partition work in recursion.
-    lowers_sorted = np.sort(lowers)
-    uppers_sorted = np.sort(uppers)
-
-    while k >= 1:
-        l_k = float(lowers_sorted[k - 1])       # k-th smallest
-        u_k = float(uppers_sorted[n - k])       # (n-k+1)-th smallest
-
-        if l_k <= u_k:
-            return l_k, u_k
-        k -= 1
-
-    # No feasible k found
-    return float("nan"), float("nan")
-
-
-def tight_kth(lower_values, upper_values, k=None):
-    lowers = np.asarray(lower_values, dtype=np.float64).reshape(-1)
-    uppers = np.asarray(upper_values, dtype=np.float64).reshape(-1)
-    if lowers.size != uppers.size:
-        raise ValueError("tight_kth requires lower_values and upper_values to have same length.")
-    n = int(lowers.size)
-    if n == 0:
-        return float("nan"), float("nan")
-    if k is None:
-        k = n
-    k = int(k)
-    if k < 1:
-        raise ValueError("k must be >= 1.")
-    if k > n:
-        k = n
-
-    last = (float("nan"), float("nan"))
-    while k >= 1:
-        l_k, u_k = kth(lowers, uppers, k)
-        last = (l_k, u_k)
-        if l_k <= u_k:
-            break
-        k -= 1
-    return last
-
-
-# -------------------------
 # Fast 1D cluster aggregation for M small (here M=5 base divergences)
 # -------------------------
 def _median(vals: list[float]) -> float:
@@ -720,8 +657,7 @@ if __name__ == "__main__":
         seed = 300132
         n = 2000
         d = 10
-        div = "kth"  # KL, TV, Hellinger, Chi2, JS, combined, combined_intersection, cluster, kth, tight_kth
-        k = 3
+        div = "combined"  # KL, TV, Hellinger, Chi2, JS, combined, combined_intersection, cluster
         structural_type = "cyclic2"
 
         dual_net_config = {
@@ -961,29 +897,6 @@ if __name__ == "__main__":
         results["k_cluster_lower"] = cluster_kL
         results["k_cluster_upper"] = cluster_kU
 
-    with StepTimer("aggregate kth bounds", use_tqdm=False, enabled=timing_enabled):
-        # Kth order-statistic aggregator over divergence bounds.
-        kth_k = k
-        kth_lower = np.empty(X.shape[0], dtype=np.float32)
-        kth_upper = np.empty(X.shape[0], dtype=np.float32)
-        for i in range(X.shape[0]):
-            lo, up = kth(lower_mat[:, i], upper_mat[:, i], kth_k)
-            kth_lower[i] = np.float32(lo)
-            kth_upper[i] = np.float32(up)
-        results["lower_kth"] = kth_lower
-        results["upper_kth"] = kth_upper
-
-    with StepTimer("aggregate tight_kth bounds", use_tqdm=False, enabled=timing_enabled):
-        # Tightened kth aggregator (decrease k until interval is non-inverted).
-        tight_lower = np.empty(X.shape[0], dtype=np.float32)
-        tight_upper = np.empty(X.shape[0], dtype=np.float32)
-        for i in range(X.shape[0]):
-            lo, up = tight_kth(lower_mat[:, i], upper_mat[:, i], k=lower_mat.shape[0])
-            tight_lower[i] = np.float32(lo)
-            tight_upper[i] = np.float32(up)
-        results["lower_tight_kth"] = tight_lower
-        results["upper_tight_kth"] = tight_upper
-
     with StepTimer("compute metrics", use_tqdm=False, enabled=timing_enabled):
         # Basic sanity checks (mirror the original checks, but on computed outputs).
         for key in [
@@ -991,10 +904,6 @@ if __name__ == "__main__":
             "upper_combined",
             "lower_cluster",
             "upper_cluster",
-            "lower_kth",
-            "upper_kth",
-            "lower_tight_kth",
-            "upper_tight_kth",
         ]:
             arr = np.asarray(results[key], dtype=np.float32)
             assert not np.isinf(arr).any(), f"{key} has +/-inf values"
@@ -1020,15 +929,9 @@ if __name__ == "__main__":
         elif div_key == "cluster":
             lo = np.asarray(results["lower_cluster"], dtype=np.float32)
             up = np.asarray(results["upper_cluster"], dtype=np.float32)
-        elif div_key == "kth":
-            lo = np.asarray(results["lower_kth"], dtype=np.float32)
-            up = np.asarray(results["upper_kth"], dtype=np.float32)
-        elif div_key == "tight_kth":
-            lo = np.asarray(results["lower_tight_kth"], dtype=np.float32)
-            up = np.asarray(results["upper_tight_kth"], dtype=np.float32)
         else:
             raise ValueError(
-                f"Unknown div='{div}'. Choose one of {base_divs + ['combined','combined_intersection','cluster','kth','tight_kth']}."
+                f"Unknown div='{div}'. Choose one of {base_divs + ['combined','combined_intersection','cluster']}."
             )
 
         width = float(np.nanmean(up - lo))
@@ -1070,10 +973,6 @@ if __name__ == "__main__":
                 "inverted_filtered_combined",
                 "lower_cluster",
                 "upper_cluster",
-                "lower_kth",
-                "upper_kth",
-                "lower_tight_kth",
-                "upper_tight_kth",
             ]
         )
         if use_combined_intersection:
@@ -1117,15 +1016,6 @@ if __name__ == "__main__":
             (table_df["lower_cluster"] <= table_df["truth_do1"])
             & (table_df["truth_do1"] <= table_df["upper_cluster"])
         )
-        table_df["coverage_kth"] = (
-            (table_df["lower_kth"] <= table_df["truth_do1"])
-            & (table_df["truth_do1"] <= table_df["upper_kth"])
-        )
-        table_df["coverage_tight_kth"] = (
-            (table_df["lower_tight_kth"] <= table_df["truth_do1"])
-            & (table_df["truth_do1"] <= table_df["upper_tight_kth"])
-        )
-
         summary_rows = []
         for dv in base_divs:
             widths = table_df[f"upper_{dv}"] - table_df[f"lower_{dv}"]
@@ -1183,32 +1073,6 @@ if __name__ == "__main__":
                 "blanked_frac": float((~valid_cluster).mean()),
             }
         )
-        widths_kth = table_df["upper_kth"] - table_df["lower_kth"]
-        valid_kth = np.isfinite(table_df["upper_kth"]) & np.isfinite(table_df["lower_kth"]) & (
-            table_df["lower_kth"] <= table_df["upper_kth"]
-        )
-        summary_rows.append(
-            {
-                "divergence": "kth",
-                "coverage_rate": float(table_df["coverage_kth"].mean()),
-                "mean_width": float(np.nanmean(widths_kth)),
-                "valid_interval_frac": float(valid_kth.mean()),
-                "blanked_frac": float((~valid_kth).mean()),
-            }
-        )
-        widths_tight_kth = table_df["upper_tight_kth"] - table_df["lower_tight_kth"]
-        valid_tight = np.isfinite(table_df["upper_tight_kth"]) & np.isfinite(table_df["lower_tight_kth"]) & (
-            table_df["lower_tight_kth"] <= table_df["upper_tight_kth"]
-        )
-        summary_rows.append(
-            {
-                "divergence": "tight_kth",
-                "coverage_rate": float(table_df["coverage_tight_kth"].mean()),
-                "mean_width": float(np.nanmean(widths_tight_kth)),
-                "valid_interval_frac": float(valid_tight.mean()),
-                "blanked_frac": float((~valid_tight).mean()),
-            }
-        )
         summary_df = pd.DataFrame(summary_rows)
         print(
             "combined validity: "
@@ -1225,8 +1089,6 @@ if __name__ == "__main__":
             [
                 "coverage_combined",
                 "coverage_cluster",
-                "coverage_kth",
-                "coverage_tight_kth",
             ]
         )
         if use_combined_intersection:
@@ -1256,10 +1118,6 @@ if __name__ == "__main__":
                 "n_eff_lo_combined",
                 "lower_cluster",
                 "upper_cluster",
-                "lower_kth",
-                "upper_kth",
-                "lower_tight_kth",
-                "upper_tight_kth",
                 "any_invalid_gstar",
                 "any_invalid_interval",
             ]
@@ -1287,6 +1145,3 @@ if __name__ == "__main__":
         summary_df.to_csv("experiments/run_example_gstar_bounds_summary.csv", index=False)
         print("Coverage/width summary by divergence:")
         print(summary_df)
-
-        # print(table_df[["i","lower_kth","truth_do1","upper_kth"]])
-        # print(table_df[["i","lower_kth","truth_do1","upper_kth"]])
