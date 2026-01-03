@@ -42,7 +42,10 @@ import time
 import warnings
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parent
+try:
+    _ROOT = Path(__file__).resolve().parent
+except NameError:
+    _ROOT = Path.cwd()
 _SRC = _ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
@@ -718,7 +721,7 @@ if __name__ == "__main__":
         n = 2000
         d = 10
         div = "kth"  # KL, TV, Hellinger, Chi2, JS, combined, combined_intersection, cluster, kth, tight_kth
-        k = 4
+        k = 3
         structural_type = "cyclic2"
 
         dual_net_config = {
@@ -1285,4 +1288,4 @@ if __name__ == "__main__":
         print("Coverage/width summary by divergence:")
         print(summary_df)
 
-        # print(table_df[["i","lower_cluster","truth_do1","upper_cluster","lower_combined","truth_do1","upper_combined"]])
+        # print(table_df[["i","lower_kth","truth_do1","upper_kth"]])
