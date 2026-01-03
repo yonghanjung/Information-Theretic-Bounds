@@ -32,6 +32,7 @@ except Exception:  # pragma: no cover
 
 from fbound.estimators.causal_bound import (
     DebiasedCausalBoundEstimator,
+    aggregate_endpointwise,
     prefit_propensity_cache,
 )
 from fbound.utils.data_generating import generate_data
@@ -111,6 +112,65 @@ def _timing_enabled_from_argv(default: bool = True) -> bool:
     if "--timing" in sys.argv:
         return True
     return default
+
+
+def smooth_xy(
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    method: str = "spline",
+    smooth_grid_n: int = 500,
+    window: int = 5,
+    spline_k: int = 3,
+    spline_s: float = -1.0,
+    lowess_frac: float = 0.2,
+    lowess_it: int = 1,
+) -> tuple[np.ndarray, np.ndarray]:
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    mask = np.isfinite(x) & np.isfinite(y)
+    x = x[mask]
+    y = y[mask]
+    if x.size == 0:
+        return np.array([]), np.array([])
+
+    order = np.argsort(x)
+    x = x[order]
+    y = y[order]
+    method = str(method).lower()
+
+    if method == "none":
+        return x, y
+
+    if method == "moving_avg":
+        window = max(1, int(window))
+        if window <= 1 or x.size < 2:
+            return x, y
+        kernel = np.ones(window, dtype=np.float64) / float(window)
+        y_s = np.convolve(y, kernel, mode="same")
+        return x, y_s
+
+    if method == "spline":
+        if x.size <= int(spline_k):
+            return x, y
+        s_val = None if float(spline_s) < 0 else float(spline_s)
+        try:
+            spline = UnivariateSpline(x, y, k=int(spline_k), s=s_val)
+            grid_n = max(2, int(smooth_grid_n))
+            x_grid = np.linspace(float(x.min()), float(x.max()), grid_n)
+            y_grid = spline(x_grid)
+            return x_grid, y_grid
+        except Exception:
+            return x, y
+
+    if method == "lowess":
+        try:
+            out = lowess(y, x, frac=float(lowess_frac), it=int(lowess_it), return_sorted=True)
+            return out[:, 0], out[:, 1]
+        except Exception:
+            return x, y
+
+    raise ValueError(f"Unknown smoothing method '{method}'.")
 
 # -------------------------
 # Phi definitions
@@ -296,10 +356,10 @@ def main() -> None:
     fit_config = {
         "n_folds": args.n_folds,
         "num_epochs": args.num_epochs,
-        "batch_size": 256,
+        "batch_size": None,
         "lr": 5e-4,
         "weight_decay": 1e-4,
-        "max_grad_norm": 10.0,
+        "max_grad_norm": None,
         "eps_propensity": args.eps_propensity,
         "deterministic_torch": True,
         "train_m_on_fold": True,
@@ -433,25 +493,34 @@ def main() -> None:
                             k_val = int(args.kval) if args.kval is not None else int(lower_base.shape[0])
                             if k_val < 1 or k_val > int(lower_base.shape[0]):
                                 raise ValueError(f"--kval must be in [1, {int(lower_base.shape[0])}] (got {k_val}).")
-                            L = np.empty(lower_base.shape[1], dtype=np.float32)
-                            U = np.empty(lower_base.shape[1], dtype=np.float32)
-                            for i in range(lower_base.shape[1]):
-                                lo, up = kth(lower_base[:, i], upper_base[:, i], k_val)
-                                L[i] = np.float32(lo)
-                                U[i] = np.float32(up)
+                            valid_up = np.isfinite(upper_base)
+                            valid_lo = np.isfinite(lower_base)
+                            agg = aggregate_endpointwise(
+                                lower_mat=lower_base,
+                                upper_mat=upper_base,
+                                valid_up=valid_up,
+                                valid_lo=valid_lo,
+                                k_up=k_val,
+                                k_lo=k_val,
+                            )
+                            L = agg["lower"].astype(np.float32)
+                            U = agg["upper"].astype(np.float32)
                         elif div == "tight_kth":
                             if lower_base is None:
                                 lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
                                 upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
-                            k_val = int(args.kval) if args.kval is not None else int(lower_base.shape[0])
-                            if k_val < 1 or k_val > int(lower_base.shape[0]):
-                                raise ValueError(f"--kval must be in [1, {int(lower_base.shape[0])}] (got {k_val}).")
-                            L = np.empty(lower_base.shape[1], dtype=np.float32)
-                            U = np.empty(lower_base.shape[1], dtype=np.float32)
-                            for i in range(lower_base.shape[1]):
-                                lo, up = tight_kth(lower_base[:, i], upper_base[:, i], k=k_val)
-                                L[i] = np.float32(lo)
-                                U[i] = np.float32(up)
+                            valid_up = np.isfinite(upper_base)
+                            valid_lo = np.isfinite(lower_base)
+                            agg = aggregate_endpointwise(
+                                lower_mat=lower_base,
+                                upper_mat=upper_base,
+                                valid_up=valid_up,
+                                valid_lo=valid_lo,
+                                k_up=1,
+                                k_lo=1,
+                            )
+                            L = agg["lower"].astype(np.float32)
+                            U = agg["upper"].astype(np.float32)
                         else:
                             raise ValueError(f"Unsupported divergence '{div}'")
 
