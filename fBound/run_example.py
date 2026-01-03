@@ -657,7 +657,8 @@ if __name__ == "__main__":
         seed = 300132
         n = 2000
         d = 10
-        div = "combined"  # KL, TV, Hellinger, Chi2, JS, combined, combined_intersection, cluster
+        div = "kth"  # KL, TV, Hellinger, Chi2, JS, combined, combined_intersection, cluster, kth, tight_kth
+        k = 3  # used when div="kth"
         structural_type = "cyclic2"
 
         dual_net_config = {
@@ -858,6 +859,24 @@ if __name__ == "__main__":
             results["lower_combined_intersection"] = lower_ci.astype(np.float32)
             results["upper_combined_intersection"] = upper_ci.astype(np.float32)
 
+        # Kth-style aggregation via endpoint-wise order-statistics.
+        k_use = max(1, int(k))
+        agg_kth = aggregate_endpointwise(
+            lower_mat=lower_mat,
+            upper_mat=upper_mat,
+            valid_up=valid_up_mat,
+            valid_lo=valid_lo_mat,
+            k_up=k_use,
+            k_lo=k_use,
+        )
+        results["lower_kth"] = agg_kth["lower"].astype(np.float32)
+        results["upper_kth"] = agg_kth["upper"].astype(np.float32)
+        results["k_used_up_kth"] = agg_kth["k_used_up"]
+        results["k_used_lo_kth"] = agg_kth["k_used_lo"]
+        # Tight-kth uses k=1, which matches the default combined aggregation.
+        results["lower_tight_kth"] = lower_combined
+        results["upper_tight_kth"] = upper_combined
+
 
     with StepTimer("aggregate cluster bounds", use_tqdm=False, enabled=timing_enabled):
         # Cluster-based aggregator over divergence bounds (auto-k on {2,3,4}) using fast 1D partition search.
@@ -904,6 +923,10 @@ if __name__ == "__main__":
             "upper_combined",
             "lower_cluster",
             "upper_cluster",
+            "lower_kth",
+            "upper_kth",
+            "lower_tight_kth",
+            "upper_tight_kth",
         ]:
             arr = np.asarray(results[key], dtype=np.float32)
             assert not np.isinf(arr).any(), f"{key} has +/-inf values"
@@ -929,9 +952,15 @@ if __name__ == "__main__":
         elif div_key == "cluster":
             lo = np.asarray(results["lower_cluster"], dtype=np.float32)
             up = np.asarray(results["upper_cluster"], dtype=np.float32)
+        elif div_key == "kth":
+            lo = np.asarray(results["lower_kth"], dtype=np.float32)
+            up = np.asarray(results["upper_kth"], dtype=np.float32)
+        elif div_key == "tight_kth":
+            lo = np.asarray(results["lower_tight_kth"], dtype=np.float32)
+            up = np.asarray(results["upper_tight_kth"], dtype=np.float32)
         else:
             raise ValueError(
-                f"Unknown div='{div}'. Choose one of {base_divs + ['combined','combined_intersection','cluster']}."
+                f"Unknown div='{div}'. Choose one of {base_divs + ['combined','combined_intersection','cluster','kth','tight_kth']}."
             )
 
         width = float(np.nanmean(up - lo))
@@ -973,6 +1002,12 @@ if __name__ == "__main__":
                 "inverted_filtered_combined",
                 "lower_cluster",
                 "upper_cluster",
+                "lower_kth",
+                "upper_kth",
+                "k_used_up_kth",
+                "k_used_lo_kth",
+                "lower_tight_kth",
+                "upper_tight_kth",
             ]
         )
         if use_combined_intersection:
@@ -1015,6 +1050,14 @@ if __name__ == "__main__":
         table_df["coverage_cluster"] = (
             (table_df["lower_cluster"] <= table_df["truth_do1"])
             & (table_df["truth_do1"] <= table_df["upper_cluster"])
+        )
+        table_df["coverage_kth"] = (
+            (table_df["lower_kth"] <= table_df["truth_do1"])
+            & (table_df["truth_do1"] <= table_df["upper_kth"])
+        )
+        table_df["coverage_tight_kth"] = (
+            (table_df["lower_tight_kth"] <= table_df["truth_do1"])
+            & (table_df["truth_do1"] <= table_df["upper_tight_kth"])
         )
         summary_rows = []
         for dv in base_divs:
@@ -1073,6 +1116,32 @@ if __name__ == "__main__":
                 "blanked_frac": float((~valid_cluster).mean()),
             }
         )
+        widths_kth = table_df["upper_kth"] - table_df["lower_kth"]
+        valid_kth = np.isfinite(table_df["upper_kth"]) & np.isfinite(table_df["lower_kth"]) & (
+            table_df["lower_kth"] <= table_df["upper_kth"]
+        )
+        summary_rows.append(
+            {
+                "divergence": "kth",
+                "coverage_rate": float(table_df["coverage_kth"].mean()),
+                "mean_width": float(np.nanmean(widths_kth)),
+                "valid_interval_frac": float(valid_kth.mean()),
+                "blanked_frac": float((~valid_kth).mean()),
+            }
+        )
+        widths_tight_kth = table_df["upper_tight_kth"] - table_df["lower_tight_kth"]
+        valid_tight = np.isfinite(table_df["upper_tight_kth"]) & np.isfinite(table_df["lower_tight_kth"]) & (
+            table_df["lower_tight_kth"] <= table_df["upper_tight_kth"]
+        )
+        summary_rows.append(
+            {
+                "divergence": "tight_kth",
+                "coverage_rate": float(table_df["coverage_tight_kth"].mean()),
+                "mean_width": float(np.nanmean(widths_tight_kth)),
+                "valid_interval_frac": float(valid_tight.mean()),
+                "blanked_frac": float((~valid_tight).mean()),
+            }
+        )
         summary_df = pd.DataFrame(summary_rows)
         print(
             "combined validity: "
@@ -1089,6 +1158,8 @@ if __name__ == "__main__":
             [
                 "coverage_combined",
                 "coverage_cluster",
+                "coverage_kth",
+                "coverage_tight_kth",
             ]
         )
         if use_combined_intersection:
@@ -1118,6 +1189,10 @@ if __name__ == "__main__":
                 "n_eff_lo_combined",
                 "lower_cluster",
                 "upper_cluster",
+                "lower_kth",
+                "upper_kth",
+                "lower_tight_kth",
+                "upper_tight_kth",
                 "any_invalid_gstar",
                 "any_invalid_interval",
             ]
