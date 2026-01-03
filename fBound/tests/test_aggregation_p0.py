@@ -1,6 +1,6 @@
 import numpy as np
 
-from causal_bound import _apply_interval_validity, aggregate_endpointwise
+from fbound.estimators.causal_bound import _apply_interval_validity, aggregate_endpointwise
 
 
 def test_apply_interval_validity_blanks_inverted():

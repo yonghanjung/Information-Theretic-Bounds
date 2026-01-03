@@ -40,9 +40,15 @@ import os
 import sys
 import time
 import warnings
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent
+_SRC = _ROOT / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
 
 # Thread knobs kept off by default; flip to True if you hit BLAS/OpenMP issues on macOS.
-from utils import apply_macos_thread_safety_knobs
+from fbound.utils.utils import apply_macos_thread_safety_knobs
 
 # Must be called before importing numpy/sklearn/torch to affect BLAS/OpenMP.
 apply_macos_thread_safety_knobs(enable=False)
@@ -54,11 +60,11 @@ import torch
 # Silence runtime warnings from synthetic data (overflow/invalid during matmul/logits).
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
-from data_generating import generate_data
+from fbound.utils.data_generating import generate_data
 from manski import empirical_extrema_manski_bounds
 
 # Prefer cached estimator (propensity cache reuse). Fall back to baseline if unavailable.
-from causal_bound import (
+from fbound.estimators.causal_bound import (
     DebiasedCausalBoundEstimator,
     _apply_interval_validity,
     aggregate_endpointwise,

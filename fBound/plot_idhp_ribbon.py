@@ -18,6 +18,11 @@ from itertools import combinations
 from pathlib import Path
 from typing import Optional, Tuple
 
+_ROOT = Path(__file__).resolve().parent
+_SRC = _ROOT / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -28,7 +33,11 @@ try:
 except Exception:  # pragma: no cover
     tqdm = lambda x, **k: x  # type: ignore
 
-from causal_bound import DebiasedCausalBoundEstimator, aggregate_endpointwise, prefit_propensity_cache
+from fbound.estimators.causal_bound import (
+    DebiasedCausalBoundEstimator,
+    aggregate_endpointwise,
+    prefit_propensity_cache,
+)
 
 from scipy.interpolate import UnivariateSpline
 from statsmodels.nonparametric.smoothers_lowess import lowess

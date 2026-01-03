@@ -8,20 +8,32 @@ import csv
 import datetime
 import inspect
 import os
+import sys
 import warnings
 import zlib
 from itertools import combinations
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from causal_bound import DebiasedCausalBoundEstimator, _concat_ax, aggregate_endpointwise, prefit_propensity_cache
-from data_generating import generate_data
+_ROOT = Path(__file__).resolve().parent
+_SRC = _ROOT / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+from fbound.estimators.causal_bound import (
+    DebiasedCausalBoundEstimator,
+    _concat_ax,
+    aggregate_endpointwise,
+    prefit_propensity_cache,
+)
+from fbound.utils.data_generating import generate_data
 
 try:
-    from causal_bound import compute_ate_bounds_def6 as _compute_ate_bounds_def6
+    from fbound.estimators.causal_bound import compute_ate_bounds_def6 as _compute_ate_bounds_def6
 except Exception:  # pragma: no cover
     _compute_ate_bounds_def6 = None
 

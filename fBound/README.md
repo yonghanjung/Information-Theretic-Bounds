@@ -9,11 +9,11 @@ This folder is a modular refactor of the original monolithic `fBound.py` into a 
 ## Quick start (minimal, fast)
 
 ```bash
-python3 - <<'PY'
+PYTHONPATH=src python3 - <<'PY'
 import numpy as np
 import torch
-from data_generating import generate_data
-from causal_bound import compute_causal_bounds
+from fbound.utils.data_generating import generate_data
+from fbound.estimators.causal_bound import compute_causal_bounds
 
 data = generate_data(n=200, d=3, seed=123, structural_type="linear")
 dual_net_config = {

@@ -1,9 +1,9 @@
 import numpy as np
 import torch
 
-from causal_bound import DebiasedCausalBoundEstimator, compute_causal_bounds
-from data_generating import generate_data
-from divergences import _REGISTRY, _build_default_registry
+from fbound.estimators.causal_bound import DebiasedCausalBoundEstimator, compute_causal_bounds
+from fbound.utils.data_generating import generate_data
+from fbound.utils.divergences import _REGISTRY, _build_default_registry
 
 
 def _configs():

@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from utils import choose_batch_size, make_domain_penalty_schedule
+from fbound.utils.utils import choose_batch_size, make_domain_penalty_schedule
 
 
 def test_choose_batch_size_rule():

@@ -19,6 +19,7 @@ import time
 import warnings
 import zlib
 from itertools import combinations
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import matplotlib.pyplot as plt
@@ -30,14 +31,19 @@ try:
 except Exception:  # pragma: no cover
     tqdm = lambda x, **k: x  # type: ignore
 
-from causal_bound import (
+_ROOT = Path(__file__).resolve().parent
+_SRC = _ROOT / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+from fbound.estimators.causal_bound import (
     DebiasedCausalBoundEstimator,
     _concat_ax,
     _predict_proba_class1,
     aggregate_endpointwise,
     prefit_propensity_cache,
 )
-from data_generating import generate_data
+from fbound.utils.data_generating import generate_data
 
 
 # -------------------------

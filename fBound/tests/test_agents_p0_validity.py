@@ -2,9 +2,9 @@ import numpy as np
 import pytest
 import torch
 
-from causal_bound import compute_causal_bounds
-from data_generating import generate_data
-from result import BoundResult
+from fbound.estimators.causal_bound import compute_causal_bounds
+from fbound.utils.data_generating import generate_data
+from fbound.utils.result import BoundResult
 
 def _run_tiny_bound():
     """

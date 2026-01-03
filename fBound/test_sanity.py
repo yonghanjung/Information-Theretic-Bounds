@@ -6,24 +6,25 @@ Run:
 """
 from __future__ import annotations
 
-import os
 import sys
 import unittest
+from pathlib import Path
 
-# THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-# if THIS_DIR not in sys.path:
-#     sys.path.insert(0, THIS_DIR)
+_ROOT = Path(__file__).resolve().parent
+_SRC = _ROOT / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
 
-from utils import apply_macos_thread_safety_knobs
+from fbound.utils.utils import apply_macos_thread_safety_knobs
 
 apply_macos_thread_safety_knobs(enable=False)
 
 import numpy as np
 import torch
 
-from causal_bound import compute_causal_bounds
-from data_generating import generate_data
-from divergences import get_divergence
+from fbound.estimators.causal_bound import compute_causal_bounds
+from fbound.utils.data_generating import generate_data
+from fbound.utils.divergences import get_divergence
 
 
 def phi_identity(y: torch.Tensor) -> torch.Tensor:
