@@ -739,10 +739,10 @@ if __name__ == "__main__":
         fit_config = {
             "n_folds": 3,
             "num_epochs": 200,
-            "batch_size": 256,
+            "batch_size": None,
             "lr": 5e-4,
             "weight_decay": 1e-4,
-            "max_grad_norm": 10.0,
+            "max_grad_norm": None,
             "eps_propensity": 1e-3,
             "deterministic_torch": True,
             "train_m_on_fold": True,
@@ -1288,4 +1288,5 @@ if __name__ == "__main__":
         print("Coverage/width summary by divergence:")
         print(summary_df)
 
+        # print(table_df[["i","lower_kth","truth_do1","upper_kth"]])
         # print(table_df[["i","lower_kth","truth_do1","upper_kth"]])
