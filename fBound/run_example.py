@@ -61,7 +61,6 @@ import torch
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 from fbound.utils.data_generating import generate_data
-from manski import empirical_extrema_manski_bounds
 
 # Prefer cached estimator (propensity cache reuse). Fall back to baseline if unavailable.
 from fbound.estimators.causal_bound import (
@@ -733,9 +732,6 @@ if __name__ == "__main__":
         # Core estimator models (propensity + pseudo-outcome regressor).
         propensity_model = "xgboost"
         m_model = "xgboost"
-        # Manski uses simpler, fast models to keep compute cheap and lightweight.
-        manski_propensity_model = "logistic"
-        manski_outcome_model = "random_forest"
 
         fit_config = {
             "n_folds": 3,
@@ -777,20 +773,6 @@ if __name__ == "__main__":
             "log_every": 10,
         }
 
-        manski_propensity_config = {
-            "C": 1.0,
-            "max_iter": 2000,
-            "penalty": "l2",
-            "solver": "lbfgs",
-            "n_jobs": 1,
-        }
-        manski_outcome_config = {
-            "n_estimators": 200,
-            "max_depth": None,
-            "min_samples_leaf": 5,
-            "min_samples_split": 10,
-            "n_jobs": 1,
-        }
 
     with StepTimer("data generation", use_tqdm=False, enabled=timing_enabled):
         data = generate_data(n=n, d=d, seed=seed, structural_type=structural_type, noise_dist="normal")
@@ -937,24 +919,6 @@ if __name__ == "__main__":
             results["lower_combined_intersection"] = lower_ci.astype(np.float32)
             results["upper_combined_intersection"] = upper_ci.astype(np.float32)
 
-    with StepTimer("compute Manski bounds", use_tqdm=False, enabled=timing_enabled):
-        # Empirical-extrema Manski heuristic.
-        manski_res = empirical_extrema_manski_bounds(
-            Y=Y,
-            A=A,
-            X=X,
-            a=1,
-            propensity_model=manski_propensity_model,
-            propensity_config=manski_propensity_config,
-            outcome_model=manski_outcome_model,
-            outcome_config=manski_outcome_config,
-            seed=seed,
-            eps_propensity=fit_config["eps_propensity"],
-        )
-        manski_lower = np.asarray(manski_res["lower"], dtype=np.float32)
-        manski_upper = np.asarray(manski_res["upper"], dtype=np.float32)
-        results["lower_Manski"] = manski_lower
-        results["upper_Manski"] = manski_upper
 
     with StepTimer("aggregate cluster bounds", use_tqdm=False, enabled=timing_enabled):
         # Cluster-based aggregator over divergence bounds (auto-k on {2,3,4}) using fast 1D partition search.
@@ -1028,8 +992,6 @@ if __name__ == "__main__":
             "upper_kth",
             "lower_tight_kth",
             "upper_tight_kth",
-            "lower_Manski",
-            "upper_Manski",
         ]:
             arr = np.asarray(results[key], dtype=np.float32)
             assert not np.isinf(arr).any(), f"{key} has +/-inf values"
@@ -1103,8 +1065,6 @@ if __name__ == "__main__":
                 "nonfinite_upper_combined",
                 "nonfinite_lower_combined",
                 "inverted_filtered_combined",
-                "lower_Manski",
-                "upper_Manski",
                 "lower_cluster",
                 "upper_cluster",
                 "lower_kth",
@@ -1150,10 +1110,6 @@ if __name__ == "__main__":
                 (table_df["lower_combined_intersection"] <= table_df["truth_do1"])
                 & (table_df["truth_do1"] <= table_df["upper_combined_intersection"])
             )
-        table_df["coverage_Manski"] = (
-            (table_df["lower_Manski"] <= table_df["truth_do1"])
-            & (table_df["truth_do1"] <= table_df["upper_Manski"])
-        )
         table_df["coverage_cluster"] = (
             (table_df["lower_cluster"] <= table_df["truth_do1"])
             & (table_df["truth_do1"] <= table_df["upper_cluster"])
@@ -1211,19 +1167,6 @@ if __name__ == "__main__":
                 }
             )
 
-        widths_manski = table_df["upper_Manski"] - table_df["lower_Manski"]
-        valid_manski = np.isfinite(table_df["upper_Manski"]) & np.isfinite(table_df["lower_Manski"]) & (
-            table_df["lower_Manski"] <= table_df["upper_Manski"]
-        )
-        summary_rows.append(
-            {
-                "divergence": "Manski_empirical",
-                "coverage_rate": float(table_df["coverage_Manski"].mean()),
-                "mean_width": float(np.nanmean(widths_manski)),
-                "valid_interval_frac": float(valid_manski.mean()),
-                "blanked_frac": float((~valid_manski).mean()),
-            }
-        )
         widths_cluster = table_df["upper_cluster"] - table_df["lower_cluster"]
         valid_cluster = np.isfinite(table_df["upper_cluster"]) & np.isfinite(table_df["lower_cluster"]) & (
             table_df["lower_cluster"] <= table_df["upper_cluster"]
@@ -1278,7 +1221,6 @@ if __name__ == "__main__":
         coverage_cols.extend(
             [
                 "coverage_combined",
-                "coverage_Manski",
                 "coverage_cluster",
                 "coverage_kth",
                 "coverage_tight_kth",
@@ -1315,8 +1257,6 @@ if __name__ == "__main__":
                 "upper_kth",
                 "lower_tight_kth",
                 "upper_tight_kth",
-                "lower_Manski",
-                "upper_Manski",
                 "any_invalid_gstar",
                 "any_invalid_interval",
             ]
