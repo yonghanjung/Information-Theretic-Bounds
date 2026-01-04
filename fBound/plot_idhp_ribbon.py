@@ -115,6 +115,65 @@ def _timing_enabled_from_argv(default: bool = True) -> bool:
     return default
 
 
+def smooth_xy(
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    method: str = "spline",
+    smooth_grid_n: int = 500,
+    window: int = 5,
+    spline_k: int = 3,
+    spline_s: float = -1.0,
+    lowess_frac: float = 0.2,
+    lowess_it: int = 1,
+) -> tuple[np.ndarray, np.ndarray]:
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    mask = np.isfinite(x) & np.isfinite(y)
+    x = x[mask]
+    y = y[mask]
+    if x.size == 0:
+        return np.array([]), np.array([])
+
+    order = np.argsort(x)
+    x = x[order]
+    y = y[order]
+    method = str(method).lower()
+
+    if method == "none":
+        return x, y
+
+    if method == "moving_avg":
+        window = max(1, int(window))
+        if window <= 1 or x.size < 2:
+            return x, y
+        kernel = np.ones(window, dtype=np.float64) / float(window)
+        y_s = np.convolve(y, kernel, mode="same")
+        return x, y_s
+
+    if method == "spline":
+        if x.size <= int(spline_k):
+            return x, y
+        s_val = None if float(spline_s) < 0 else float(spline_s)
+        try:
+            spline = UnivariateSpline(x, y, k=int(spline_k), s=s_val)
+            grid_n = max(2, int(smooth_grid_n))
+            x_grid = np.linspace(float(x.min()), float(x.max()), grid_n)
+            y_grid = spline(x_grid)
+            return x_grid, y_grid
+        except Exception:
+            return x, y
+
+    if method == "lowess":
+        try:
+            out = lowess(y, x, frac=float(lowess_frac), it=int(lowess_it), return_sorted=True)
+            return out[:, 0], out[:, 1]
+        except Exception:
+            return x, y
+
+    raise ValueError(f"Unknown smoothing method '{method}'.")
+
+
 CANDIDATE_FILES = ["ihdp_npci_1.csv"]
 COLUMN_NAMES = ["treatment", "y_factual", "y_cfactual", "mu0", "mu1"] + [f"x{i}" for i in range(1, 26)]
 LEGACY_COLUMNS = {"t": "treatment", "yf": "y_factual", "ycf": "y_cfactual"}
