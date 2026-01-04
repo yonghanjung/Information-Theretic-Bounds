@@ -190,14 +190,14 @@ def main() -> None:
         n = 1000
         d = 5
         structural_type = "cyclic2"
-        k = 3
+        k = 2
 
         base_divs = ["KL", "TV", "Hellinger", "Chi2", "JS"]
 
         dual_net_config = {
             "hidden_sizes": (64, 64),
             "activation": "relu",
-            "dropout": 0.0,
+            "dropout": 0.1,
             "h_clip": 20.0,
             "device": "cpu",
         }
@@ -206,8 +206,8 @@ def main() -> None:
         m_model = "xgboost"
 
         fit_config = {
-            "n_folds": 3,
-            "num_epochs": 200,
+            "n_folds": 2,
+            "num_epochs": 1000,
             "batch_size": None,
             "lr": 5e-4,
             "weight_decay": 1e-4,
@@ -215,6 +215,9 @@ def main() -> None:
             "eps_propensity": 1e-3,
             "deterministic_torch": True,
             "train_m_on_fold": True,
+            "early_stop_patience": 10,
+            "early_stop_min_delta": 0.0,
+            "early_stop_fraction": 0.2,
             "propensity_config": {
                 "n_estimators": 300,
                 "max_depth": 10,

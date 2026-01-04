@@ -296,6 +296,24 @@ def main() -> None:
     parser.add_argument("--lowess_it", type=int, default=1, help="LOWESS iterations.")
     parser.add_argument("--plot_raw_points", action="store_true", help="Overlay raw (unsmoothed) points on the plot.")
     parser.add_argument(
+        "--early_stop_patience",
+        type=int,
+        default=10,
+        help="Early stopping patience (0 disables).",
+    )
+    parser.add_argument(
+        "--early_stop_min_delta",
+        type=float,
+        default=0.0,
+        help="Minimum validation loss improvement to reset early stopping.",
+    )
+    parser.add_argument(
+        "--early_stop_fraction",
+        type=float,
+        default=0.2,
+        help="Fraction of fold used for early-stopping validation.",
+    )
+    parser.add_argument(
         "--kval",
         type=int,
         default=None,
@@ -345,7 +363,7 @@ def main() -> None:
     dual_net_config = {
         "hidden_sizes": (64, 64),
         "activation": "relu",
-        "dropout": 0.0,
+        "dropout": 0.1,
         "h_clip": 20.0,
         "device": args.device,
     }
@@ -363,6 +381,9 @@ def main() -> None:
         "eps_propensity": args.eps_propensity,
         "deterministic_torch": True,
         "train_m_on_fold": True,
+        "early_stop_patience": args.early_stop_patience,
+        "early_stop_min_delta": args.early_stop_min_delta,
+        "early_stop_fraction": args.early_stop_fraction,
         "propensity_config": {
             "n_estimators": 300,
             "max_depth": 10,

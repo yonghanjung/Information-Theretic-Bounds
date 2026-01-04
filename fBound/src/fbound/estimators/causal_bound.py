@@ -84,6 +84,9 @@ class FitConfig:
     domain_penalty_w2: float = 1e4
     domain_penalty_rho: float = 0.3
     min_valid_per_action: int = 5
+    early_stop_patience: int = 10
+    early_stop_min_delta: float = 0.0
+    early_stop_fraction: float = 0.2
 
     @staticmethod
     def from_dict(d: Dict[str, Any]) -> "FitConfig":
@@ -117,6 +120,9 @@ class FitConfig:
         else:
             batch_size = int(batch_raw)
         min_valid_per_action = int(d.get("min_valid_per_action", 5))
+        early_stop_patience = int(d.get("early_stop_patience", 10))
+        early_stop_min_delta = float(d.get("early_stop_min_delta", 0.0))
+        early_stop_fraction = float(d.get("early_stop_fraction", 0.2))
         return FitConfig(
             n_folds=int(d["n_folds"]),
             num_epochs=int(d["num_epochs"]),
@@ -136,6 +142,9 @@ class FitConfig:
             domain_penalty_w2=float(d.get("domain_penalty_w2", d.get("domain_penalty_weight", 1e4))),
             domain_penalty_rho=float(d.get("domain_penalty_rho", 0.3)),
             min_valid_per_action=min_valid_per_action,
+            early_stop_patience=early_stop_patience,
+            early_stop_min_delta=early_stop_min_delta,
+            early_stop_fraction=early_stop_fraction,
         )
 
 
@@ -652,12 +661,30 @@ class DebiasedCausalBoundEstimator:
 
         rng = np.random.default_rng(fold_seed)
 
-        batch_cap = min(choose_batch_size(n_fold), n_fold)
+        use_early_stop = (
+            self.fit_cfg.early_stop_patience > 0
+            and 0.0 < float(self.fit_cfg.early_stop_fraction) < 1.0
+            and n_fold > 1
+        )
+        if use_early_stop:
+            val_frac = float(self.fit_cfg.early_stop_fraction)
+            val_n = max(1, int(round(n_fold * val_frac)))
+            if n_fold - val_n < 1:
+                val_n = n_fold - 1
+            perm_all = rng.permutation(n_fold)
+            val_idx = perm_all[:val_n]
+            train_idx = perm_all[val_n:]
+        else:
+            val_idx = None
+            train_idx = np.arange(n_fold)
+
+        n_train = int(train_idx.shape[0])
+        batch_cap = min(choose_batch_size(n_train), n_train)
         if self.fit_cfg.batch_size is None or self.fit_cfg.batch_size <= 0:
             batch_size = batch_cap
         else:
             batch_size = min(int(self.fit_cfg.batch_size), batch_cap)
-        batch_size = max(1, min(batch_size, n_fold))
+        batch_size = max(1, min(batch_size, n_train))
 
         stage1_epochs, w_dom = make_domain_penalty_schedule(
             self.fit_cfg.num_epochs,
@@ -668,11 +695,14 @@ class DebiasedCausalBoundEstimator:
 
         valid_frac_epoch: list[float] = []
         last_loss = float("nan")
+        best_val = float("inf")
+        epochs_no_improve = 0
+        min_delta = max(0.0, float(self.fit_cfg.early_stop_min_delta))
         for epoch in range(self.fit_cfg.num_epochs):
-            perm = rng.permutation(n_fold)
+            perm = rng.permutation(train_idx)
             valid_count_epoch = 0
             total_count_epoch = 0
-            for start in range(0, n_fold, batch_size):
+            for start in range(0, n_train, batch_size):
                 idx = perm[start : start + batch_size]
                 idx_t = torch.tensor(idx, dtype=torch.int64, device=device)
 
@@ -703,6 +733,33 @@ class DebiasedCausalBoundEstimator:
                 valid_frac_epoch.append(float(valid_count_epoch) / float(total_count_epoch))
             else:
                 valid_frac_epoch.append(float("nan"))
+
+            if use_early_stop and val_idx is not None:
+                with torch.no_grad():
+                    idx_val = torch.tensor(val_idx, dtype=torch.int64, device=device)
+                    val_loss, _, _ = self._debiased_loss_batch(
+                        X=X_t.index_select(0, idx_val),
+                        A=A_t.index_select(0, idx_val),
+                        Y=Y_t.index_select(0, idx_val),
+                        e1=e1_t.index_select(0, idx_val),
+                        e0=e0_t.index_select(0, idx_val),
+                        h_net=h_net,
+                        u_net=u_net,
+                        domain_penalty_weight=w_dom(epoch),
+                    )
+                val_loss_val = float(val_loss.detach().cpu().item())
+                if np.isfinite(val_loss_val) and (val_loss_val + min_delta < best_val):
+                    best_val = val_loss_val
+                    epochs_no_improve = 0
+                else:
+                    epochs_no_improve += 1
+                if epochs_no_improve >= int(self.fit_cfg.early_stop_patience):
+                    if self.fit_cfg.verbose:
+                        print(
+                            f"  early stop at epoch {epoch+1}/{self.fit_cfg.num_epochs} "
+                            f"val_loss={val_loss_val:.6f}"
+                        )
+                    break
 
         valid_stage1 = valid_frac_epoch[:stage1_epochs]
         valid_stage2 = valid_frac_epoch[stage1_epochs:]
