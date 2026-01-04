@@ -65,8 +65,7 @@ python3 run_example.py
 ```
 
 Notes:
-- `combined` uses the AGENTS P0 endpoint-wise aggregation by default.
-- `combined_intersection` is available as an explicit legacy option in experiment scripts.
+- `kth`/`tight_kth` use endpoint-wise order statistics via `aggregate_endpointwise`.
 
 ## Validity + NaN semantics (AGENTS P0)
 
@@ -78,7 +77,7 @@ Notes:
 
 ## Diagnostics (AGENTS P0)
 
-Endpoint-wise aggregation (combined) reports per-point diagnostics:
+Endpoint-wise aggregation reports per-point diagnostics:
 - `n_eff_up`, `n_eff_lo`: effective candidate counts after filtering.
 - `k_used_up`, `k_used_lo`: order-statistic index used (default 1).
 - `invalid_up`, `invalid_lo`, `nonfinite_upper`, `nonfinite_lower`, `inverted_filtered`: rejection counts.
@@ -145,8 +144,7 @@ This is implemented by running the estimator twice: once for `phi`, once for `-p
   Toy generator with known `GroundTruth(a, X)` (analytic).
 
 - `run_example.py`  
-  End-to-end run on simulated data for base divergences plus post-processing aggregators
-  (combined endpoint-wise, cluster heuristic, empirical Manski).
+  End-to-end run on simulated data for base divergences plus kth/tight_kth aggregation.
 
 - `tests/`  
   Smoke and P0 validity tests (`pytest -q`).
@@ -159,11 +157,11 @@ This is implemented by running the estimator twice: once for `phi`, once for `-p
 - Prints mean width and empirical coverage for the selected `div` (set inside the script).
 - Saves per-sample tables with bounds, validity, and diagnostics:
   - `gstar_bounds_table.csv`: per-divergence lower/upper, `valid_up/valid_lo/valid_interval`, `inverted`,
-    g* validity masks, and combined diagnostics (`n_eff_*`, `invalid_*`, `nonfinite_*`, `inverted_filtered`).
+    g* validity masks, and kth diagnostics (`k_used_up_kth`, `k_used_lo_kth`).
   - `gstar_bounds_any_invalid.csv`: subset where any g* validity flag or interval validity flag is false.
 - Saves a summary:
   - `gstar_bounds_summary.csv`: coverage_rate, mean_width, and validity fractions per method
-    (`KL`, `TV`, `Hellinger`, `Chi2`, `JS`, `combined`, `cluster`, `Manski_empirical`).
+    (`KL`, `TV`, `Hellinger`, `Chi2`, `JS`, `kth`, `tight_kth`, `Manski_empirical`).
 
 ### Empirical Manski quick start
 
