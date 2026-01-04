@@ -120,7 +120,7 @@ class FitConfig:
         else:
             batch_size = int(batch_raw)
         min_valid_per_action = int(d.get("min_valid_per_action", 5))
-        early_stop_patience = int(d.get("early_stop_patience", 10))
+        early_stop_patience = int(d.get("early_stop_patience", 15))
         early_stop_min_delta = float(d.get("early_stop_min_delta", 0.0))
         early_stop_fraction = float(d.get("early_stop_fraction", 0.2))
         return FitConfig(
