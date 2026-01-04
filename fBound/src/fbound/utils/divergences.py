@@ -17,7 +17,7 @@ Numerical stability:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Dict, Protocol, runtime_checkable, Union
+from typing import Callable, Dict, Optional, Protocol, runtime_checkable, Union
 
 import numpy as np
 import torch
@@ -58,6 +58,7 @@ class FDivergence(FDivergenceLike):
     _valid_mask: Callable[[torch.Tensor], torch.Tensor]
     t_max: float = float("inf")
     domain_penalty_scale: float = 1.0
+    lambda_min_override: Optional[float] = None
 
     def B_torch(self, e: torch.Tensor) -> torch.Tensor:
         return self._B_torch(e)
@@ -232,7 +233,8 @@ def _chi2_divergence(cfg: PenaltyConfig, eps_e: float) -> FDivergence:
         _g_star=g_star,
         _valid_mask=valid_mask,
         t_max=0.5 - cfg.boundary_eps,
-        domain_penalty_scale=10.0,
+        domain_penalty_scale=1000.0,
+        lambda_min_override=0.1,
     )
 
 
@@ -457,6 +459,7 @@ def register_divergence(name: str, divergence: FDivergenceLike) -> None:
         _valid_mask=valid_mask,
         t_max=float(getattr(divergence, "t_max", float("inf"))),
         domain_penalty_scale=float(getattr(divergence, "domain_penalty_scale", 1.0)),
+        lambda_min_override=getattr(divergence, "lambda_min_override", None),
     )
 
 

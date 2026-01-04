@@ -810,7 +810,10 @@ class DebiasedCausalBoundEstimator:
         h1 = torch.clamp(h_net(ax1), min=-self.dual_net_cfg.h_clip, max=self.dual_net_cfg.h_clip)
 
         h_ax = torch.where(A >= 0.5, h1, h0)
-        lam_ax = torch.exp(h_ax).clamp(min=self.dual_net_cfg.lambda_min)
+        min_lambda = self.dual_net_cfg.lambda_min
+        if self.divergence.lambda_min_override is not None:
+            min_lambda = max(min_lambda, float(self.divergence.lambda_min_override))
+        lam_ax = torch.exp(h_ax).clamp(min=min_lambda)
 
         phi_y = self.phi(Y)
         t = (phi_y - u_ax) / lam_ax
@@ -827,8 +830,8 @@ class DebiasedCausalBoundEstimator:
 
         main = lam_ax * (eta + g_star_safe) + u_ax + domain_pen
 
-        lam0 = torch.exp(h0).clamp(min=self.dual_net_cfg.lambda_min)
-        lam1 = torch.exp(h1).clamp(min=self.dual_net_cfg.lambda_min)
+        lam0 = torch.exp(h0).clamp(min=min_lambda)
+        lam1 = torch.exp(h1).clamp(min=min_lambda)
 
         I0 = 1.0 - A
         I1 = A
