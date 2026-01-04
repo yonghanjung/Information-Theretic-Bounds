@@ -14,7 +14,6 @@ import pickle
 import sys
 import time
 import warnings
-from itertools import combinations
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -162,438 +161,6 @@ def phi_neg(y: torch.Tensor) -> torch.Tensor:
 
 
 # -------------------------
-# Endpoint-wise combined aggregator (AGENTS P0 default)
-# -------------------------
-def combined_endpointwise(lower_mat: np.ndarray, upper_mat: np.ndarray) -> dict[str, np.ndarray]:
-    valid_up = np.isfinite(upper_mat)
-    valid_lo = np.isfinite(lower_mat)
-    return aggregate_endpointwise(
-        lower_mat=lower_mat,
-        upper_mat=upper_mat,
-        valid_up=valid_up,
-        valid_lo=valid_lo,
-        k_up=1,
-        k_lo=1,
-    )
-
-
-# Legacy combined (c-wise) intersection aggregator (explicit opt-in)
-# -------------------------
-def combined_cwise_intersection(lower_mat: np.ndarray, upper_mat: np.ndarray, c: int = 3) -> tuple[np.ndarray, np.ndarray]:
-    """
-    lower_mat, upper_mat: shape (M, n)
-    returns (lower_out, upper_out): shape (n,)
-    """
-    M, n = lower_mat.shape
-    lower_out = np.full(n, np.nan, dtype=np.float32)
-    upper_out = np.full(n, np.nan, dtype=np.float32)
-
-    for i in range(n):
-        lowers = lower_mat[:, i]
-        uppers = upper_mat[:, i]
-        valid = np.isfinite(lowers) & np.isfinite(uppers) & (lowers <= uppers)
-
-        if not np.any(valid):
-            finite = np.isfinite(lowers) & np.isfinite(uppers)
-            if np.any(finite):
-                lo_f = float(np.min(lowers[finite]))
-                hi_f = float(np.max(uppers[finite]))
-                if lo_f > hi_f:
-                    mid = 0.5 * (lo_f + hi_f)
-                    lo_f, hi_f = mid, mid
-                lower_out[i] = np.float32(lo_f)
-                upper_out[i] = np.float32(hi_f)
-            else:
-                lower_out[i] = np.float32(0.0)
-                upper_out[i] = np.float32(0.0)
-            continue
-
-        lowers_v = lowers[valid]
-        uppers_v = uppers[valid]
-        if len(lowers_v) < 2:
-            lower_out[i] = np.float32(np.min(lowers_v))
-            upper_out[i] = np.float32(np.max(uppers_v))
-            continue
-
-        best_subset = None
-        best_width = np.inf
-        best_sum = np.inf
-        best_L = np.nan
-        best_U = np.nan
-
-        max_t = min(max(c, 2), len(lowers_v))
-        for t in range(max_t, 1, -1):
-            found_any = False
-            for combo in combinations(range(len(lowers_v)), t):
-                L_int = float(np.max(lowers_v[list(combo)]))
-                U_int = float(np.min(uppers_v[list(combo)]))
-                width = U_int - L_int
-                if width < 0:
-                    continue
-                sum_widths = float(np.sum(uppers_v[list(combo)] - lowers_v[list(combo)]))
-
-                if (
-                    (width < best_width)
-                    or (np.isclose(width, best_width) and sum_widths < best_sum)
-                    or (np.isclose(width, best_width) and np.isclose(sum_widths, best_sum) and (best_subset is None or combo < best_subset))
-                ):
-                    best_subset = combo
-                    best_width = width
-                    best_sum = sum_widths
-                    best_L = L_int
-                    best_U = U_int
-                found_any = True
-            if found_any and best_subset is not None:
-                break
-
-        if best_subset is not None:
-            lower_out[i] = np.float32(best_L)
-            upper_out[i] = np.float32(best_U)
-        else:
-            lower_out[i] = np.float32(np.min(lowers_v))
-            upper_out[i] = np.float32(np.max(uppers_v))
-
-    return lower_out, upper_out
-
-
-# -------------------------
-# Kth aggregator (order-statistic bounds)
-# -------------------------
-def kth(lower_values, upper_values, k):
-    lowers = np.asarray(lower_values, dtype=np.float64).reshape(-1)
-    uppers = np.asarray(upper_values, dtype=np.float64).reshape(-1)
-
-    if lowers.size != uppers.size:
-        raise ValueError("lower_values and upper_values must have same length.")
-    n = int(lowers.size)
-    if n == 0:
-        return float("nan"), float("nan")
-
-    # clamp k into [1, n]
-    k = int(k)
-    if k < 1:
-        k = 1
-    if k > n:
-        k = n
-
-    # Precompute sorted order-statistics once (O(n log n)).
-    # This is simpler and avoids repeated partition work in recursion.
-    lowers_sorted = np.sort(lowers)
-    uppers_sorted = np.sort(uppers)
-
-    while k >= 1:
-        l_k = float(lowers_sorted[k - 1])       # k-th smallest
-        u_k = float(uppers_sorted[n - k])       # (n-k+1)-th smallest
-
-        if l_k <= u_k:
-            return l_k, u_k
-        k -= 1
-
-    # No feasible k found
-    return float("nan"), float("nan")
-
-
-def tight_kth(lower_values, upper_values, k=None):
-    lowers = np.asarray(lower_values, dtype=np.float64).reshape(-1)
-    uppers = np.asarray(upper_values, dtype=np.float64).reshape(-1)
-    if lowers.size != uppers.size:
-        raise ValueError("tight_kth requires lower_values and upper_values to have same length.")
-    n = int(lowers.size)
-    if n == 0:
-        return float("nan"), float("nan")
-    if k is None:
-        k = n
-    k = int(k)
-    if k < 1:
-        raise ValueError("k must be >= 1.")
-    if k > n:
-        k = n
-
-    last = (float("nan"), float("nan"))
-    while k >= 1:
-        l_k, u_k = kth(lowers, uppers, k)
-        last = (l_k, u_k)
-        if l_k <= u_k:
-            break
-        k -= 1
-    return last
-
-
-# -------------------------
-# Cluster aggregator (fast 1D partition search, no sklearn)
-# -------------------------
-def _median(vals):
-    arr = np.sort(np.asarray(vals, dtype=np.float64))
-    n = int(arr.shape[0])
-    if n % 2 == 1:
-        return float(arr[n // 2])
-    return float(0.5 * (arr[n // 2 - 1] + arr[n // 2]))
-
-
-def _silhouette_score_1d(v_sorted: np.ndarray, labels: np.ndarray) -> float:
-    v = v_sorted.astype(np.float64, copy=False).reshape(-1)
-    labels = np.asarray(labels, dtype=int).reshape(-1)
-    m = int(v.shape[0])
-    uniq = np.unique(labels)
-    if uniq.size < 2:
-        return -np.inf
-
-    D = np.abs(v.reshape(-1, 1) - v.reshape(1, -1))
-    sil = np.zeros(m, dtype=np.float64)
-    for i in range(m):
-        li = labels[i]
-        in_same = np.where(labels == li)[0]
-        if in_same.size <= 1:
-            sil[i] = 0.0
-            continue
-        a_i = float(np.mean(D[i, in_same[in_same != i]]))
-        b_i = np.inf
-        for lj in uniq:
-            if lj == li:
-                continue
-            in_other = np.where(labels == lj)[0]
-            if in_other.size == 0:
-                continue
-            b_i = min(b_i, float(np.mean(D[i, in_other])))
-        denom = max(a_i, b_i)
-        sil[i] = 0.0 if denom <= 0 else (b_i - a_i) / denom
-    return float(np.mean(sil))
-
-
-def _partition_labels_from_cuts(m: int, cuts: tuple[int, ...]) -> np.ndarray:
-    labels = np.empty(m, dtype=int)
-    start = 0
-    lab = 0
-    for c in cuts + (m,):
-        labels[start:c] = lab
-        start = c
-        lab += 1
-    return labels
-
-
-def _sse_from_labels(v_sorted: np.ndarray, labels: np.ndarray) -> float:
-    v = v_sorted.astype(np.float64, copy=False)
-    sse = 0.0
-    for lab in np.unique(labels):
-        idx = np.where(labels == lab)[0]
-        if idx.size == 0:
-            continue
-        vv = v[idx]
-        mu = float(np.mean(vv))
-        sse += float(np.sum((vv - mu) ** 2))
-    return float(sse)
-
-
-def _best_cluster_partition_1d(values, k_candidates=(2, 3, 4), penalty_singleton=0.2):
-    v = np.asarray(values, dtype=np.float64).reshape(-1)
-    m = int(v.shape[0])
-    if m == 0:
-        return []
-    if m == 1:
-        return [[float(v[0])]]
-
-    order = np.argsort(v, kind="mergesort")
-    v_sorted = v[order]
-
-    best_score = -np.inf
-    best_labels = None
-    best_k = None
-    best_sse = np.inf
-    best_cuts = None
-
-    for k in k_candidates:
-        if k < 2 or k > m:
-            continue
-        for cuts in combinations(tuple(range(1, m)), k - 1):
-            labels = _partition_labels_from_cuts(m, cuts)
-            sizes = np.bincount(labels, minlength=k)
-            if not np.any(sizes >= 2):
-                continue
-            sil = _silhouette_score_1d(v_sorted, labels)
-            if not np.isfinite(sil):
-                continue
-            num_singletons = int(np.sum(sizes == 1))
-            score = float(sil - penalty_singleton * num_singletons)
-            sse = _sse_from_labels(v_sorted, labels)
-
-            better = False
-            if score > best_score + 1e-12:
-                better = True
-            elif abs(score - best_score) <= 1e-12:
-                if best_labels is None:
-                    better = True
-                else:
-                    best_sizes = np.bincount(best_labels, minlength=int(best_k))
-                    best_singletons = int(np.sum(best_sizes == 1))
-                    if num_singletons < best_singletons:
-                        better = True
-                    elif num_singletons == best_singletons:
-                        if best_k is None or int(k) < int(best_k):
-                            better = True
-                        elif int(k) == int(best_k):
-                            if sse < best_sse - 1e-12:
-                                better = True
-                            elif abs(sse - best_sse) <= 1e-12:
-                                if best_cuts is None or cuts < best_cuts:
-                                    better = True
-
-            if better:
-                best_score = score
-                best_labels = labels
-                best_k = int(k)
-                best_sse = float(sse)
-                best_cuts = cuts
-
-    if best_labels is None:
-        k = 2 if m >= 2 else 1
-        cut = (m // 2,)
-        labels = _partition_labels_from_cuts(m, cut)
-        best_labels = labels
-        best_k = k
-
-    clusters = []
-    for lab in range(int(best_k)):
-        idx = np.where(best_labels == lab)[0]
-        clusters.append([float(x) for x in v_sorted[idx]])
-    return clusters
-
-
-def _cluster_choose_lower(clusters):
-    eligible = [c for c in clusters if len(c) >= 2]
-    if not eligible:
-        return None
-    med = [_median(c) for c in eligible]
-    best = int(np.argmax(med))
-    return float(max(eligible[best]))
-
-
-def _cluster_choose_upper(clusters):
-    eligible = [c for c in clusters if len(c) >= 2]
-    if not eligible:
-        return None
-    med = [_median(c) for c in eligible]
-    best = int(np.argmin(med))
-    return float(min(eligible[best]))
-
-
-def cluster_per_sample_fast1d(lower_mat, upper_mat, k_candidates=(2, 3, 4), penalty_singleton=0.2):
-    M, n = lower_mat.shape
-    outL = np.empty(n, dtype=np.float32)
-    outU = np.empty(n, dtype=np.float32)
-
-    for i in range(n):
-        lowers = lower_mat[:, i].astype(np.float64, copy=False)
-        uppers = upper_mat[:, i].astype(np.float64, copy=False)
-
-        cL = _best_cluster_partition_1d(lowers, k_candidates=k_candidates, penalty_singleton=penalty_singleton)
-        cU = _best_cluster_partition_1d(uppers, k_candidates=k_candidates, penalty_singleton=penalty_singleton)
-
-        lo = _cluster_choose_lower(cL)
-        hi = _cluster_choose_upper(cU)
-
-        lowers_s = np.sort(lowers)
-        uppers_s = np.sort(uppers)
-
-        if lo is None:
-            lo = float(lowers_s[1] if lowers_s.size >= 2 else lowers_s[0])
-        if hi is None:
-            hi = float(uppers_s[-2] if uppers_s.size >= 2 else uppers_s[-1])
-        if lo > hi:
-            lo = float(lowers_s[1] if lowers_s.size >= 2 else lo)
-            hi = float(uppers_s[-2] if uppers_s.size >= 2 else hi)
-
-        outL[i] = np.float32(lo)
-        outU[i] = np.float32(hi)
-
-    return outL, outU
-
-
-# -------------------------
-# Smoothing helper for plotting (simple moving average over finite points)
-# -------------------------
-def _smooth_series(y: np.ndarray, window: int) -> np.ndarray:
-    if window <= 1 or y.size < 2:
-        return y
-    w = int(window)
-    w = max(1, min(w, y.size))
-    y_arr = np.asarray(y, dtype=float)
-    finite_mask = np.isfinite(y_arr)
-    if not np.any(finite_mask):
-        return y
-    # interpolate NaNs for smoothing
-    if not np.all(finite_mask):
-        idx = np.arange(y_arr.size)
-        y_arr[~finite_mask] = np.interp(idx[~finite_mask], idx[finite_mask], y_arr[finite_mask])
-    kernel = np.ones(w, dtype=float) / float(w)
-    y_smooth = np.convolve(y_arr, kernel, mode="same")
-    return y_smooth.astype(np.float32)
-
-
-def smooth_xy(
-    x: np.ndarray,
-    y: np.ndarray,
-    method: str,
-    smooth_grid_n: int,
-    window: int,
-    spline_k: int,
-    spline_s: float,
-    lowess_frac: float,
-    lowess_it: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    x = np.asarray(x, dtype=np.float64)
-    y = np.asarray(y, dtype=np.float64)
-    m = np.isfinite(x) & np.isfinite(y)
-    x = x[m]
-    y = y[m]
-    if x.size == 0:
-        return np.array([], dtype=np.float64), np.array([], dtype=np.float64)
-    order = np.argsort(x)
-    x = x[order]
-    y = y[order]
-    # aggregate duplicates
-    uniq_x, idx = np.unique(x, return_inverse=True)
-    agg_y = np.zeros_like(uniq_x)
-    counts = np.zeros_like(uniq_x)
-    for k, xv in enumerate(uniq_x):
-        mask = idx == k
-        agg_y[k] = np.mean(y[mask])
-        counts[k] = np.sum(mask)
-    x = uniq_x
-    y = agg_y
-    if x.size == 1:
-        return x, y
-    x_dense = np.linspace(x.min(), x.max(), int(max(2, smooth_grid_n)), dtype=np.float64)
-
-    if method == "none":
-        y_dense = np.interp(x_dense, x, y)
-        return x_dense, y_dense
-
-    if method == "spline":
-        if x.size <= spline_k:
-            y_dense = np.interp(x_dense, x, y)
-            return x_dense, y_dense
-        s_eff = spline_s
-        if s_eff < 0:
-            var_y = np.nanvar(y)
-            s_eff = float(len(x) * var_y * 0.25)
-        spl = UnivariateSpline(x, y, k=int(spline_k), s=s_eff)
-        y_dense = spl(x_dense)
-        return x_dense, y_dense
-
-    if method == "lowess":
-        lo = lowess(y, x, frac=lowess_frac, it=lowess_it, return_sorted=True)
-        y_dense = np.interp(x_dense, lo[:, 0], lo[:, 1])
-        return x_dense, y_dense
-
-    if method == "moving_avg":
-        y_interp = np.interp(x_dense, x, y)
-        y_smooth = _smooth_series(y_interp, window)
-        return x_dense, y_smooth
-
-    raise ValueError(f"Unknown smooth_method '{method}'")
-
-
-# -------------------------
 # Two-pass fit helper (cached propensity)
 # -------------------------
 def fit_two_pass_do1_cached(
@@ -659,7 +226,7 @@ if __name__ == "__main__":
         "--divergence",
         type=str,
         default="kth, tight_kth",
-        help="Comma-separated divergences from {KL,TV,Hellinger,Chi2,JS,combined,combined_intersection,cluster,kth,tight_kth}.",
+        help="Comma-separated divergences from {KL,TV,Hellinger,Chi2,JS,kth,tight_kth}.",
     )
     parser.add_argument(
         "--stat",
@@ -836,15 +403,15 @@ if __name__ == "__main__":
     n = args.n
     d = args.d
     base_divs = ["KL", "TV", "Hellinger", "Chi2", "JS"]
-    allowed_divs = set(base_divs + ["combined", "combined_intersection", "cluster", "kth", "tight_kth"])
+    allowed_divs = set(base_divs + ["kth", "tight_kth"])
     div_list = [div.strip() for div in args.divergence.split(",") if div.strip()]
     if not div_list:
-        div_list = ["combined", "cluster"]
+        div_list = ["kth"]
     for div in div_list:
         if div not in allowed_divs:
             raise ValueError(f"Unknown divergence '{div}'. Allowed: {sorted(allowed_divs)}")
     needs_base = set()
-    if any(div in {"combined", "combined_intersection", "cluster", "kth", "tight_kth"} for div in div_list):
+    if any(div in {"kth", "tight_kth"} for div in div_list):
         needs_base.update(base_divs)
     needs_base.update([div for div in div_list if div in base_divs])
 
@@ -870,13 +437,6 @@ if __name__ == "__main__":
     upper_dict = {div: np.full((m, n_eval), np.nan, dtype=np.float32) for div in div_list}
     lower_dict = {div: np.full((m, n_eval), np.nan, dtype=np.float32) for div in div_list}
     valid_dict = {div: np.zeros((m, n_eval), dtype=bool) for div in div_list}
-    combined_diag = None
-    if "combined" in div_list:
-        combined_diag = {
-            "n_eff_up": np.full((m, n_eval), np.nan, dtype=np.float32),
-            "n_eff_lo": np.full((m, n_eval), np.nan, dtype=np.float32),
-            "blanked": np.zeros((m, n_eval), dtype=bool),
-        }
 
     with StepTimer("MC replicate loop", use_tqdm=True, enabled=timing_enabled):
         for j in tqdm(range(m), desc="MC replicates"):
@@ -930,29 +490,6 @@ if __name__ == "__main__":
                     for div in div_list:
                         if div in base_outputs:
                             L, U = base_outputs[div]
-                        elif div == "combined":
-                            if lower_base is None:
-                                lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
-                                upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
-                            agg = combined_endpointwise(lower_base, upper_base)
-                            L = agg["lower"].astype(np.float32)
-                            U = agg["upper"].astype(np.float32)
-                            if combined_diag is not None:
-                                combined_diag["n_eff_up"][j, :] = agg["n_eff_up"]
-                                combined_diag["n_eff_lo"][j, :] = agg["n_eff_lo"]
-                                combined_diag["blanked"][j, :] = ~(np.isfinite(L) & np.isfinite(U))
-                        elif div == "combined_intersection":
-                            if lower_base is None:
-                                lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
-                                upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
-                            L, U = combined_cwise_intersection(lower_base, upper_base, c=3)
-                        elif div == "cluster":
-                            if lower_base is None:
-                                lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
-                                upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
-                            L, U = cluster_per_sample_fast1d(
-                                lower_base, upper_base, k_candidates=(2, 3, 4), penalty_singleton=0.2
-                            )
                         elif div == "kth":
                             if lower_base is None:
                                 lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
@@ -960,12 +497,18 @@ if __name__ == "__main__":
                             k_val = int(args.kval) if args.kval is not None else int(lower_base.shape[0])
                             if k_val < 1 or k_val > int(lower_base.shape[0]):
                                 raise ValueError(f"--kval must be in [1, {int(lower_base.shape[0])}] (got {k_val}).")
-                            L = np.empty(lower_base.shape[1], dtype=np.float32)
-                            U = np.empty(lower_base.shape[1], dtype=np.float32)
-                            for i in range(lower_base.shape[1]):
-                                lo, up = kth(lower_base[:, i], upper_base[:, i], k_val)
-                                L[i] = np.float32(lo)
-                                U[i] = np.float32(up)
+                            valid_up = np.isfinite(upper_base)
+                            valid_lo = np.isfinite(lower_base)
+                            agg_kth = aggregate_endpointwise(
+                                lower_mat=lower_base,
+                                upper_mat=upper_base,
+                                valid_up=valid_up,
+                                valid_lo=valid_lo,
+                                k_up=k_val,
+                                k_lo=k_val,
+                            )
+                            L = agg_kth["lower"].astype(np.float32)
+                            U = agg_kth["upper"].astype(np.float32)
                         elif div == "tight_kth":
                             if lower_base is None:
                                 lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
@@ -973,12 +516,18 @@ if __name__ == "__main__":
                             k_val = int(args.kval) if args.kval is not None else int(lower_base.shape[0])
                             if k_val < 1 or k_val > int(lower_base.shape[0]):
                                 raise ValueError(f"--kval must be in [1, {int(lower_base.shape[0])}] (got {k_val}).")
-                            L = np.empty(lower_base.shape[1], dtype=np.float32)
-                            U = np.empty(lower_base.shape[1], dtype=np.float32)
-                            for i in range(lower_base.shape[1]):
-                                lo, up = tight_kth(lower_base[:, i], upper_base[:, i], k=k_val)
-                                L[i] = np.float32(lo)
-                                U[i] = np.float32(up)
+                            valid_up = np.isfinite(upper_base)
+                            valid_lo = np.isfinite(lower_base)
+                            agg_tight = aggregate_endpointwise(
+                                lower_mat=lower_base,
+                                upper_mat=upper_base,
+                                valid_up=valid_up,
+                                valid_lo=valid_lo,
+                                k_up=1,
+                                k_lo=1,
+                            )
+                            L = agg_tight["lower"].astype(np.float32)
+                            U = agg_tight["upper"].astype(np.float32)
                         else:
                             raise ValueError(f"Unsupported divergence '{div}'")
 
@@ -1057,13 +606,6 @@ if __name__ == "__main__":
                 theta_plot = theta_bar[order]
                 width_plot = width_bar[order]
                 valid_plot = valid_rate_sel[order]
-                n_eff_up_mean = float("nan")
-                n_eff_lo_mean = float("nan")
-                blanked_frac = float("nan")
-                if div == "combined" and combined_diag is not None and idx_sel.size > 0:
-                    n_eff_up_mean = float(np.nanmean(combined_diag["n_eff_up"][:, idx_sel]))
-                    n_eff_lo_mean = float(np.nanmean(combined_diag["n_eff_lo"][:, idx_sel]))
-                    blanked_frac = float(np.mean(combined_diag["blanked"][:, idx_sel]))
 
                 # Bound-preserving smoothing via mid/halfwidth reparameterization
                 mid_raw = 0.5 * (u_plot + l_plot)
@@ -1145,19 +687,7 @@ if __name__ == "__main__":
                         "u_s": u_smooth,
                         "theta_s": theta_s,
                         "width_s": width_smooth,
-                        "n_eff_up_mean": n_eff_up_mean,
-                        "n_eff_lo_mean": n_eff_lo_mean,
-                        "blanked_frac": blanked_frac,
                     }
-                )
-
-        for res in aggregated_results:
-            if res["div"] == "combined":
-                print(
-                    f"[{axis_key}] combined diagnostics: "
-                    f"n_eff_up_mean={res['n_eff_up_mean']:.2f}, "
-                    f"n_eff_lo_mean={res['n_eff_lo_mean']:.2f}, "
-                    f"blanked_frac={res['blanked_frac']:.3f}"
                 )
 
         with StepTimer(f"save tables ({axis_key})", use_tqdm=False, enabled=timing_enabled):
@@ -1238,8 +768,6 @@ if __name__ == "__main__":
             # Smoothed plot
             plt.figure(figsize=(7.0, 4.0))
             color_map = {
-                "combined": "tab:blue",
-                "cluster": "tab:orange",
                 "kth": "tab:cyan",
                 "tight_kth": "tab:olive",
                 "KL": "tab:green",

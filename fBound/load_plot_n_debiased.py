@@ -47,10 +47,10 @@ def _parse_n_list(raw: str) -> List[int]:
 
 
 def _parse_divergences(raw: str, base_divs: List[str]) -> List[str]:
-    allowed = set(base_divs + ["combined", "combined_intersection", "cluster"])
+    allowed = set(base_divs + ["kth", "tight_kth"])
     divs = [d.strip() for d in raw.split(",") if d.strip()]
     if not divs:
-        divs = ["combined"]
+        divs = ["kth"]
     for d in divs:
         if d not in allowed:
             raise ValueError(f"Unknown divergence '{d}'. Allowed: {sorted(allowed)}")
@@ -181,8 +181,8 @@ def main() -> None:
     parser.add_argument(
         "--divergence",
         type=str,
-        default="cluster",
-        help="Comma-separated divergences from {KL,TV,Hellinger,Chi2,JS,combined,combined_intersection,cluster}.",
+        default="kth",
+        help="Comma-separated divergences from {KL,TV,Hellinger,Chi2,JS,kth,tight_kth}.",
     )
     parser.add_argument(
         "--structural_type",

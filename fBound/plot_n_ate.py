@@ -11,7 +11,6 @@ import os
 import sys
 import warnings
 import zlib
-from itertools import combinations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
@@ -76,101 +75,6 @@ class NaiveCausalBoundEstimator(DebiasedCausalBoundEstimator):
                 f"Non-finite loss encountered (NAIVE). divergence={self.divergence.name}."
             )
         return loss
-
-
-# -------------------------
-# Endpoint-wise combined aggregator (AGENTS P0 default)
-# -------------------------
-def combined_endpointwise(lower_mat: np.ndarray, upper_mat: np.ndarray) -> dict[str, np.ndarray]:
-    valid_up = np.isfinite(upper_mat)
-    valid_lo = np.isfinite(lower_mat)
-    return aggregate_endpointwise(
-        lower_mat=lower_mat,
-        upper_mat=upper_mat,
-        valid_up=valid_up,
-        valid_lo=valid_lo,
-        k_up=1,
-        k_lo=1,
-    )
-
-
-# Legacy combined (c-wise) intersection aggregator (explicit opt-in)
-# -------------------------
-def combined_cwise_intersection(lower_mat: np.ndarray, upper_mat: np.ndarray, c: int = 3) -> tuple[np.ndarray, np.ndarray]:
-    M, n = lower_mat.shape
-    lower_out = np.full(n, np.nan, dtype=np.float32)
-    upper_out = np.full(n, np.nan, dtype=np.float32)
-
-    for i in range(n):
-        lowers = lower_mat[:, i]
-        uppers = upper_mat[:, i]
-        valid = np.isfinite(lowers) & np.isfinite(uppers) & (lowers <= uppers)
-
-        if not np.any(valid):
-            finite = np.isfinite(lowers) & np.isfinite(uppers)
-            if np.any(finite):
-                lo_f = float(np.min(lowers[finite]))
-                hi_f = float(np.max(uppers[finite]))
-                if lo_f > hi_f:
-                    mid = 0.5 * (lo_f + hi_f)
-                    lo_f, hi_f = mid, mid
-                lower_out[i] = np.float32(lo_f)
-                upper_out[i] = np.float32(hi_f)
-            else:
-                lower_out[i] = np.float32(0.0)
-                upper_out[i] = np.float32(0.0)
-            continue
-
-        lowers_v = lowers[valid]
-        uppers_v = uppers[valid]
-        if len(lowers_v) < 2:
-            lower_out[i] = np.float32(np.min(lowers_v))
-            upper_out[i] = np.float32(np.max(uppers_v))
-            continue
-
-        best_subset = None
-        best_width = np.inf
-        best_sum = np.inf
-        best_L = np.nan
-        best_U = np.nan
-
-        max_t = min(max(c, 2), len(lowers_v))
-        for t in range(max_t, 1, -1):
-            found_any = False
-            for combo in combinations(range(len(lowers_v)), t):
-                L_int = float(np.max(lowers_v[list(combo)]))
-                U_int = float(np.min(uppers_v[list(combo)]))
-                width = U_int - L_int
-                if width < 0:
-                    continue
-                sum_widths = float(np.sum(uppers_v[list(combo)] - lowers_v[list(combo)]))
-
-                if (
-                    (width < best_width)
-                    or (np.isclose(width, best_width) and sum_widths < best_sum)
-                    or (
-                        np.isclose(width, best_width)
-                        and np.isclose(sum_widths, best_sum)
-                        and (best_subset is None or combo < best_subset)
-                    )
-                ):
-                    best_subset = combo
-                    best_width = width
-                    best_sum = sum_widths
-                    best_L = L_int
-                    best_U = U_int
-                found_any = True
-            if found_any and best_subset is not None:
-                break
-
-        if best_subset is not None:
-            lower_out[i] = np.float32(best_L)
-            upper_out[i] = np.float32(best_U)
-        else:
-            lower_out[i] = np.float32(np.min(lowers_v))
-            upper_out[i] = np.float32(np.max(uppers_v))
-
-    return lower_out, upper_out
 
 
 # -------------------------
@@ -239,192 +143,6 @@ def tight_kth(lower_values, upper_values, k=None):
 # -------------------------
 # Cluster aggregator (fast 1D partition search, no sklearn)
 # -------------------------
-def _median(vals):
-    arr = np.sort(np.asarray(vals, dtype=np.float64))
-    n = int(arr.shape[0])
-    if n % 2 == 1:
-        return float(arr[n // 2])
-    return float(0.5 * (arr[n // 2 - 1] + arr[n // 2]))
-
-
-def _silhouette_score_1d(v_sorted: np.ndarray, labels: np.ndarray) -> float:
-    v = v_sorted.astype(np.float64, copy=False).reshape(-1)
-    labels = np.asarray(labels, dtype=int).reshape(-1)
-    m = int(v.shape[0])
-    uniq = np.unique(labels)
-    if uniq.size < 2:
-        return -np.inf
-
-    D = np.abs(v.reshape(-1, 1) - v.reshape(1, -1))
-    sil = np.zeros(m, dtype=np.float64)
-    for i in range(m):
-        li = labels[i]
-        in_same = np.where(labels == li)[0]
-        if in_same.size <= 1:
-            sil[i] = 0.0
-            continue
-        a_i = float(np.mean(D[i, in_same[in_same != i]]))
-        b_i = np.inf
-        for lj in uniq:
-            if lj == li:
-                continue
-            in_other = np.where(labels == lj)[0]
-            if in_other.size == 0:
-                continue
-            b_i = min(b_i, float(np.mean(D[i, in_other])))
-        denom = max(a_i, b_i)
-        sil[i] = 0.0 if denom <= 0 else (b_i - a_i) / denom
-    return float(np.mean(sil))
-
-
-def _partition_labels_from_cuts(m: int, cuts: tuple[int, ...]) -> np.ndarray:
-    labels = np.empty(m, dtype=int)
-    start = 0
-    lab = 0
-    for c in cuts + (m,):
-        labels[start:c] = lab
-        start = c
-        lab += 1
-    return labels
-
-
-def _sse_from_labels(v_sorted: np.ndarray, labels: np.ndarray) -> float:
-    v = v_sorted.astype(np.float64, copy=False)
-    sse = 0.0
-    for lab in np.unique(labels):
-        idx = np.where(labels == lab)[0]
-        if idx.size == 0:
-            continue
-        vv = v[idx]
-        mu = float(np.mean(vv))
-        sse += float(np.sum((vv - mu) ** 2))
-    return float(sse)
-
-
-def _best_cluster_partition_1d(values, k_candidates=(2, 3, 4), penalty_singleton=0.2):
-    v = np.asarray(values, dtype=np.float64).reshape(-1)
-    m = int(v.shape[0])
-    if m == 0:
-        return []
-    if m == 1:
-        return [[float(v[0])]]
-
-    order = np.argsort(v, kind="mergesort")
-    v_sorted = v[order]
-
-    best_score = -np.inf
-    best_labels = None
-    best_k = None
-    best_sse = np.inf
-    best_cuts = None
-
-    for k in k_candidates:
-        if k < 2 or k > m:
-            continue
-        for cuts in combinations(tuple(range(1, m)), k - 1):
-            labels = _partition_labels_from_cuts(m, cuts)
-            sizes = np.bincount(labels, minlength=k)
-            if not np.any(sizes >= 2):
-                continue
-            sil = _silhouette_score_1d(v_sorted, labels)
-            if not np.isfinite(sil):
-                continue
-            num_singletons = int(np.sum(sizes == 1))
-            score = float(sil - penalty_singleton * num_singletons)
-            sse = _sse_from_labels(v_sorted, labels)
-
-            better = False
-            if score > best_score + 1e-12:
-                better = True
-            elif abs(score - best_score) <= 1e-12:
-                if best_labels is None:
-                    better = True
-                else:
-                    best_sizes = np.bincount(best_labels, minlength=int(best_k))
-                    best_singletons = int(np.sum(best_sizes == 1))
-                    if num_singletons < best_singletons:
-                        better = True
-                    elif num_singletons == best_singletons:
-                        if best_k is None or int(k) < int(best_k):
-                            better = True
-                        elif int(k) == int(best_k):
-                            if sse < best_sse - 1e-12:
-                                better = True
-                            elif abs(sse - best_sse) <= 1e-12:
-                                if best_cuts is None or cuts < best_cuts:
-                                    better = True
-
-            if better:
-                best_score = score
-                best_labels = labels
-                best_k = int(k)
-                best_sse = float(sse)
-                best_cuts = cuts
-
-    if best_labels is None:
-        k = 2 if m >= 2 else 1
-        cut = (m // 2,)
-        labels = _partition_labels_from_cuts(m, cut)
-        best_labels = labels
-        best_k = k
-
-    clusters = []
-    for lab in range(int(best_k)):
-        idx = np.where(best_labels == lab)[0]
-        clusters.append([float(x) for x in v_sorted[idx]])
-    return clusters
-
-
-def _cluster_choose_lower(clusters):
-    eligible = [c for c in clusters if len(c) >= 2]
-    if not eligible:
-        return None
-    med = [_median(c) for c in eligible]
-    best = int(np.argmax(med))
-    return float(max(eligible[best]))
-
-
-def _cluster_choose_upper(clusters):
-    eligible = [c for c in clusters if len(c) >= 2]
-    if not eligible:
-        return None
-    med = [_median(c) for c in eligible]
-    best = int(np.argmin(med))
-    return float(min(eligible[best]))
-
-
-def cluster_per_sample_fast1d(lower_mat, upper_mat, k_candidates=(2, 3, 4), penalty_singleton=0.2):
-    M, n = lower_mat.shape
-    outL = np.empty(n, dtype=np.float32)
-    outU = np.empty(n, dtype=np.float32)
-
-    for i in range(n):
-        lowers = lower_mat[:, i].astype(np.float64, copy=False)
-        uppers = upper_mat[:, i].astype(np.float64, copy=False)
-
-        cL = _best_cluster_partition_1d(lowers, k_candidates=k_candidates, penalty_singleton=penalty_singleton)
-        cU = _best_cluster_partition_1d(uppers, k_candidates=k_candidates, penalty_singleton=penalty_singleton)
-
-        lo = _cluster_choose_lower(cL)
-        hi = _cluster_choose_upper(cU)
-
-        lowers_s = np.sort(lowers)
-        uppers_s = np.sort(uppers)
-
-        if lo is None:
-            lo = float(lowers_s[1] if lowers_s.size >= 2 else lowers_s[0])
-        if hi is None:
-            hi = float(uppers_s[-2] if uppers_s.size >= 2 else uppers_s[-1])
-        if lo > hi:
-            lo = float(lowers_s[1] if lowers_s.size >= 2 else lo)
-            hi = float(uppers_s[-2] if uppers_s.size >= 2 else hi)
-
-        outL[i] = np.float32(lo)
-        outU[i] = np.float32(hi)
-
-    return outL, outU
-
-
 # -------------------------
 # Two-pass fit helper (train on X, evaluate on X_eval) for both a=0 and a=1
 # -------------------------
@@ -512,7 +230,7 @@ def fit_bounds_for_divs_both_a(
     progress_prefix=None,
 ) -> Dict[int, Dict[str, Tuple[np.ndarray, np.ndarray]]]:
     bounds: Dict[int, Dict[str, Tuple[np.ndarray, np.ndarray]]] = {0: {}, 1: {}}
-    needs_base = any(div in {"combined", "combined_intersection", "cluster", "kth", "tight_kth"} for div in div_list)
+    needs_base = any(div in {"kth", "tight_kth"} for div in div_list)
     base_outputs: Dict[str, Dict[int, Tuple[np.ndarray, np.ndarray]]] = {}
 
     if needs_base or any(dv in base_divs for dv in div_list):
@@ -542,29 +260,14 @@ def fit_bounds_for_divs_both_a(
                 bounds[a][div] = base_outputs[div][a]
             continue
 
-        if div in {"combined", "combined_intersection", "cluster", "kth", "tight_kth"}:
+        if div in {"kth", "tight_kth"}:
             missing = [b for b in base_divs if b not in base_outputs]
             if missing:
                 raise ValueError(f"Missing base divergences for {div}: {missing}")
             for a in (0, 1):
                 lower_base = np.vstack([base_outputs[b][a][0] for b in base_divs])
                 upper_base = np.vstack([base_outputs[b][a][1] for b in base_divs])
-                if div == "combined":
-                    agg = combined_endpointwise(lower_base, upper_base)
-                    L = agg["lower"].astype(np.float32)
-                    U = agg["upper"].astype(np.float32)
-                    blanked_frac = float(np.mean(~np.isfinite(L) | ~np.isfinite(U)))
-                    print(
-                        f"combined diagnostics (a={a}): "
-                        f"n_eff_up_mean={float(np.nanmean(agg['n_eff_up'])):.2f}, "
-                        f"n_eff_lo_mean={float(np.nanmean(agg['n_eff_lo'])):.2f}, "
-                        f"blanked_frac={blanked_frac:.3f}"
-                    )
-                elif div == "combined_intersection":
-                    L, U = combined_cwise_intersection(lower_base, upper_base, c=3)
-                elif div == "cluster":
-                    L, U = cluster_per_sample_fast1d(lower_base, upper_base, k_candidates=(2, 3, 4), penalty_singleton=0.2)
-                elif div == "kth":
+                if div == "kth":
                     k_val = int(lower_base.shape[0])
                     L = np.empty(lower_base.shape[1], dtype=np.float32)
                     U = np.empty(lower_base.shape[1], dtype=np.float32)
@@ -633,10 +336,10 @@ def _parse_n_list(raw: Union[str, Sequence[object]]) -> List[int]:
 
 
 def _parse_divergences(raw: str, base_divs: List[str]) -> List[str]:
-    allowed = set(base_divs + ["combined", "combined_intersection", "cluster", "kth", "tight_kth"])
+    allowed = set(base_divs + ["kth", "tight_kth"])
     divs = [d.strip() for d in raw.split(",") if d.strip()]
     if not divs:
-        divs = ["combined"]
+        divs = ["kth"]
     for d in divs:
         if d not in allowed:
             raise ValueError(f"Unknown divergence '{d}'. Allowed: {sorted(allowed)}")
@@ -948,7 +651,7 @@ def _self_test_step4() -> None:
     )
 
     base_divs_test = ["KL", "TV"]
-    div_list_test = ["KL", "combined", "cluster"]
+    div_list_test = ["KL", "kth"]
     bounds = fit_bounds_for_divs_both_a(
         DebiasedCausalBoundEstimator,
         div_list_test,
@@ -1058,8 +761,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--divergence",
         type=str,
-        default="cluster",
-        help="Comma-separated divergences from {KL,TV,Hellinger,Chi2,JS,combined,combined_intersection,cluster,kth,tight_kth}.",
+        default="kth",
+        help="Comma-separated divergences from {KL,TV,Hellinger,Chi2,JS,kth,tight_kth}.",
     )
     parser.add_argument("--outdir", type=str, default="experiments", help="Output directory.")
     parser.add_argument("--unique_save", action="store_true", help="Add unique timestamp suffix to outputs.")
@@ -1293,12 +996,8 @@ def main() -> None:
                 )
 
                 def6_bounds: Dict[str, Dict[str, Any]] = {}
-                def6_combined: Optional[Dict[str, float]] = None
                 if use_def6:
-                    if "combined" in div_list:
-                        base_divs_needed = base_divs
-                    else:
-                        base_divs_needed = [d for d in base_divs if d in div_list]
+                    base_divs_needed = [d for d in base_divs if d in div_list]
 
                     for dname in base_divs_needed:
                         out = _compute_ate_bounds_def6(
@@ -1317,23 +1016,6 @@ def main() -> None:
                             log_every=200,
                         )
                         def6_bounds[dname] = out
-
-                    if "combined" in div_list:
-                        lows = [float(def6_bounds[d]["ate_lower"]) for d in base_divs]
-                        highs = [float(def6_bounds[d]["ate_upper"]) for d in base_divs]
-                        L_comb = float(np.max(lows))
-                        U_comb = float(np.min(highs))
-                        repaired = 0
-                        if L_comb > U_comb:
-                            L_comb = float(np.min(lows))
-                            U_comb = float(np.max(highs))
-                            repaired = 1
-                        def6_combined = {
-                            "ate_lower": L_comb,
-                            "ate_upper": U_comb,
-                            "ate_width": float(U_comb - L_comb),
-                            "ate_order_fixed": float(repaired),
-                        }
 
                 for div in div_list:
                     L0d, U0d = deb_bounds[0][div]
@@ -1362,18 +1044,6 @@ def main() -> None:
                                 "def6_coverage": 1.0 if (L_def <= ate_true_scalar <= U_def) else 0.0,
                                 "def6_order_fixed": float(bool(def6_bounds[div].get("ate_order_fixed", False))),
                             }
-                        elif div == "combined" and def6_combined is not None:
-                            L_def = float(def6_combined["ate_lower"])
-                            U_def = float(def6_combined["ate_upper"])
-                            def6_row = {
-                                "def6_ate_lower": L_def,
-                                "def6_ate_upper": U_def,
-                                "def6_ate_width": float(def6_combined["ate_width"]),
-                                "def6_coverage": 1.0 if (L_def <= ate_true_scalar <= U_def) else 0.0,
-                                "def6_order_fixed": float(def6_combined["ate_order_fixed"]),
-                            }
-                        elif div == "cluster":
-                            pass  # Def6 cluster aggregation not defined; keep NaNs.
 
                     replicate_rows.append(
                         {
