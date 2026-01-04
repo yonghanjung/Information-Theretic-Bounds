@@ -187,7 +187,7 @@ def summarize_bounds(
 def main() -> None:
     with StepTimer("configure experiment"):
         seed = 190702
-        n = 1000
+        n = 2000
         d = 5
         structural_type = "cyclic2"
         k = 2

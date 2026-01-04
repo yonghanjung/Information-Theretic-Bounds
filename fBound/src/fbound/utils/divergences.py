@@ -344,52 +344,52 @@ def _js_divergence(cfg: PenaltyConfig, eps_e: float) -> FDivergence:
     """
     Jensen–Shannon (JS) divergence.
 
-    g*_JS(t) = log( 2 / (4 - exp(t)) ) for t < log 4; penalty otherwise.
+    g*_JS(t) = -0.5 * log(2 - exp(2t)) for t < 0.5 * log 2; penalty otherwise.
     Radius:
-      B(e) = e log e - (1+e) log(1+e) + 2 log 2.
+      B(e) = 0.5 * [e log e - (1+e) log(1+e)] + log 2.
     """
     log2 = float(np.log(2.0))
-    log4 = float(np.log(4.0))
+    half_log2 = 0.5 * log2
 
     def B_t(e: torch.Tensor) -> torch.Tensor:
         e = torch.clamp(e, min=eps_e, max=1.0 - eps_e)
-        return e * torch.log(e) - (1.0 + e) * torch.log(1.0 + e) + 2.0 * log2
+        return 0.5 * (e * torch.log(e) - (1.0 + e) * torch.log(1.0 + e)) + log2
 
     def dB_t(e: torch.Tensor) -> torch.Tensor:
         e = torch.clamp(e, min=eps_e, max=1.0 - eps_e)
-        return torch.log(e) - torch.log(1.0 + e)
+        return 0.5 * (torch.log(e) - torch.log(1.0 + e))
 
     def B_n(e: np.ndarray) -> np.ndarray:
         e = np.clip(e, eps_e, 1.0 - eps_e)
-        return e * np.log(e) - (1.0 + e) * np.log(1.0 + e) + 2.0 * log2
+        return 0.5 * (e * np.log(e) - (1.0 + e) * np.log(1.0 + e)) + log2
 
     def dB_n(e: np.ndarray) -> np.ndarray:
         e = np.clip(e, eps_e, 1.0 - eps_e)
-        return np.log(e) - np.log(1.0 + e)
+        return 0.5 * (np.log(e) - np.log(1.0 + e))
 
     def g_star(t: torch.Tensor) -> torch.Tensor:
         t = _ensure_tensor(t)
-        valid = t < (log4 - cfg.boundary_eps)
-        exp_t = torch.exp(torch.clamp(t, max=log4 - cfg.boundary_eps))
-        denom = 4.0 - exp_t
-        safe = torch.log(2.0 / torch.clamp(denom, min=cfg.boundary_eps))
+        valid = t < (half_log2 - cfg.boundary_eps)
+        exp_2t = torch.exp(torch.clamp(2.0 * t, max=2.0 * (half_log2 - cfg.boundary_eps)))
+        denom = 2.0 - exp_2t
+        safe = -0.5 * torch.log(torch.clamp(denom, min=cfg.boundary_eps))
         return torch.where(valid, safe, _penalty_like(t, cfg))
 
     def valid_mask(t: torch.Tensor) -> torch.Tensor:
         t = _ensure_tensor(t)
-        return t < (log4 - cfg.boundary_eps)
+        return t < (half_log2 - cfg.boundary_eps)
 
     return FDivergence(
         name="JS",
-        notes="JS divergence with g*(t)=log(2/(4-exp(t))) domain t<log 4.",
-        domain="t < log 4",
+        notes="JS divergence with g*(t)=-0.5*log(2-exp(2t)) domain t<0.5*log 2.",
+        domain="t < 0.5*log 2",
         _B_torch=B_t,
         _dB_torch=dB_t,
         _B_numpy=B_n,
         _dB_numpy=dB_n,
         _g_star=g_star,
         _valid_mask=valid_mask,
-        t_max=log4 - cfg.boundary_eps,
+        t_max=half_log2 - cfg.boundary_eps,
     )
 
 
