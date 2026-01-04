@@ -818,7 +818,7 @@ class DebiasedCausalBoundEstimator:
         valid_mask = valid_mask & torch.isfinite(g_star_val) & torch.isfinite(t)
         g_star_safe = torch.where(valid_mask, g_star_val, torch.zeros_like(g_star_val))
         invalid_pen = (~valid_mask).float()
-        domain_pen = domain_penalty_weight * (
+        domain_pen = domain_penalty_weight * float(self.divergence.domain_penalty_scale) * (
             self.divergence.domain_violation(t).pow(2) + invalid_pen
         )
 

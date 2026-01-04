@@ -57,6 +57,7 @@ class FDivergence(FDivergenceLike):
     _g_star: Callable[[torch.Tensor], torch.Tensor]
     _valid_mask: Callable[[torch.Tensor], torch.Tensor]
     t_max: float = float("inf")
+    domain_penalty_scale: float = 1.0
 
     def B_torch(self, e: torch.Tensor) -> torch.Tensor:
         return self._B_torch(e)
@@ -231,6 +232,7 @@ def _chi2_divergence(cfg: PenaltyConfig, eps_e: float) -> FDivergence:
         _g_star=g_star,
         _valid_mask=valid_mask,
         t_max=0.5 - cfg.boundary_eps,
+        domain_penalty_scale=10.0,
     )
 
 
@@ -454,6 +456,7 @@ def register_divergence(name: str, divergence: FDivergenceLike) -> None:
         _g_star=divergence.g_star,
         _valid_mask=valid_mask,
         t_max=float(getattr(divergence, "t_max", float("inf"))),
+        domain_penalty_scale=float(getattr(divergence, "domain_penalty_scale", 1.0)),
     )
 
 
