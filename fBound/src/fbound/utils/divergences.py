@@ -231,8 +231,8 @@ def _chi2_divergence(cfg: PenaltyConfig, eps_e: float) -> FDivergence:
         _g_star=g_star,
         _valid_mask=valid_mask,
         t_max=float("inf"),
-        domain_penalty_scale=1000.0,
-        lambda_min_override=0.1,
+        domain_penalty_scale=1.0,
+        lambda_min_override=None,
     )
 
 
