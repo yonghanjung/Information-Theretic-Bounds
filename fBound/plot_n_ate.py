@@ -736,7 +736,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--structural_type",
         type=str,
         default="nonlinear",
-        choices=["linear", "nonlinear", "simpson", "cyclic", "cyclic2"],
+        choices=["linear", "nonlinear", "simpson", "cyclic", "cyclic2", "probit_sine"],
         help="Data-generating process type.",
     )
     parser.add_argument("--n_eval", type=int, default=5000, help="Number of fixed evaluation points.")

@@ -254,7 +254,7 @@ def main() -> None:
         "--structural_type",
         type=str,
         default="cyclic2",
-        choices=["linear", "nonlinear", "simpson", "cyclic", "cyclic2"],
+        choices=["linear", "nonlinear", "simpson", "cyclic", "cyclic2", "probit_sine"],
         help="Data-generating process type.",
     )
     parser.add_argument(

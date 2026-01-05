@@ -699,7 +699,7 @@ if __name__ == "__main__":
         "--structural_type",
         type=str,
         default="nonlinear",
-        choices=["linear", "nonlinear", "simpson", "cyclic", "cyclic2"],
+        choices=["linear", "nonlinear", "simpson", "cyclic", "cyclic2", "probit_sine"],
         help="Data-generating process type.",
     )
     parser.add_argument("--base_seed", type=int, default=12345, help="Base seed for training replicates.")

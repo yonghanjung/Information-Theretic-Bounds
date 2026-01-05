@@ -21,6 +21,21 @@ def _sigmoid(z: np.ndarray) -> np.ndarray:
     return 1.0 / (1.0 + np.exp(-z))
 
 
+def _norm_cdf(z: np.ndarray) -> np.ndarray:
+    """Standard normal CDF via error function."""
+    z = np.asarray(z, dtype=np.float64)
+    z = z / np.sqrt(2.0)
+    try:
+        from scipy.special import erf as _erf
+
+        out = _erf(z)
+    except Exception:
+        import math
+
+        out = np.vectorize(math.erf)(z)
+    return 0.5 * (1.0 + out)
+
+
 def _enforce_margin(p: np.ndarray, eps: float = 0.05) -> np.ndarray:
     """Map probabilities p to eps + (1-2eps)*p to enforce overlap."""
     return eps + (1.0 - 2.0 * eps) * p
@@ -63,10 +78,77 @@ def generate_data(
         raise ValueError("n must be positive.")
     if d <= 0:
         raise ValueError("d must be positive.")
-    if structural_type not in {"linear", "nonlinear", "simpson", "cyclic", "cyclic2"}:
-        raise ValueError("structural_type must be 'linear', 'nonlinear', 'simpson', 'cyclic', or 'cyclic2'.")
+    if structural_type not in {"linear", "nonlinear", "simpson", "cyclic", "cyclic2", "probit_sine"}:
+        raise ValueError(
+            "structural_type must be 'linear', 'nonlinear', 'simpson', 'cyclic', 'cyclic2', or 'probit_sine'."
+        )
 
     rng = np.random.default_rng(seed)
+
+    if structural_type == "probit_sine":
+        # Probit DGP with sinusoidal truth in the propensity score (closed-form e(X0)).
+        c = 0.05
+        alpha = 2.0
+        beta = 1.0
+        gamma = 1.0
+        amp = 5.0
+        sig_y = 1.0
+
+        X = rng.normal(0.0, 1.0, size=(n, d)).astype(np.float32)
+        x0_scale = np.sqrt(1.0 + beta ** 2) / alpha
+        X[:, 0] = rng.normal(0.0, x0_scale, size=(n,)).astype(np.float32)
+        X0 = X[:, 0]
+
+        U = rng.normal(0.0, 1.0, size=(n,)).astype(np.float32)
+        p_latent = _norm_cdf(alpha * X0 + beta * U)
+        p = c + (1.0 - 2.0 * c) * p_latent
+        A = rng.binomial(1, p, size=(n,)).astype(np.int64)
+
+        scale = np.sqrt(1.0 + beta ** 2)
+        e = c + (1.0 - 2.0 * c) * _norm_cdf(alpha * X0 / scale)
+        e_tilde = (e - c) / (1.0 - 2.0 * c)
+        tau = amp * np.sin(2.0 * np.pi * e_tilde)
+        eps = _draw_noise(rng, size=(n,), scale=sig_y, noise_dist=noise_dist).astype(np.float32)
+        Y = (A.astype(np.float32) * tau + gamma * U + eps).astype(np.float32)
+
+        def GroundTruth(a: int, X_query: np.ndarray) -> np.ndarray:
+            if a not in (0, 1):
+                raise ValueError("a must be 0 or 1.")
+            Xq = np.asarray(X_query, dtype=np.float32)
+            if Xq.ndim != 2 or Xq.shape[1] != d:
+                raise ValueError(f"X_query must have shape (m,{d}). Got {Xq.shape}.")
+            x0 = Xq[:, 0]
+            e_q = c + (1.0 - 2.0 * c) * _norm_cdf(alpha * x0 / scale)
+            e_tilde_q = (e_q - c) / (1.0 - 2.0 * c)
+            tau_q = amp * np.sin(2.0 * np.pi * e_tilde_q)
+            return (float(a) * tau_q).astype(np.float32)
+
+        def propensity_true(X_query: np.ndarray) -> np.ndarray:
+            """True propensity P(A=1|X) under the probit_sine DGP."""
+            Xq = np.asarray(X_query, dtype=np.float32)
+            if Xq.ndim != 2 or Xq.shape[1] != d:
+                raise ValueError(f"X_query must have shape (m,{d}). Got {Xq.shape}.")
+            x0 = Xq[:, 0]
+            return (c + (1.0 - 2.0 * c) * _norm_cdf(alpha * x0 / scale)).astype(np.float32)
+
+        def sample_do(a: int) -> np.ndarray:
+            a_arr = np.full((n,), a, dtype=np.float32)
+            eps_do = _draw_noise(rng, size=(n,), scale=sig_y, noise_dist=noise_dist).astype(np.float32)
+            return (a_arr * tau + gamma * U + eps_do).astype(np.float32)
+
+        return {
+            "X": X,
+            "A": A,
+            "Y": Y,
+            "X_do0": X.copy(),
+            "A_do0": np.zeros_like(A),
+            "Y_do0": sample_do(0),
+            "X_do1": X.copy(),
+            "A_do1": np.ones_like(A),
+            "Y_do1": sample_do(1),
+            "GroundTruth": GroundTruth,
+            "propensity_true": propensity_true,
+        }
 
     if structural_type == "cyclic":
         # Confounded DGP with sin(eX) signal and latent U (positivity enforced).
