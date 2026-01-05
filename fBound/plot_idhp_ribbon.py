@@ -155,14 +155,25 @@ def smooth_xy(
         if x.size <= int(spline_k):
             return x, y
         s_val = None if float(spline_s) < 0 else float(spline_s)
-        try:
-            spline = UnivariateSpline(x, y, k=int(spline_k), s=s_val)
-            grid_n = max(2, int(smooth_grid_n))
-            x_grid = np.linspace(float(x.min()), float(x.max()), grid_n)
-            y_grid = spline(x_grid)
-            return x_grid, y_grid
-        except Exception:
+        grid_n = max(2, int(smooth_grid_n))
+        x_grid = np.linspace(float(x.min()), float(x.max()), grid_n)
+
+        def _eval_spline(s_val_inner: Optional[float]) -> Optional[np.ndarray]:
+            try:
+                spline = UnivariateSpline(x, y, k=int(spline_k), s=s_val_inner)
+                y_grid = spline(x_grid)
+            except Exception:
+                return None
+            if not np.all(np.isfinite(y_grid)):
+                return None
+            return y_grid
+
+        y_grid = _eval_spline(s_val)
+        if y_grid is None and s_val is not None:
+            y_grid = _eval_spline(None)
+        if y_grid is None:
             return x, y
+        return x_grid, y_grid
 
     if method == "lowess":
         try:
@@ -346,10 +357,13 @@ if __name__ == "__main__":
     parser.add_argument("--spline_s", type=float, default=-1.0, help="Spline smoothing factor (<0 => auto heuristic).")
     parser.add_argument("--lowess_frac", type=float, default=0.2, help="LOWESS frac parameter.")
     parser.add_argument("--lowess_it", type=int, default=1, help="LOWESS iterations.")
-    parser.add_argument("--plot_raw_points", default=True, action="store_true", help="Overlay raw (unsmoothed) points on the plot.")
+    parser.add_argument(
+        "--plot_raw_points",
+        action="store_true",
+        help="Overlay raw (unsmoothed) points on the plot.",
+    )
     parser.add_argument(
         "--plot_raw",
-        default = True, 
         action="store_true",
         help="Overlay raw (unsmoothed) lower/upper lines on the plot.",
     )

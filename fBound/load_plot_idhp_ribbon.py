@@ -323,6 +323,8 @@ def _plot_curve(
     l: np.ndarray,
     u: np.ndarray,
     theta: np.ndarray,
+    bound_label: str,
+    color: str,
     axis_label: str,
     title: str,
     tick_labelsize: float,
@@ -336,9 +338,10 @@ def _plot_curve(
     raw_points: Optional[Dict[str, np.ndarray]] = None,
 ) -> None:
     plt.figure(figsize=figsize)
-    plt.plot(x, l, color="tab:blue", linewidth=3.0, linestyle="-", label="Lower bound", zorder=3)
-    plt.plot(x, u, color="tab:green", linewidth=3.0, linestyle="-", label="Upper bound", zorder=3)
-    plt.plot(x, theta, color="k", linewidth=2.8, linestyle="--", label="Ground truth", zorder=4)
+    plt.fill_between(x, l, u, alpha=0.2, color=color, label=bound_label)
+    plt.plot(x, l, color=color, alpha=0.7, linewidth=1.0)
+    plt.plot(x, u, color=color, alpha=0.7, linewidth=1.0)
+    plt.plot(x, theta, color="k", linewidth=1.5, label="Truth")
 
     if raw_points is not None:
         x_r = raw_points.get("x")
@@ -347,8 +350,8 @@ def _plot_curve(
         if x_r is not None and l_r is not None and u_r is not None:
             mask = np.isfinite(x_r) & np.isfinite(l_r) & np.isfinite(u_r)
             if np.any(mask):
-                plt.scatter(x_r[mask], l_r[mask], color="tab:blue", alpha=0.2, s=10, zorder=2)
-                plt.scatter(x_r[mask], u_r[mask], color="tab:green", alpha=0.2, s=10, zorder=2)
+                plt.scatter(x_r[mask], l_r[mask], color=color, alpha=0.2, s=8)
+                plt.scatter(x_r[mask], u_r[mask], color=color, alpha=0.2, s=8)
 
     plt.grid(True, alpha=0.25)
     plt.tick_params(axis="both", which="major", labelsize=float(tick_labelsize))
@@ -435,6 +438,18 @@ def _run_for_base(args: argparse.Namespace, base_name: str) -> bool:
         raise RuntimeError("Unable to construct aggregated results for plotting.")
 
     res = _select_result(aggregated_results, args.method)
+    color_map = {
+        "kth": "tab:cyan",
+        "tight_kth": "tab:olive",
+        "KL": "tab:green",
+        "TV": "tab:red",
+        "Hellinger": "tab:purple",
+        "Chi2": "tab:brown",
+        "JS": "tab:pink",
+    }
+    method_name = str(res.get("div", "") or args.method or "")
+    bound_label = f"{method_name} bounds" if method_name else "Bounds"
+    color = color_map.get(method_name, "tab:blue")
 
     xlim = _parse_limits(args.xlim, "--xlim")
     ylim = _parse_limits(args.ylim, "--ylim")
@@ -483,6 +498,8 @@ def _run_for_base(args: argparse.Namespace, base_name: str) -> bool:
             l=l_s,
             u=u_s,
             theta=theta_s,
+            bound_label=bound_label,
+            color=color,
             axis_label=axis_label,
             title=title,
             tick_labelsize=args.tick_labelsize,
@@ -523,6 +540,8 @@ def _run_for_base(args: argparse.Namespace, base_name: str) -> bool:
             l=l_r,
             u=u_r,
             theta=theta_r,
+            bound_label=bound_label,
+            color=color,
             axis_label=axis_label,
             title=title,
             tick_labelsize=args.tick_labelsize,
