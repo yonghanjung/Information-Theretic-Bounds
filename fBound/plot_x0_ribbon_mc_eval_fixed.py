@@ -15,6 +15,7 @@ import sys
 import time
 import warnings
 from pathlib import Path
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -183,6 +184,41 @@ def smooth_xy(
 
     raise ValueError(f"Unknown smoothing method '{method}'.")
 
+
+def _predict_proba_class1(model: Any, X: np.ndarray) -> np.ndarray:
+    """Return P(A=1|X) while respecting sklearn's class ordering."""
+    proba = model.predict_proba(X)
+    if proba.ndim != 2 or proba.shape[1] < 2:
+        raise ValueError(f"predict_proba must return shape (n,2+). Got {proba.shape}")
+    col = 1
+    classes = getattr(model, "classes_", None)
+    if classes is not None:
+        classes = np.asarray(classes)
+        if 1 in classes:
+            col = int(np.where(classes == 1)[0][0])
+    return proba[:, col]
+
+
+def _predict_propensity_eval(
+    propensity_cache: dict,
+    X_eval: np.ndarray,
+    eps_propensity: float,
+) -> np.ndarray:
+    models = propensity_cache.get("models", None)
+    if not models:
+        raise ValueError("propensity_cache is missing fitted models for eval-axis predictions.")
+    Xc = np.asarray(X_eval, dtype=np.float64)
+    acc = None
+    for model in models:
+        e1 = _predict_proba_class1(model, Xc)
+        if acc is None:
+            acc = e1
+        else:
+            acc += e1
+    e1_mean = acc / float(len(models))
+    e1_mean = np.clip(e1_mean, eps_propensity, 1.0 - eps_propensity).astype(np.float32)
+    return e1_mean
+
 # -------------------------
 # Phi definitions
 # -------------------------
@@ -263,6 +299,13 @@ def main() -> None:
         default="median",
         choices=["median", "mean"],
         help="Aggregation statistic across MC replicates.",
+    )
+    parser.add_argument(
+        "--eval_axis",
+        type=str,
+        default="x0",
+        choices=["x0", "propensity", "both"],
+        help="Axis for ribbon plots: X0, estimated propensity, or both.",
     )
     parser.add_argument("--min_valid_rate", type=float, default=1.0, help="Minimum validity rate for keeping an eval point.")
     parser.add_argument("--unique_save", action="store_true", help="Add unique timestamp suffix to outputs.")
@@ -454,8 +497,10 @@ def main() -> None:
         )
         X_eval = np.asarray(eval_data["X"], dtype=np.float32)
         X0_eval = X_eval[:, 0]
+    need_propensity_axis = args.eval_axis in {"propensity", "both"}
 
     truth_mat = np.full((m, args.n_eval), np.nan, dtype=np.float32)
+    prop_eval_mat = np.full((m, args.n_eval), np.nan, dtype=np.float32) if need_propensity_axis else None
     seeds = []
     upper_dict = {div: np.full((m, args.n_eval), np.nan, dtype=np.float32) for div in div_list}
     lower_dict = {div: np.full((m, args.n_eval), np.nan, dtype=np.float32) for div in div_list}
@@ -488,6 +533,12 @@ def main() -> None:
                         seed=seed,
                         eps_propensity=fit_config["eps_propensity"],
                     )
+                    if need_propensity_axis and prop_eval_mat is not None:
+                        prop_eval_mat[j, :] = _predict_propensity_eval(
+                            prop_cache,
+                            X_eval,
+                            fit_config["eps_propensity"],
+                        )
 
                 with StepTimer("bounds per divergence", use_tqdm=True, enabled=timing_enabled):
                     base_outputs = {}
@@ -565,304 +616,338 @@ def main() -> None:
                 with StepTimer("store truth", use_tqdm=True, enabled=timing_enabled):
                     truth_mat[j, :] = truth_eval
 
-    with StepTimer("aggregate + smooth ribbons", use_tqdm=False, enabled=timing_enabled):
-        if args.stat == "mean":
-            agg_fn = np.nanmean
-        else:
-            agg_fn = np.nanmedian
+    if args.stat == "mean":
+        agg_fn = np.nanmean
+    else:
+        agg_fn = np.nanmedian
 
-        aggregated_results = []
-        for div in div_list:
-            upper_mat = upper_dict[div]
-            lower_mat = lower_dict[div]
-            valid_mat = valid_dict[div]
+    axis_specs = []
+    if args.eval_axis in {"x0", "both"}:
+        axis_specs.append(("x0", X0_eval, "X0"))
+    if args.eval_axis in {"propensity", "both"}:
+        if prop_eval_mat is None:
+            raise RuntimeError("Propensity axis requested but estimated propensities are unavailable.")
+        axis_eval = agg_fn(prop_eval_mat, axis=0)
+        axis_specs.append(("propensity", axis_eval, "e(A=1|X)"))
 
-            coverage_rate = valid_mat.mean(axis=0)
-            S_mask = valid_mat.all(axis=0)
-            if not np.any(S_mask):
-                for relax in [args.min_valid_rate, 0.9, 0.5]:
-                    S_mask = coverage_rate >= relax
-                    if np.any(S_mask):
-                        break
+    for axis_key, axis_eval, axis_label in axis_specs:
+        base_name = (
+            "plot_x0_ribbon_mc_eval_fixed"
+            if axis_key == "x0"
+            else "plot_x0_ribbon_mc_eval_fixed_propensity"
+        )
 
-            lower_masked = np.where(valid_mat, lower_mat, np.nan)
-            upper_masked = np.where(valid_mat, upper_mat, np.nan)
+        with StepTimer(f"aggregate + smooth ribbons ({axis_key})", use_tqdm=False, enabled=timing_enabled):
+            aggregated_results = []
+            for div in div_list:
+                upper_mat = upper_dict[div]
+                lower_mat = lower_dict[div]
+                valid_mat = valid_dict[div]
 
-            idx_sel = np.where(S_mask)[0]
-            if idx_sel.size == 0:
-                warnings.warn(f"No evaluation points met validity criteria for divergence {div}; outputs will be empty.")
+                coverage_rate = valid_mat.mean(axis=0)
+                S_mask = valid_mat.all(axis=0)
+                if not np.any(S_mask):
+                    for relax in [args.min_valid_rate, 0.9, 0.5]:
+                        S_mask = coverage_rate >= relax
+                        if np.any(S_mask):
+                            break
 
-            l_bar = agg_fn(lower_masked[:, idx_sel], axis=0)
-            u_bar = agg_fn(upper_masked[:, idx_sel], axis=0)
-            theta_bar = agg_fn(truth_mat[:, idx_sel], axis=0)
-            width_bar = u_bar - l_bar
-            valid_rate_sel = coverage_rate[idx_sel]
-            x0_sel = X0_eval[idx_sel]
+                lower_masked = np.where(valid_mat, lower_mat, np.nan)
+                upper_masked = np.where(valid_mat, upper_mat, np.nan)
 
-            order = np.argsort(x0_sel)
-            x0_plot = x0_sel[order]
-            l_plot = l_bar[order]
-            u_plot = u_bar[order]
-            theta_plot = theta_bar[order]
-            width_plot = width_bar[order]
-            valid_plot = valid_rate_sel[order]
+                idx_sel = np.where(S_mask)[0]
+                if idx_sel.size == 0:
+                    warnings.warn(
+                        f"No evaluation points met validity criteria for divergence {div}; outputs will be empty."
+                    )
 
-            # Bound-preserving smoothing via mid/halfwidth reparameterization
-            mid_raw = 0.5 * (u_plot + l_plot)
-            half_raw = 0.5 * (u_plot - l_plot)
-            log_half_raw = np.log(np.clip(half_raw, 1e-6, None))
+                l_bar = agg_fn(lower_masked[:, idx_sel], axis=0)
+                u_bar = agg_fn(upper_masked[:, idx_sel], axis=0)
+                theta_bar = agg_fn(truth_mat[:, idx_sel], axis=0)
+                width_bar = u_bar - l_bar
+                valid_rate_sel = coverage_rate[idx_sel]
+                axis_sel = axis_eval[idx_sel]
 
-            x_mid, mid_s = smooth_xy(
-                x0_plot,
-                mid_raw,
-                method=args.smooth_method,
-                smooth_grid_n=args.smooth_grid_n,
-                window=args.smooth_window,
-                spline_k=args.spline_k,
-                spline_s=args.spline_s,
-                lowess_frac=args.lowess_frac,
-                lowess_it=args.lowess_it,
-            )
+                order = np.argsort(axis_sel)
+                axis_plot = axis_sel[order]
+                l_plot = l_bar[order]
+                u_plot = u_bar[order]
+                theta_plot = theta_bar[order]
+                width_plot = width_bar[order]
+                valid_plot = valid_rate_sel[order]
 
-            x_log, log_half_s = smooth_xy(
-                x0_plot,
-                log_half_raw,
-                method=args.smooth_method,
-                smooth_grid_n=args.smooth_grid_n,
-                window=args.smooth_window,
-                spline_k=args.spline_k,
-                spline_s=args.spline_s,
-                lowess_frac=args.lowess_frac,
-                lowess_it=args.lowess_it,
-            )
+                # Bound-preserving smoothing via mid/halfwidth reparameterization
+                mid_raw = 0.5 * (u_plot + l_plot)
+                half_raw = 0.5 * (u_plot - l_plot)
+                log_half_raw = np.log(np.clip(half_raw, 1e-6, None))
 
-            if x_mid.size == 0:
-                x_s = x0_plot
-                mid_s = mid_raw
-                log_half_s = log_half_raw
-            else:
-                x_s = x_mid
-                if x_log.size > 0:
-                    log_half_s = np.interp(x_s, x_log, log_half_s)
+                x_mid, mid_s = smooth_xy(
+                    axis_plot,
+                    mid_raw,
+                    method=args.smooth_method,
+                    smooth_grid_n=args.smooth_grid_n,
+                    window=args.smooth_window,
+                    spline_k=args.spline_k,
+                    spline_s=args.spline_s,
+                    lowess_frac=args.lowess_frac,
+                    lowess_it=args.lowess_it,
+                )
+
+                x_log, log_half_s = smooth_xy(
+                    axis_plot,
+                    log_half_raw,
+                    method=args.smooth_method,
+                    smooth_grid_n=args.smooth_grid_n,
+                    window=args.smooth_window,
+                    spline_k=args.spline_k,
+                    spline_s=args.spline_s,
+                    lowess_frac=args.lowess_frac,
+                    lowess_it=args.lowess_it,
+                )
+
+                if x_mid.size == 0:
+                    x_s = axis_plot
+                    mid_s = mid_raw
+                    log_half_s = log_half_raw
                 else:
-                    log_half_s = np.interp(x_s, x0_plot, log_half_raw)
+                    x_s = x_mid
+                    if x_log.size > 0:
+                        log_half_s = np.interp(x_s, x_log, log_half_s)
+                    else:
+                        log_half_s = np.interp(x_s, axis_plot, log_half_raw)
 
-            half_s = np.exp(log_half_s)
-            l_smooth = mid_s - half_s
-            u_smooth = mid_s + half_s
+                half_s = np.exp(log_half_s)
+                l_smooth = mid_s - half_s
+                u_smooth = mid_s + half_s
 
-            # Smooth truth on same x-grid for plotting
-            x_theta, theta_s = smooth_xy(
-                x0_plot,
-                theta_plot,
-                method=args.smooth_method,
-                smooth_grid_n=args.smooth_grid_n,
-                window=args.smooth_window,
-                spline_k=args.spline_k,
-                spline_s=args.spline_s,
-                lowess_frac=args.lowess_frac,
-                lowess_it=args.lowess_it,
-            )
-            if x_theta.size > 0 and x_s.size > 0:
-                theta_s = np.interp(x_s, x_theta, theta_s)
-            elif x_s.size > 0:
-                theta_s = np.interp(x_s, x0_plot, theta_plot)
-            else:
-                x_s = x0_plot
-                theta_s = theta_plot
+                # Smooth truth on same x-grid for plotting
+                x_theta, theta_s = smooth_xy(
+                    axis_plot,
+                    theta_plot,
+                    method=args.smooth_method,
+                    smooth_grid_n=args.smooth_grid_n,
+                    window=args.smooth_window,
+                    spline_k=args.spline_k,
+                    spline_s=args.spline_s,
+                    lowess_frac=args.lowess_frac,
+                    lowess_it=args.lowess_it,
+                )
+                if x_theta.size > 0 and x_s.size > 0:
+                    theta_s = np.interp(x_s, x_theta, theta_s)
+                elif x_s.size > 0:
+                    theta_s = np.interp(x_s, axis_plot, theta_plot)
+                else:
+                    x_s = axis_plot
+                    theta_s = theta_plot
 
-            width_smooth = u_smooth - l_smooth
+                width_smooth = u_smooth - l_smooth
 
-            aggregated_results.append(
-                {
-                    "div": div,
-                    "idx_plot": idx_sel[order],
-                    "x_raw": x0_plot,
-                    "l_raw": l_plot,
-                    "u_raw": u_plot,
-                    "theta_raw": theta_plot,
-                    "valid_raw": valid_plot,
-                    "x_s": x_s,
-                    "l_s": l_smooth,
-                    "u_s": u_smooth,
-                    "theta_s": theta_s,
-                    "width_s": width_smooth,
-                }
-            )
-
-    with StepTimer("save tables", use_tqdm=False, enabled=timing_enabled):
-        # Save table (long format over divergences)
-        table_rows = []
-        for res in aggregated_results:
-            div = res["div"]
-            for i, x0, th, lo, up, wd, vr in zip(
-                res["idx_plot"], res["x_raw"], res["theta_raw"], res["l_raw"], res["u_raw"], res["u_raw"] - res["l_raw"], res["valid_raw"]
-            ):
-                table_rows.append(
+                aggregated_results.append(
                     {
-                        "method": div,
-                        "i": int(i),
-                        "X0": float(x0),
-                        "theta": float(th),
-                        "lower": float(lo),
-                        "upper": float(up),
-                        "width": float(wd),
-                        "valid_rate": float(vr),
+                        "div": div,
+                        "idx_plot": idx_sel[order],
+                        "x_raw": axis_plot,
+                        "l_raw": l_plot,
+                        "u_raw": u_plot,
+                        "theta_raw": theta_plot,
+                        "valid_raw": valid_plot,
+                        "x_s": x_s,
+                        "l_s": l_smooth,
+                        "u_s": u_smooth,
+                        "theta_s": theta_s,
+                        "width_s": width_smooth,
                     }
                 )
-        table_path = name_with_suffix("plot_x0_ribbon_mc_eval_fixed_table", "csv")
-        try:
-            import pandas as pd
 
-            pd.DataFrame(table_rows).to_csv(table_path, index=False)
-        except Exception:
-            header = "method,i,X0,theta,lower,upper,width,valid_rate"
-            with open(table_path, "w") as f:
-                f.write(header + "\n")
-                for row in table_rows:
-                    f.write(
-                        f"{row['method']},{row['i']},{row['X0']},{row['theta']},{row['lower']},{row['upper']},{row['width']},{row['valid_rate']}\n"
+        with StepTimer(f"save tables ({axis_key})", use_tqdm=False, enabled=timing_enabled):
+            # Save table (long format over divergences)
+            table_rows = []
+            for res in aggregated_results:
+                div = res["div"]
+                for i, x0, th, lo, up, wd, vr in zip(
+                    res["idx_plot"],
+                    res["x_raw"],
+                    res["theta_raw"],
+                    res["l_raw"],
+                    res["u_raw"],
+                    res["u_raw"] - res["l_raw"],
+                    res["valid_raw"],
+                ):
+                    table_rows.append(
+                        {
+                            "method": div,
+                            "i": int(i),
+                            "X0": float(x0),
+                            "theta": float(th),
+                            "lower": float(lo),
+                            "upper": float(up),
+                            "width": float(wd),
+                            "valid_rate": float(vr),
+                        }
                     )
+            table_path = name_with_suffix(f"{base_name}_table", "csv")
+            try:
+                import pandas as pd
 
-        # Smoothed table (dense grid)
-        sm_table_rows = []
-        for res in aggregated_results:
-            div = res["div"]
-            xg = res["x_s"]
-            lg = res["l_s"]
-            ug = res["u_s"]
-            tg = res["theta_s"]
-            wg = ug - lg
-            for x0, th, lo, up, wd in zip(xg, tg, lg, ug, wg):
-                sm_table_rows.append(
-                    {
-                        "method": div,
-                        "X0": float(x0),
-                        "theta": float(th),
-                        "lower": float(lo),
-                        "upper": float(up),
-                        "width": float(wd),
-                    }
+                pd.DataFrame(table_rows).to_csv(table_path, index=False)
+            except Exception:
+                header = "method,i,X0,theta,lower,upper,width,valid_rate"
+                with open(table_path, "w") as f:
+                    f.write(header + "\n")
+                    for row in table_rows:
+                        f.write(
+                            f"{row['method']},{row['i']},{row['X0']},{row['theta']},{row['lower']},{row['upper']},{row['width']},{row['valid_rate']}\n"
+                        )
+
+            # Smoothed table (dense grid)
+            sm_table_rows = []
+            for res in aggregated_results:
+                div = res["div"]
+                xg = res["x_s"]
+                lg = res["l_s"]
+                ug = res["u_s"]
+                tg = res["theta_s"]
+                wg = ug - lg
+                for x0, th, lo, up, wd in zip(xg, tg, lg, ug, wg):
+                    sm_table_rows.append(
+                        {
+                            "method": div,
+                            "X0": float(x0),
+                            "theta": float(th),
+                            "lower": float(lo),
+                            "upper": float(up),
+                            "width": float(wd),
+                        }
+                    )
+            sm_table_path = name_with_suffix(f"{base_name}_smoothed_table", "csv")
+            try:
+                import pandas as pd
+
+                pd.DataFrame(sm_table_rows).to_csv(sm_table_path, index=False)
+            except Exception:
+                header = "method,X0,theta,lower,upper,width"
+                with open(sm_table_path, "w") as f:
+                    f.write(header + "\n")
+                    for row in sm_table_rows:
+                        f.write(
+                            f"{row['method']},{row['X0']},{row['theta']},{row['lower']},{row['upper']},{row['width']}\n"
+                        )
+
+        with StepTimer(f"plot ribbons ({axis_key})", use_tqdm=False, enabled=timing_enabled):
+            # Plot
+            plt.figure(figsize=(7.0, 4.0))
+            color_map = {
+                "kth": "tab:cyan",
+                "tight_kth": "tab:olive",
+                "KL": "tab:green",
+                "TV": "tab:red",
+                "Hellinger": "tab:purple",
+                "Chi2": "tab:brown",
+                "JS": "tab:pink",
+            }
+            for res in aggregated_results:
+                if res["idx_plot"].size == 0:
+                    continue
+                c = color_map.get(res["div"], None)
+                plt.fill_between(
+                    res["x_s"],
+                    res["l_s"],
+                    res["u_s"],
+                    alpha=0.2,
+                    color=c,
+                    label=f"{res['div']} bounds",
                 )
-        sm_table_path = name_with_suffix("plot_x0_ribbon_mc_eval_fixed_smoothed_table", "csv")
-        try:
-            import pandas as pd
-
-            pd.DataFrame(sm_table_rows).to_csv(sm_table_path, index=False)
-        except Exception:
-            header = "method,X0,theta,lower,upper,width"
-            with open(sm_table_path, "w") as f:
-                f.write(header + "\n")
-                for row in sm_table_rows:
-                    f.write(
-                        f"{row['method']},{row['X0']},{row['theta']},{row['lower']},{row['upper']},{row['width']}\n"
-                    )
-
-    with StepTimer("plot ribbons", use_tqdm=False, enabled=timing_enabled):
-        # Plot
-        plt.figure(figsize=(7.0, 4.0))
-        color_map = {
-            "kth": "tab:cyan",
-            "tight_kth": "tab:olive",
-            "KL": "tab:green",
-            "TV": "tab:red",
-            "Hellinger": "tab:purple",
-            "Chi2": "tab:brown",
-            "JS": "tab:pink",
-        }
-        for res in aggregated_results:
-            if res["idx_plot"].size == 0:
-                continue
-            c = color_map.get(res["div"], None)
-            plt.fill_between(res["x_s"], res["l_s"], res["u_s"], alpha=0.2, color=c, label=f"{res['div']} bounds")
-            plt.plot(res["x_s"], res["l_s"], color=c, alpha=0.7, linewidth=1.0)
-            plt.plot(res["x_s"], res["u_s"], color=c, alpha=0.7, linewidth=1.0)
-            if args.plot_raw_points:
-                plt.scatter(res["x_raw"], res["l_raw"], color=c, alpha=0.2, s=8)
-                plt.scatter(res["x_raw"], res["u_raw"], color=c, alpha=0.2, s=8)
-        # Truth line (smoothed on bounds grid of first method)
-        if aggregated_results and aggregated_results[0]["x_s"].size > 0:
-            plt.plot(
-                aggregated_results[0]["x_s"],
-                aggregated_results[0]["theta_s"],
-                color="k",
-                linewidth=1.5,
-                label="Truth",
+                plt.plot(res["x_s"], res["l_s"], color=c, alpha=0.7, linewidth=1.0)
+                plt.plot(res["x_s"], res["u_s"], color=c, alpha=0.7, linewidth=1.0)
+                if args.plot_raw_points:
+                    plt.scatter(res["x_raw"], res["l_raw"], color=c, alpha=0.2, s=8)
+                    plt.scatter(res["x_raw"], res["u_raw"], color=c, alpha=0.2, s=8)
+            # Truth line (smoothed on bounds grid of first method)
+            if aggregated_results and aggregated_results[0]["x_s"].size > 0:
+                plt.plot(
+                    aggregated_results[0]["x_s"],
+                    aggregated_results[0]["theta_s"],
+                    color="k",
+                    linewidth=1.5,
+                    label="Truth",
+                )
+            plt.xlabel(axis_label)
+            plt.ylabel("E[Y | do(A=1), X]")
+            plt.title(
+                f"Causal bounds vs {axis_label} (stat={args.stat}, divs={','.join(div_list)}, struct={args.structural_type})"
             )
-        plt.xlabel("X0")
-        plt.ylabel("E[Y | do(A=1), X]")
-        plt.title(
-            f"Causal bounds vs X0 (stat={args.stat}, divs={','.join(div_list)}, struct={args.structural_type})"
-        )
-        plt.legend()
-        plt.tight_layout()
-        fig_path = name_with_suffix("plot_x0_ribbon_mc_eval_fixed", "png")
-        plt.savefig(fig_path, dpi=200)
-        plt.close()
+            plt.legend()
+            plt.tight_layout()
+            fig_path = name_with_suffix(base_name, "png")
+            plt.savefig(fig_path, dpi=200)
+            plt.close()
 
-    with StepTimer("save artifacts", use_tqdm=False, enabled=timing_enabled):
-        # Artifacts
-        artifacts = {
-            "X_eval": X_eval,
-            "lower_dict": lower_dict,
-            "upper_dict": upper_dict,
-            "truth_mat": truth_mat,
-            "valid_dict": valid_dict,
-            "args": vars(args),
-            "fit_config": fit_config,
-            "dual_net_config": dual_net_config,
-            "seeds": seeds,
-            "aggregated_results": aggregated_results,
-            "timestamp": stamp,
-            "divergences": div_list,
-            "smoothed_table_csv": sm_table_path,
-            "smooth_method": args.smooth_method,
-            "smooth_grid_n": args.smooth_grid_n,
-            "spline_k": args.spline_k,
-            "spline_s": args.spline_s,
-            "lowess_frac": args.lowess_frac,
-            "lowess_it": args.lowess_it,
-        }
-        artifacts_path = name_with_suffix("plot_x0_ribbon_mc_eval_fixed_artifacts", "pkl")
-        with open(artifacts_path, "wb") as f:
-            pickle.dump(artifacts, f, protocol=pickle.HIGHEST_PROTOCOL)
-
-        summary = {
-            "timestamp": stamp or datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
-            "files": {
-                "table_csv": table_path,
+        with StepTimer(f"save artifacts ({axis_key})", use_tqdm=False, enabled=timing_enabled):
+            # Artifacts
+            artifacts = {
+                "X_eval": X_eval,
+                "x_axis_eval": axis_eval,
+                "eval_axis": axis_key,
+                "lower_dict": lower_dict,
+                "upper_dict": upper_dict,
+                "truth_mat": truth_mat,
+                "valid_dict": valid_dict,
+                "args": vars(args),
+                "fit_config": fit_config,
+                "dual_net_config": dual_net_config,
+                "seeds": seeds,
+                "aggregated_results": aggregated_results,
+                "timestamp": stamp,
+                "divergences": div_list,
                 "smoothed_table_csv": sm_table_path,
-                "plot_png": fig_path,
-                "artifacts_pkl": artifacts_path,
-            },
-            "args": vars(args),
-            "n": n,
-            "d": d,
-            "m": m,
-            "divergences": div_list,
-            "structural_type": args.structural_type,
-            "stat": args.stat,
-            "min_valid_rate": args.min_valid_rate,
-            "selected_counts": {res["div"]: int(len(res["idx_plot"])) for res in aggregated_results},
-            "smooth_method": args.smooth_method,
-            "smooth_grid_n": args.smooth_grid_n,
-            "spline_k": args.spline_k,
-            "spline_s": args.spline_s,
-            "lowess_frac": args.lowess_frac,
-            "lowess_it": args.lowess_it,
-        }
-        summary_path = name_with_suffix("plot_x0_ribbon_mc_eval_fixed_summary", "json")
-        with open(summary_path, "w") as f:
-            json.dump(summary, f, indent=2)
+                "smooth_method": args.smooth_method,
+                "smooth_grid_n": args.smooth_grid_n,
+                "spline_k": args.spline_k,
+                "spline_s": args.spline_s,
+                "lowess_frac": args.lowess_frac,
+                "lowess_it": args.lowess_it,
+            }
+            artifacts_path = name_with_suffix(f"{base_name}_artifacts", "pkl")
+            with open(artifacts_path, "wb") as f:
+                pickle.dump(artifacts, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-        log_line = (
-            f"[plot_x0_ribbon_mc_eval_fixed] ts={summary['timestamp']} m={m} n={n} d={d} stat={args.stat} "
-            f"divs={','.join(div_list)} struct={args.structural_type} selected={summary['selected_counts']} "
-            f"args={vars(args)} files={summary['files']}"
-        )
-        log_path = name_with_suffix("plot_x0_ribbon_mc_eval_fixed_log", "txt")
-        with open(log_path, "a") as f:
-            f.write(log_line + "\n")
+            summary = {
+                "timestamp": stamp or datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
+                "files": {
+                    "table_csv": table_path,
+                    "smoothed_table_csv": sm_table_path,
+                    "plot_png": fig_path,
+                    "artifacts_pkl": artifacts_path,
+                },
+                "args": vars(args),
+                "n": n,
+                "d": d,
+                "m": m,
+                "divergences": div_list,
+                "structural_type": args.structural_type,
+                "stat": args.stat,
+                "min_valid_rate": args.min_valid_rate,
+                "eval_axis": axis_key,
+                "selected_counts": {res["div"]: int(len(res["idx_plot"])) for res in aggregated_results},
+                "smooth_method": args.smooth_method,
+                "smooth_grid_n": args.smooth_grid_n,
+                "spline_k": args.spline_k,
+                "spline_s": args.spline_s,
+                "lowess_frac": args.lowess_frac,
+                "lowess_it": args.lowess_it,
+            }
+            summary_path = name_with_suffix(f"{base_name}_summary", "json")
+            with open(summary_path, "w") as f:
+                json.dump(summary, f, indent=2)
+
+            log_line = (
+                f"[{base_name}] ts={summary['timestamp']} m={m} n={n} d={d} stat={args.stat} "
+                f"divs={','.join(div_list)} struct={args.structural_type} selected={summary['selected_counts']} "
+                f"args={vars(args)} files={summary['files']}"
+            )
+            log_path = name_with_suffix(f"{base_name}_log", "txt")
+            with open(log_path, "a") as f:
+                f.write(log_line + "\n")
 
 if __name__ == "__main__":
     try:
