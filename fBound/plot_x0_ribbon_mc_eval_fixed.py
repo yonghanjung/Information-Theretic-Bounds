@@ -876,6 +876,8 @@ def main() -> None:
             plt.title(
                 f"Causal bounds vs {axis_label} (stat={args.stat}, divs={','.join(div_list)}, struct={args.structural_type})"
             )
+            if axis_key == "propensity":
+                plt.xlim(0.0, 1.0)
             plt.legend()
             plt.tight_layout()
             fig_path = name_with_suffix(base_name, "png")
