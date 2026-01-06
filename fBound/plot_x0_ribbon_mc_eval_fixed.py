@@ -636,6 +636,11 @@ def main() -> None:
             if axis_key == "x0"
             else "plot_x0_ribbon_mc_eval_fixed_propensity"
         )
+        prop_xlim = None
+        if axis_key == "propensity":
+            finite = np.isfinite(axis_eval)
+            if np.any(finite):
+                prop_xlim = (float(np.min(axis_eval[finite])), float(np.max(axis_eval[finite])))
 
         with StepTimer(f"aggregate + smooth ribbons ({axis_key})", use_tqdm=False, enabled=timing_enabled):
             aggregated_results = []
@@ -876,8 +881,8 @@ def main() -> None:
             plt.title(
                 f"Causal bounds vs {axis_label} (stat={args.stat}, divs={','.join(div_list)}, struct={args.structural_type})"
             )
-            if axis_key == "propensity":
-                plt.xlim(0.0, 1.0)
+            if prop_xlim is not None:
+                plt.xlim(*prop_xlim)
             plt.legend()
             plt.tight_layout()
             fig_path = name_with_suffix(base_name, "png")
