@@ -356,6 +356,13 @@ def main() -> None:
         help="Disable 95% CI error bars for the width plot.",
     )
     parser.add_argument(
+        "--width_stat",
+        type=str,
+        default="mean",
+        choices=["mean", "median"],
+        help="Summary statistic for width vs propensity (used in width plot/CSV).",
+    )
+    parser.add_argument(
         "--early_stop_patience",
         type=int,
         default=10,
@@ -883,7 +890,6 @@ def main() -> None:
                                 left=np.nan,
                                 right=np.nan,
                             )
-                    width_mean = np.nanmean(width_mat, axis=0)
                     width_std = np.nanstd(width_mat, axis=0)
                     width_n = np.sum(np.isfinite(width_mat), axis=0).astype(int)
                     width_se = np.full_like(width_std, np.nan)
@@ -891,10 +897,14 @@ def main() -> None:
                     if np.any(valid_n):
                         width_se[valid_n] = width_std[valid_n] / np.sqrt(width_n[valid_n])
                     width_ci = 1.96 * width_se
-                    width_stats[div] = (width_mean, width_ci)
+                    if args.width_stat == "median":
+                        width_center = np.nanmedian(width_mat, axis=0)
+                    else:
+                        width_center = np.nanmean(width_mat, axis=0)
+                    width_stats[div] = (width_center, width_ci)
                     prop_vals = prop_grid if prop_grid is not None else np.full((grid_n,), np.nan)
                     for p_val, w_mean, w_std, w_ci, w_n in zip(
-                        prop_vals, width_mean, width_std, width_ci, width_n
+                        prop_vals, width_center, width_std, width_ci, width_n
                     ):
                         width_rows.append(
                             {
@@ -937,14 +947,14 @@ def main() -> None:
                     for div in div_list:
                         if div not in width_stats:
                             continue
-                        w_mean, w_ci = width_stats[div]
-                        if not np.isfinite(w_mean).any():
+                        w_center, w_ci = width_stats[div]
+                        if not np.isfinite(w_center).any():
                             continue
                         c = color_map.get(div, None)
                         if show_ci and np.isfinite(w_ci).any():
                             plt.errorbar(
                                 prop_grid,
-                                w_mean,
+                                w_center,
                                 yerr=w_ci,
                                 color=c,
                                 linewidth=1.8,
@@ -954,10 +964,12 @@ def main() -> None:
                                 label=div,
                             )
                         else:
-                            plt.plot(prop_grid, w_mean, color=c, linewidth=2.0, label=div)
+                            plt.plot(prop_grid, w_center, color=c, linewidth=2.0, label=div)
                     plt.xlabel("e(A=1|X)")
-                    plt.ylabel("Mean interval width")
-                    plt.title("Mean width vs propensity by divergence")
+                    ylabel = "Median interval width" if args.width_stat == "median" else "Mean interval width"
+                    title = "Median width vs propensity by divergence" if args.width_stat == "median" else "Mean width vs propensity by divergence"
+                    plt.ylabel(ylabel)
+                    plt.title(title)
                     plt.legend()
                     plt.tight_layout()
                     width_mean_path = name_with_suffix(f"{base_name}_width_mean", "png")
