@@ -835,8 +835,76 @@ def main() -> None:
                     f.write(header + "\n")
                     for row in sm_table_rows:
                         f.write(
-                            f"{row['method']},{row['X0']},{row['theta']},{row['lower']},{row['upper']},{row['width']}\n"
+                        f"{row['method']},{row['X0']},{row['theta']},{row['lower']},{row['upper']},{row['width']}\n"
+                    )
+
+        width_table_path = None
+        width_heatmap_path = None
+        if axis_key == "propensity":
+            with StepTimer("save width summary (propensity)", use_tqdm=False, enabled=timing_enabled):
+                grid_n = max(2, int(args.smooth_grid_n))
+                finite_axis = np.isfinite(axis_eval)
+                prop_grid = None
+                if np.any(finite_axis):
+                    p_min = float(np.min(axis_eval[finite_axis]))
+                    p_max = float(np.max(axis_eval[finite_axis]))
+                    if p_max > p_min:
+                        prop_grid = np.linspace(p_min, p_max, grid_n)
+
+                width_rows = []
+                width_mat = []
+                for res in aggregated_results:
+                    width_s = np.asarray(res.get("width_s", res["u_s"] - res["l_s"]), dtype=np.float64)
+                    x_s = np.asarray(res.get("x_s", []), dtype=np.float64)
+                    if x_s.size == 0 or prop_grid is None:
+                        width_interp = np.full((grid_n,), np.nan, dtype=np.float64)
+                    else:
+                        order = np.argsort(x_s)
+                        x_sorted = x_s[order]
+                        w_sorted = width_s[order]
+                        width_interp = np.interp(prop_grid, x_sorted, w_sorted, left=np.nan, right=np.nan)
+                    width_mat.append(width_interp)
+                    for x0, wd in zip(prop_grid if prop_grid is not None else np.full((grid_n,), np.nan), width_interp):
+                        width_rows.append(
+                            {
+                                "method": res["div"],
+                                "propensity": float(x0),
+                                "width": float(wd),
+                            }
                         )
+
+                width_table_path = name_with_suffix(f"{base_name}_width_by_propensity", "csv")
+                try:
+                    import pandas as pd
+
+                    pd.DataFrame(width_rows).to_csv(width_table_path, index=False)
+                except Exception:
+                    header = "method,propensity,width"
+                    with open(width_table_path, "w") as f:
+                        f.write(header + "\n")
+                        for row in width_rows:
+                            f.write(f"{row['method']},{row['propensity']},{row['width']}\n")
+
+                width_mat = np.asarray(width_mat, dtype=np.float64)
+                if prop_grid is not None and np.isfinite(width_mat).any():
+                    plt.figure(figsize=(8.0, 3.5))
+                    extent = (prop_grid[0], prop_grid[-1], 0.0, float(len(div_list)))
+                    plt.imshow(
+                        width_mat,
+                        aspect="auto",
+                        origin="lower",
+                        extent=extent,
+                        interpolation="nearest",
+                    )
+                    plt.yticks(np.arange(len(div_list)) + 0.5, div_list)
+                    plt.xlabel("e(A=1|X)")
+                    plt.ylabel("Divergence")
+                    plt.title("Width by propensity and divergence")
+                    plt.colorbar(label="Interval width")
+                    plt.tight_layout()
+                    width_heatmap_path = name_with_suffix(f"{base_name}_width_heatmap", "png")
+                    plt.savefig(width_heatmap_path, dpi=200)
+                    plt.close()
 
         with StepTimer(f"plot ribbons ({axis_key})", use_tqdm=False, enabled=timing_enabled):
             # Plot
@@ -914,6 +982,10 @@ def main() -> None:
                 "lowess_frac": args.lowess_frac,
                 "lowess_it": args.lowess_it,
             }
+            if width_table_path:
+                artifacts["width_table_csv"] = width_table_path
+            if width_heatmap_path:
+                artifacts["width_heatmap_png"] = width_heatmap_path
             artifacts_path = name_with_suffix(f"{base_name}_artifacts", "pkl")
             with open(artifacts_path, "wb") as f:
                 pickle.dump(artifacts, f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -943,6 +1015,10 @@ def main() -> None:
                 "lowess_frac": args.lowess_frac,
                 "lowess_it": args.lowess_it,
             }
+            if width_table_path:
+                summary["files"]["width_table_csv"] = width_table_path
+            if width_heatmap_path:
+                summary["files"]["width_heatmap_png"] = width_heatmap_path
             summary_path = name_with_suffix(f"{base_name}_summary", "json")
             with open(summary_path, "w") as f:
                 json.dump(summary, f, indent=2)
