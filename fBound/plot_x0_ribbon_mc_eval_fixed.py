@@ -900,10 +900,46 @@ def main() -> None:
                     if np.any(valid_n):
                         width_se[valid_n] = width_std[valid_n] / np.sqrt(width_n[valid_n])
                     width_ci = 1.96 * width_se
+                    if prop_grid is None or prop_eval_mat is None:
+                        coverage_mean = np.full((grid_n,), np.nan, dtype=np.float64)
+                    else:
+                        coverage_mat = np.full((m, grid_n), np.nan, dtype=np.float64)
+                        for j in range(m):
+                            prop_j = prop_eval_mat[j, :]
+                            lower_j = lower_dict[div][j, :]
+                            upper_j = upper_dict[div][j, :]
+                            truth_j = truth_mat[j, :]
+                            valid_j = valid_dict[div][j, :]
+                            cov_mask = (
+                                valid_j
+                                & np.isfinite(lower_j)
+                                & np.isfinite(upper_j)
+                                & np.isfinite(truth_j)
+                            )
+                            coverage_j = np.where(
+                                cov_mask,
+                                (truth_j >= lower_j) & (truth_j <= upper_j),
+                                np.nan,
+                            ).astype(np.float64)
+                            mask = np.isfinite(prop_j) & np.isfinite(coverage_j)
+                            if np.count_nonzero(mask) < 2:
+                                continue
+                            order = np.argsort(prop_j[mask])
+                            p_sorted = prop_j[mask][order]
+                            c_sorted = coverage_j[mask][order]
+                            coverage_mat[j, :] = np.interp(
+                                prop_grid,
+                                p_sorted,
+                                c_sorted,
+                                left=np.nan,
+                                right=np.nan,
+                            )
+                        coverage_mean = np.nanmean(coverage_mat, axis=0)
                     width_stats[div] = {
                         "mean": width_mean,
                         "median": width_median,
                         "ci": width_ci,
+                        "coverage": coverage_mean,
                     }
                     prop_vals = prop_grid if prop_grid is not None else np.full((grid_n,), np.nan)
                     for p_val, w_mean, w_median, w_std, w_ci, w_n in zip(
@@ -917,6 +953,9 @@ def main() -> None:
                                 "width_median": float(w_median),
                                 "width_std": float(w_std),
                                 "width_ci": float(w_ci),
+                                "coverage_mean": float(coverage_mean[np.where(prop_vals == p_val)[0][0]])
+                                if prop_grid is not None and coverage_mean.size == prop_vals.size
+                                else float("nan"),
                                 "width_n": int(w_n),
                             }
                         )
@@ -927,13 +966,14 @@ def main() -> None:
 
                     pd.DataFrame(width_rows).to_csv(width_table_path, index=False)
                 except Exception:
-                    header = "method,propensity,width_mean,width_median,width_std,width_ci,width_n"
+                    header = "method,propensity,width_mean,width_median,width_std,width_ci,coverage_mean,width_n"
                     with open(width_table_path, "w") as f:
                         f.write(header + "\n")
                         for row in width_rows:
                             f.write(
                                 f"{row['method']},{row['propensity']},{row['width_mean']},"
-                                f"{row['width_median']},{row['width_std']},{row['width_ci']},{row['width_n']}\n"
+                                f"{row['width_median']},{row['width_std']},{row['width_ci']},"
+                                f"{row['coverage_mean']},{row['width_n']}\n"
                             )
 
                 if prop_grid is not None and width_stats:
@@ -951,11 +991,14 @@ def main() -> None:
                             for smooth in (True, False):
                                 plt.figure(figsize=(7.0, 4.0))
                                 show_ci = with_ci
+                                ax = plt.gca()
+                                ax2 = ax.twinx()
                                 for div in div_list:
                                     if div not in width_stats:
                                         continue
                                     w_center = width_stats[div][stat_key]
                                     w_ci = width_stats[div]["ci"]
+                                    coverage = width_stats[div]["coverage"]
                                     if not np.isfinite(w_center).any():
                                         continue
                                     c = color_map.get(div, None)
@@ -996,15 +1039,34 @@ def main() -> None:
                                                 w_ci_plot = np.interp(x_plot, x_ci, w_ci_s)
                                             else:
                                                 w_ci_plot = np.interp(x_plot, prop_grid, w_ci)
+                                        x_cov, cov_s = smooth_xy(
+                                            prop_grid,
+                                            coverage,
+                                            method=args.smooth_method,
+                                            smooth_grid_n=args.smooth_grid_n,
+                                            window=args.smooth_window,
+                                            spline_k=args.spline_k,
+                                            spline_s=args.spline_s,
+                                            lowess_frac=args.lowess_frac,
+                                            lowess_it=args.lowess_it,
+                                        )
+                                        if x_cov.size == 0:
+                                            x_cov_plot = x_plot
+                                            cov_plot = np.interp(x_cov_plot, prop_grid, coverage)
+                                        else:
+                                            x_cov_plot = x_cov
+                                            cov_plot = cov_s
                                     else:
                                         x_plot = prop_grid
                                         w_center_plot = w_center
                                         w_ci_plot = w_ci
+                                        x_cov_plot = prop_grid
+                                        cov_plot = coverage
                                     w_ci_plot = np.clip(w_ci_plot, 0.0, None)
                                     mask = np.isfinite(x_plot) & np.isfinite(w_center_plot)
                                     if show_ci and np.isfinite(w_ci_plot).any():
                                         mask &= np.isfinite(w_ci_plot)
-                                        plt.errorbar(
+                                        ax.errorbar(
                                             x_plot[mask],
                                             w_center_plot[mask],
                                             yerr=w_ci_plot[mask],
@@ -1016,8 +1078,18 @@ def main() -> None:
                                             label=div,
                                         )
                                     else:
-                                        plt.plot(x_plot[mask], w_center_plot[mask], color=c, linewidth=2.0, label=div)
-                                plt.xlabel("e(A=1|X)")
+                                        ax.plot(x_plot[mask], w_center_plot[mask], color=c, linewidth=2.0, label=div)
+                                    cov_mask = np.isfinite(x_cov_plot) & np.isfinite(cov_plot)
+                                    if np.any(cov_mask):
+                                        ax2.plot(
+                                            x_cov_plot[cov_mask],
+                                            cov_plot[cov_mask],
+                                            color=c,
+                                            linestyle=":",
+                                            linewidth=1.2,
+                                            alpha=0.8,
+                                        )
+                                ax.set_xlabel("e(A=1|X)")
                                 ylabel = (
                                     "Median interval width" if stat_key == "median" else "Mean interval width"
                                 )
@@ -1026,9 +1098,11 @@ def main() -> None:
                                     if stat_key == "median"
                                     else "Mean width vs propensity by divergence"
                                 )
-                                plt.ylabel(ylabel)
-                                plt.title(title)
-                                plt.legend()
+                                ax.set_ylabel(ylabel)
+                                ax2.set_ylabel("Coverage rate")
+                                ax2.set_ylim(0.0, 1.0)
+                                ax.set_title(title)
+                                ax.legend()
                                 plt.tight_layout()
                                 ci_tag = "ci" if with_ci else "noci"
                                 smooth_tag = "smooth" if smooth else "raw"
