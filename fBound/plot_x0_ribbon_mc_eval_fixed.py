@@ -879,15 +879,23 @@ def main() -> None:
                     width_mean = np.nanmean(width_mat, axis=0)
                     width_std = np.nanstd(width_mat, axis=0)
                     width_n = np.sum(np.isfinite(width_mat), axis=0).astype(int)
-                    width_stats[div] = (width_mean, width_std)
+                    width_se = np.full_like(width_std, np.nan)
+                    valid_n = width_n > 1
+                    if np.any(valid_n):
+                        width_se[valid_n] = width_std[valid_n] / np.sqrt(width_n[valid_n])
+                    width_ci = 1.96 * width_se
+                    width_stats[div] = (width_mean, width_ci)
                     prop_vals = prop_grid if prop_grid is not None else np.full((grid_n,), np.nan)
-                    for p_val, w_mean, w_std, w_n in zip(prop_vals, width_mean, width_std, width_n):
+                    for p_val, w_mean, w_std, w_ci, w_n in zip(
+                        prop_vals, width_mean, width_std, width_ci, width_n
+                    ):
                         width_rows.append(
                             {
                                 "method": div,
                                 "propensity": float(p_val),
                                 "width_mean": float(w_mean),
                                 "width_std": float(w_std),
+                                "width_ci": float(w_ci),
                                 "width_n": int(w_n),
                             }
                         )
@@ -898,13 +906,13 @@ def main() -> None:
 
                     pd.DataFrame(width_rows).to_csv(width_table_path, index=False)
                 except Exception:
-                    header = "method,propensity,width_mean,width_std,width_n"
+                    header = "method,propensity,width_mean,width_std,width_ci,width_n"
                     with open(width_table_path, "w") as f:
                         f.write(header + "\n")
                         for row in width_rows:
                             f.write(
                                 f"{row['method']},{row['propensity']},{row['width_mean']},"
-                                f"{row['width_std']},{row['width_n']}\n"
+                                f"{row['width_std']},{row['width_ci']},{row['width_n']}\n"
                             )
 
                 if prop_grid is not None and width_stats:
@@ -921,20 +929,24 @@ def main() -> None:
                     for div in div_list:
                         if div not in width_stats:
                             continue
-                        w_mean, w_std = width_stats[div]
+                        w_mean, w_ci = width_stats[div]
                         if not np.isfinite(w_mean).any():
                             continue
                         c = color_map.get(div, None)
-                        plt.plot(prop_grid, w_mean, color=c, linewidth=2.0, label=div)
-                        if np.isfinite(w_std).any():
-                            plt.fill_between(
+                        if np.isfinite(w_ci).any():
+                            plt.errorbar(
                                 prop_grid,
-                                w_mean - w_std,
-                                w_mean + w_std,
+                                w_mean,
+                                yerr=w_ci,
                                 color=c,
-                                alpha=0.15,
-                                linewidth=0,
+                                linewidth=1.8,
+                                elinewidth=0.8,
+                                capsize=2,
+                                alpha=0.8,
+                                label=div,
                             )
+                        else:
+                            plt.plot(prop_grid, w_mean, color=c, linewidth=2.0, label=div)
                     plt.xlabel("e(A=1|X)")
                     plt.ylabel("Mean interval width")
                     plt.title("Mean width vs propensity by divergence")
