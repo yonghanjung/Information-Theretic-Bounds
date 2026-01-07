@@ -189,7 +189,7 @@ def main() -> None:
         seed = 190702
         n = 2000
         d = 5
-        structural_type = "cyclic2"
+        structural_type = "probit_sine"
         k = 2
 
         base_divs = ["KL", "TV", "Hellinger", "Chi2", "JS"]
