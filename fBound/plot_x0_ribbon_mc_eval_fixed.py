@@ -951,11 +951,51 @@ def main() -> None:
                         if not np.isfinite(w_center).any():
                             continue
                         c = color_map.get(div, None)
-                        if show_ci and np.isfinite(w_ci).any():
+                        x_center, w_center_s = smooth_xy(
+                            prop_grid,
+                            w_center,
+                            method=args.smooth_method,
+                            smooth_grid_n=args.smooth_grid_n,
+                            window=args.smooth_window,
+                            spline_k=args.spline_k,
+                            spline_s=args.spline_s,
+                            lowess_frac=args.lowess_frac,
+                            lowess_it=args.lowess_it,
+                        )
+                        x_ci, w_ci_s = smooth_xy(
+                            prop_grid,
+                            w_ci,
+                            method=args.smooth_method,
+                            smooth_grid_n=args.smooth_grid_n,
+                            window=args.smooth_window,
+                            spline_k=args.spline_k,
+                            spline_s=args.spline_s,
+                            lowess_frac=args.lowess_frac,
+                            lowess_it=args.lowess_it,
+                        )
+                        if x_center.size == 0:
+                            x_plot = prop_grid
+                            w_center_plot = w_center
+                            if x_ci.size > 0:
+                                w_ci_plot = np.interp(x_plot, x_ci, w_ci_s)
+                            else:
+                                w_ci_plot = w_ci
+                        else:
+                            x_plot = x_center
+                            w_center_plot = w_center_s
+                            if x_ci.size > 0:
+                                w_ci_plot = np.interp(x_plot, x_ci, w_ci_s)
+                            else:
+                                w_ci_plot = np.interp(x_plot, prop_grid, w_ci)
+                        if w_ci_plot is not None:
+                            w_ci_plot = np.clip(w_ci_plot, 0.0, None)
+                        mask = np.isfinite(x_plot) & np.isfinite(w_center_plot)
+                        if show_ci and w_ci_plot is not None and np.isfinite(w_ci_plot).any():
+                            mask &= np.isfinite(w_ci_plot)
                             plt.errorbar(
-                                prop_grid,
-                                w_center,
-                                yerr=w_ci,
+                                x_plot[mask],
+                                w_center_plot[mask],
+                                yerr=w_ci_plot[mask],
                                 color=c,
                                 linewidth=1.8,
                                 elinewidth=0.8,
@@ -964,7 +1004,7 @@ def main() -> None:
                                 label=div,
                             )
                         else:
-                            plt.plot(prop_grid, w_center, color=c, linewidth=2.0, label=div)
+                            plt.plot(x_plot[mask], w_center_plot[mask], color=c, linewidth=2.0, label=div)
                     plt.xlabel("e(A=1|X)")
                     ylabel = "Median interval width" if args.width_stat == "median" else "Mean interval width"
                     title = "Median width vs propensity by divergence" if args.width_stat == "median" else "Mean width vs propensity by divergence"
