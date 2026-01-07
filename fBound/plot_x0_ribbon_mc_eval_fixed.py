@@ -839,7 +839,7 @@ def main() -> None:
                     )
 
         width_table_path = None
-        width_heatmap_path = None
+        width_mean_path = None
         if axis_key == "propensity":
             with StepTimer("save width summary (propensity)", use_tqdm=False, enabled=timing_enabled):
                 grid_n = max(2, int(args.smooth_grid_n))
@@ -887,24 +887,17 @@ def main() -> None:
 
                 width_mat = np.asarray(width_mat, dtype=np.float64)
                 if prop_grid is not None and np.isfinite(width_mat).any():
-                    plt.figure(figsize=(8.0, 3.5))
-                    extent = (prop_grid[0], prop_grid[-1], 0.0, float(len(div_list)))
-                    plt.imshow(
-                        width_mat,
-                        aspect="auto",
-                        origin="lower",
-                        extent=extent,
-                        interpolation="nearest",
-                    )
-                    plt.yticks(np.arange(len(div_list)) + 0.5, div_list)
-                    plt.xlabel("e(A=1|X)")
-                    plt.ylabel("Divergence")
-                    plt.title("Width by propensity and divergence")
-                    plt.colorbar(label="Interval width")
-                    plt.tight_layout()
-                    width_heatmap_path = name_with_suffix(f"{base_name}_width_heatmap", "png")
-                    plt.savefig(width_heatmap_path, dpi=200)
-                    plt.close()
+                    mean_width = np.nanmean(width_mat, axis=0)
+                    if np.isfinite(mean_width).any():
+                        plt.figure(figsize=(7.0, 4.0))
+                        plt.plot(prop_grid, mean_width, color="tab:blue", linewidth=2.0)
+                        plt.xlabel("e(A=1|X)")
+                        plt.ylabel("Mean interval width")
+                        plt.title("Mean width vs propensity")
+                        plt.tight_layout()
+                        width_mean_path = name_with_suffix(f"{base_name}_width_mean", "png")
+                        plt.savefig(width_mean_path, dpi=200)
+                        plt.close()
 
         with StepTimer(f"plot ribbons ({axis_key})", use_tqdm=False, enabled=timing_enabled):
             # Plot
@@ -984,8 +977,8 @@ def main() -> None:
             }
             if width_table_path:
                 artifacts["width_table_csv"] = width_table_path
-            if width_heatmap_path:
-                artifacts["width_heatmap_png"] = width_heatmap_path
+            if width_mean_path:
+                artifacts["width_mean_png"] = width_mean_path
             artifacts_path = name_with_suffix(f"{base_name}_artifacts", "pkl")
             with open(artifacts_path, "wb") as f:
                 pickle.dump(artifacts, f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -1017,8 +1010,8 @@ def main() -> None:
             }
             if width_table_path:
                 summary["files"]["width_table_csv"] = width_table_path
-            if width_heatmap_path:
-                summary["files"]["width_heatmap_png"] = width_heatmap_path
+            if width_mean_path:
+                summary["files"]["width_mean_png"] = width_mean_path
             summary_path = name_with_suffix(f"{base_name}_summary", "json")
             with open(summary_path, "w") as f:
                 json.dump(summary, f, indent=2)
