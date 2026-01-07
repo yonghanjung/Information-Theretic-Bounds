@@ -854,6 +854,7 @@ def main() -> None:
 
         width_table_path = None
         width_mean_path = None
+        width_plot_paths = []
         if axis_key == "propensity":
             with StepTimer("save width summary (propensity)", use_tqdm=False, enabled=timing_enabled):
                 grid_n = max(2, int(args.smooth_grid_n))
@@ -890,6 +891,8 @@ def main() -> None:
                                 left=np.nan,
                                 right=np.nan,
                             )
+                    width_mean = np.nanmean(width_mat, axis=0)
+                    width_median = np.nanmedian(width_mat, axis=0)
                     width_std = np.nanstd(width_mat, axis=0)
                     width_n = np.sum(np.isfinite(width_mat), axis=0).astype(int)
                     width_se = np.full_like(width_std, np.nan)
@@ -897,20 +900,21 @@ def main() -> None:
                     if np.any(valid_n):
                         width_se[valid_n] = width_std[valid_n] / np.sqrt(width_n[valid_n])
                     width_ci = 1.96 * width_se
-                    if args.width_stat == "median":
-                        width_center = np.nanmedian(width_mat, axis=0)
-                    else:
-                        width_center = np.nanmean(width_mat, axis=0)
-                    width_stats[div] = (width_center, width_ci)
+                    width_stats[div] = {
+                        "mean": width_mean,
+                        "median": width_median,
+                        "ci": width_ci,
+                    }
                     prop_vals = prop_grid if prop_grid is not None else np.full((grid_n,), np.nan)
-                    for p_val, w_mean, w_std, w_ci, w_n in zip(
-                        prop_vals, width_center, width_std, width_ci, width_n
+                    for p_val, w_mean, w_median, w_std, w_ci, w_n in zip(
+                        prop_vals, width_mean, width_median, width_std, width_ci, width_n
                     ):
                         width_rows.append(
                             {
                                 "method": div,
                                 "propensity": float(p_val),
                                 "width_mean": float(w_mean),
+                                "width_median": float(w_median),
                                 "width_std": float(w_std),
                                 "width_ci": float(w_ci),
                                 "width_n": int(w_n),
@@ -923,17 +927,16 @@ def main() -> None:
 
                     pd.DataFrame(width_rows).to_csv(width_table_path, index=False)
                 except Exception:
-                    header = "method,propensity,width_mean,width_std,width_ci,width_n"
+                    header = "method,propensity,width_mean,width_median,width_std,width_ci,width_n"
                     with open(width_table_path, "w") as f:
                         f.write(header + "\n")
                         for row in width_rows:
                             f.write(
                                 f"{row['method']},{row['propensity']},{row['width_mean']},"
-                                f"{row['width_std']},{row['width_ci']},{row['width_n']}\n"
+                                f"{row['width_median']},{row['width_std']},{row['width_ci']},{row['width_n']}\n"
                             )
 
                 if prop_grid is not None and width_stats:
-                    plt.figure(figsize=(7.0, 4.0))
                     color_map = {
                         "kth": "tab:cyan",
                         "tight_kth": "tab:olive",
@@ -943,78 +946,99 @@ def main() -> None:
                         "Chi2": "tab:brown",
                         "JS": "tab:pink",
                     }
-                    show_ci = bool(getattr(args, "width_ci", True))
-                    for div in div_list:
-                        if div not in width_stats:
-                            continue
-                        w_center, w_ci = width_stats[div]
-                        if not np.isfinite(w_center).any():
-                            continue
-                        c = color_map.get(div, None)
-                        x_center, w_center_s = smooth_xy(
-                            prop_grid,
-                            w_center,
-                            method=args.smooth_method,
-                            smooth_grid_n=args.smooth_grid_n,
-                            window=args.smooth_window,
-                            spline_k=args.spline_k,
-                            spline_s=args.spline_s,
-                            lowess_frac=args.lowess_frac,
-                            lowess_it=args.lowess_it,
-                        )
-                        x_ci, w_ci_s = smooth_xy(
-                            prop_grid,
-                            w_ci,
-                            method=args.smooth_method,
-                            smooth_grid_n=args.smooth_grid_n,
-                            window=args.smooth_window,
-                            spline_k=args.spline_k,
-                            spline_s=args.spline_s,
-                            lowess_frac=args.lowess_frac,
-                            lowess_it=args.lowess_it,
-                        )
-                        if x_center.size == 0:
-                            x_plot = prop_grid
-                            w_center_plot = w_center
-                            if x_ci.size > 0:
-                                w_ci_plot = np.interp(x_plot, x_ci, w_ci_s)
-                            else:
-                                w_ci_plot = w_ci
-                        else:
-                            x_plot = x_center
-                            w_center_plot = w_center_s
-                            if x_ci.size > 0:
-                                w_ci_plot = np.interp(x_plot, x_ci, w_ci_s)
-                            else:
-                                w_ci_plot = np.interp(x_plot, prop_grid, w_ci)
-                        if w_ci_plot is not None:
-                            w_ci_plot = np.clip(w_ci_plot, 0.0, None)
-                        mask = np.isfinite(x_plot) & np.isfinite(w_center_plot)
-                        if show_ci and w_ci_plot is not None and np.isfinite(w_ci_plot).any():
-                            mask &= np.isfinite(w_ci_plot)
-                            plt.errorbar(
-                                x_plot[mask],
-                                w_center_plot[mask],
-                                yerr=w_ci_plot[mask],
-                                color=c,
-                                linewidth=1.8,
-                                elinewidth=0.8,
-                                capsize=2,
-                                alpha=0.8,
-                                label=div,
-                            )
-                        else:
-                            plt.plot(x_plot[mask], w_center_plot[mask], color=c, linewidth=2.0, label=div)
-                    plt.xlabel("e(A=1|X)")
-                    ylabel = "Median interval width" if args.width_stat == "median" else "Mean interval width"
-                    title = "Median width vs propensity by divergence" if args.width_stat == "median" else "Mean width vs propensity by divergence"
-                    plt.ylabel(ylabel)
-                    plt.title(title)
-                    plt.legend()
-                    plt.tight_layout()
-                    width_mean_path = name_with_suffix(f"{base_name}_width_mean", "png")
-                    plt.savefig(width_mean_path, dpi=200)
-                    plt.close()
+                    for stat_key in ("mean", "median"):
+                        for with_ci in (True, False):
+                            for smooth in (True, False):
+                                plt.figure(figsize=(7.0, 4.0))
+                                show_ci = with_ci
+                                for div in div_list:
+                                    if div not in width_stats:
+                                        continue
+                                    w_center = width_stats[div][stat_key]
+                                    w_ci = width_stats[div]["ci"]
+                                    if not np.isfinite(w_center).any():
+                                        continue
+                                    c = color_map.get(div, None)
+                                    if smooth:
+                                        x_center, w_center_s = smooth_xy(
+                                            prop_grid,
+                                            w_center,
+                                            method=args.smooth_method,
+                                            smooth_grid_n=args.smooth_grid_n,
+                                            window=args.smooth_window,
+                                            spline_k=args.spline_k,
+                                            spline_s=args.spline_s,
+                                            lowess_frac=args.lowess_frac,
+                                            lowess_it=args.lowess_it,
+                                        )
+                                        x_ci, w_ci_s = smooth_xy(
+                                            prop_grid,
+                                            w_ci,
+                                            method=args.smooth_method,
+                                            smooth_grid_n=args.smooth_grid_n,
+                                            window=args.smooth_window,
+                                            spline_k=args.spline_k,
+                                            spline_s=args.spline_s,
+                                            lowess_frac=args.lowess_frac,
+                                            lowess_it=args.lowess_it,
+                                        )
+                                        if x_center.size == 0:
+                                            x_plot = prop_grid
+                                            w_center_plot = w_center
+                                            if x_ci.size > 0:
+                                                w_ci_plot = np.interp(x_plot, x_ci, w_ci_s)
+                                            else:
+                                                w_ci_plot = w_ci
+                                        else:
+                                            x_plot = x_center
+                                            w_center_plot = w_center_s
+                                            if x_ci.size > 0:
+                                                w_ci_plot = np.interp(x_plot, x_ci, w_ci_s)
+                                            else:
+                                                w_ci_plot = np.interp(x_plot, prop_grid, w_ci)
+                                    else:
+                                        x_plot = prop_grid
+                                        w_center_plot = w_center
+                                        w_ci_plot = w_ci
+                                    w_ci_plot = np.clip(w_ci_plot, 0.0, None)
+                                    mask = np.isfinite(x_plot) & np.isfinite(w_center_plot)
+                                    if show_ci and np.isfinite(w_ci_plot).any():
+                                        mask &= np.isfinite(w_ci_plot)
+                                        plt.errorbar(
+                                            x_plot[mask],
+                                            w_center_plot[mask],
+                                            yerr=w_ci_plot[mask],
+                                            color=c,
+                                            linewidth=1.8,
+                                            elinewidth=0.8,
+                                            capsize=2,
+                                            alpha=0.8,
+                                            label=div,
+                                        )
+                                    else:
+                                        plt.plot(x_plot[mask], w_center_plot[mask], color=c, linewidth=2.0, label=div)
+                                plt.xlabel("e(A=1|X)")
+                                ylabel = (
+                                    "Median interval width" if stat_key == "median" else "Mean interval width"
+                                )
+                                title = (
+                                    "Median width vs propensity by divergence"
+                                    if stat_key == "median"
+                                    else "Mean width vs propensity by divergence"
+                                )
+                                plt.ylabel(ylabel)
+                                plt.title(title)
+                                plt.legend()
+                                plt.tight_layout()
+                                ci_tag = "ci" if with_ci else "noci"
+                                smooth_tag = "smooth" if smooth else "raw"
+                                fig_base = f"{base_name}_width_{stat_key}_{ci_tag}_{smooth_tag}"
+                                fig_path = name_with_suffix(fig_base, "png")
+                                plt.savefig(fig_path, dpi=200)
+                                plt.close()
+                                width_plot_paths.append(fig_path)
+                                if width_mean_path is None and stat_key == "mean" and with_ci and smooth:
+                                    width_mean_path = fig_path
 
         with StepTimer(f"plot ribbons ({axis_key})", use_tqdm=False, enabled=timing_enabled):
             # Plot
@@ -1096,6 +1120,8 @@ def main() -> None:
                 artifacts["width_table_csv"] = width_table_path
             if width_mean_path:
                 artifacts["width_mean_png"] = width_mean_path
+            if width_plot_paths:
+                artifacts["width_plot_pngs"] = width_plot_paths
             artifacts_path = name_with_suffix(f"{base_name}_artifacts", "pkl")
             with open(artifacts_path, "wb") as f:
                 pickle.dump(artifacts, f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -1129,6 +1155,8 @@ def main() -> None:
                 summary["files"]["width_table_csv"] = width_table_path
             if width_mean_path:
                 summary["files"]["width_mean_png"] = width_mean_path
+            if width_plot_paths:
+                summary["files"]["width_plot_pngs"] = width_plot_paths
             summary_path = name_with_suffix(f"{base_name}_summary", "json")
             with open(summary_path, "w") as f:
                 json.dump(summary, f, indent=2)
