@@ -852,24 +852,43 @@ def main() -> None:
                         prop_grid = np.linspace(p_min, p_max, grid_n)
 
                 width_rows = []
-                width_mat = []
+                width_stats = {}
                 for res in aggregated_results:
-                    width_s = np.asarray(res.get("width_s", res["u_s"] - res["l_s"]), dtype=np.float64)
-                    x_s = np.asarray(res.get("x_s", []), dtype=np.float64)
-                    if x_s.size == 0 or prop_grid is None:
-                        width_interp = np.full((grid_n,), np.nan, dtype=np.float64)
+                    div = res["div"]
+                    if prop_grid is None or prop_eval_mat is None:
+                        width_mat = np.full((m, grid_n), np.nan, dtype=np.float64)
                     else:
-                        order = np.argsort(x_s)
-                        x_sorted = x_s[order]
-                        w_sorted = width_s[order]
-                        width_interp = np.interp(prop_grid, x_sorted, w_sorted, left=np.nan, right=np.nan)
-                    width_mat.append(width_interp)
-                    for x0, wd in zip(prop_grid if prop_grid is not None else np.full((grid_n,), np.nan), width_interp):
+                        width_mat = np.full((m, grid_n), np.nan, dtype=np.float64)
+                        for j in range(m):
+                            prop_j = prop_eval_mat[j, :]
+                            width_j = upper_dict[div][j, :] - lower_dict[div][j, :]
+                            width_j = np.where(valid_dict[div][j, :], width_j, np.nan)
+                            mask = np.isfinite(prop_j) & np.isfinite(width_j)
+                            if np.count_nonzero(mask) < 2:
+                                continue
+                            order = np.argsort(prop_j[mask])
+                            p_sorted = prop_j[mask][order]
+                            w_sorted = width_j[mask][order]
+                            width_mat[j, :] = np.interp(
+                                prop_grid,
+                                p_sorted,
+                                w_sorted,
+                                left=np.nan,
+                                right=np.nan,
+                            )
+                    width_mean = np.nanmean(width_mat, axis=0)
+                    width_std = np.nanstd(width_mat, axis=0)
+                    width_n = np.sum(np.isfinite(width_mat), axis=0).astype(int)
+                    width_stats[div] = (width_mean, width_std)
+                    prop_vals = prop_grid if prop_grid is not None else np.full((grid_n,), np.nan)
+                    for p_val, w_mean, w_std, w_n in zip(prop_vals, width_mean, width_std, width_n):
                         width_rows.append(
                             {
-                                "method": res["div"],
-                                "propensity": float(x0),
-                                "width": float(wd),
+                                "method": div,
+                                "propensity": float(p_val),
+                                "width_mean": float(w_mean),
+                                "width_std": float(w_std),
+                                "width_n": int(w_n),
                             }
                         )
 
@@ -879,25 +898,51 @@ def main() -> None:
 
                     pd.DataFrame(width_rows).to_csv(width_table_path, index=False)
                 except Exception:
-                    header = "method,propensity,width"
+                    header = "method,propensity,width_mean,width_std,width_n"
                     with open(width_table_path, "w") as f:
                         f.write(header + "\n")
                         for row in width_rows:
-                            f.write(f"{row['method']},{row['propensity']},{row['width']}\n")
+                            f.write(
+                                f"{row['method']},{row['propensity']},{row['width_mean']},"
+                                f"{row['width_std']},{row['width_n']}\n"
+                            )
 
-                width_mat = np.asarray(width_mat, dtype=np.float64)
-                if prop_grid is not None and np.isfinite(width_mat).any():
-                    mean_width = np.nanmean(width_mat, axis=0)
-                    if np.isfinite(mean_width).any():
-                        plt.figure(figsize=(7.0, 4.0))
-                        plt.plot(prop_grid, mean_width, color="tab:blue", linewidth=2.0)
-                        plt.xlabel("e(A=1|X)")
-                        plt.ylabel("Mean interval width")
-                        plt.title("Mean width vs propensity")
-                        plt.tight_layout()
-                        width_mean_path = name_with_suffix(f"{base_name}_width_mean", "png")
-                        plt.savefig(width_mean_path, dpi=200)
-                        plt.close()
+                if prop_grid is not None and width_stats:
+                    plt.figure(figsize=(7.0, 4.0))
+                    color_map = {
+                        "kth": "tab:cyan",
+                        "tight_kth": "tab:olive",
+                        "KL": "tab:green",
+                        "TV": "tab:red",
+                        "Hellinger": "tab:purple",
+                        "Chi2": "tab:brown",
+                        "JS": "tab:pink",
+                    }
+                    for div in div_list:
+                        if div not in width_stats:
+                            continue
+                        w_mean, w_std = width_stats[div]
+                        if not np.isfinite(w_mean).any():
+                            continue
+                        c = color_map.get(div, None)
+                        plt.plot(prop_grid, w_mean, color=c, linewidth=2.0, label=div)
+                        if np.isfinite(w_std).any():
+                            plt.fill_between(
+                                prop_grid,
+                                w_mean - w_std,
+                                w_mean + w_std,
+                                color=c,
+                                alpha=0.15,
+                                linewidth=0,
+                            )
+                    plt.xlabel("e(A=1|X)")
+                    plt.ylabel("Mean interval width")
+                    plt.title("Mean width vs propensity by divergence")
+                    plt.legend()
+                    plt.tight_layout()
+                    width_mean_path = name_with_suffix(f"{base_name}_width_mean", "png")
+                    plt.savefig(width_mean_path, dpi=200)
+                    plt.close()
 
         with StepTimer(f"plot ribbons ({axis_key})", use_tqdm=False, enabled=timing_enabled):
             # Plot
