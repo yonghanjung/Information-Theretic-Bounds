@@ -350,6 +350,12 @@ def main() -> None:
     parser.add_argument("--lowess_it", type=int, default=1, help="LOWESS iterations.")
     parser.add_argument("--plot_raw_points", action="store_true", help="Overlay raw (unsmoothed) points on the plot.")
     parser.add_argument(
+        "--no_width_ci",
+        dest="width_ci",
+        action="store_false",
+        help="Disable 95% CI error bars for the width plot.",
+    )
+    parser.add_argument(
         "--early_stop_patience",
         type=int,
         default=10,
@@ -386,6 +392,7 @@ def main() -> None:
         action="store_false",
         help="Disable progress/timing logs.",
     )
+    parser.set_defaults(width_ci=True)
     parser.add_argument(
         "--timing_detail",
         "--timing-detail",
@@ -926,6 +933,7 @@ def main() -> None:
                         "Chi2": "tab:brown",
                         "JS": "tab:pink",
                     }
+                    show_ci = bool(getattr(args, "width_ci", True))
                     for div in div_list:
                         if div not in width_stats:
                             continue
@@ -933,7 +941,7 @@ def main() -> None:
                         if not np.isfinite(w_mean).any():
                             continue
                         c = color_map.get(div, None)
-                        if np.isfinite(w_ci).any():
+                        if show_ci and np.isfinite(w_ci).any():
                             plt.errorbar(
                                 prop_grid,
                                 w_mean,
