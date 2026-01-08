@@ -855,6 +855,7 @@ def main() -> None:
         width_table_path = None
         width_mean_path = None
         width_plot_paths = []
+        coverage_plot_paths = []
         if axis_key == "propensity":
             with StepTimer("save width summary (propensity)", use_tqdm=False, enabled=timing_enabled):
                 grid_n = max(2, int(args.smooth_grid_n))
@@ -942,9 +943,13 @@ def main() -> None:
                         "coverage": coverage_mean,
                     }
                     prop_vals = prop_grid if prop_grid is not None else np.full((grid_n,), np.nan)
-                    for p_val, w_mean, w_median, w_std, w_ci, w_n in zip(
-                        prop_vals, width_mean, width_median, width_std, width_ci, width_n
+                    for idx, (p_val, w_mean, w_median, w_std, w_ci, w_n) in enumerate(
+                        zip(prop_vals, width_mean, width_median, width_std, width_ci, width_n)
                     ):
+                        if prop_grid is not None and coverage_mean.size == prop_vals.size:
+                            cov_val = float(coverage_mean[idx])
+                        else:
+                            cov_val = float("nan")
                         width_rows.append(
                             {
                                 "method": div,
@@ -953,9 +958,7 @@ def main() -> None:
                                 "width_median": float(w_median),
                                 "width_std": float(w_std),
                                 "width_ci": float(w_ci),
-                                "coverage_mean": float(coverage_mean[np.where(prop_vals == p_val)[0][0]])
-                                if prop_grid is not None and coverage_mean.size == prop_vals.size
-                                else float("nan"),
+                                "coverage_mean": cov_val,
                                 "width_n": int(w_n),
                             }
                         )
@@ -992,13 +995,11 @@ def main() -> None:
                                 plt.figure(figsize=(7.0, 4.0))
                                 show_ci = with_ci
                                 ax = plt.gca()
-                                ax2 = ax.twinx()
                                 for div in div_list:
                                     if div not in width_stats:
                                         continue
                                     w_center = width_stats[div][stat_key]
                                     w_ci = width_stats[div]["ci"]
-                                    coverage = width_stats[div]["coverage"]
                                     if not np.isfinite(w_center).any():
                                         continue
                                     c = color_map.get(div, None)
@@ -1039,29 +1040,10 @@ def main() -> None:
                                                 w_ci_plot = np.interp(x_plot, x_ci, w_ci_s)
                                             else:
                                                 w_ci_plot = np.interp(x_plot, prop_grid, w_ci)
-                                        x_cov, cov_s = smooth_xy(
-                                            prop_grid,
-                                            coverage,
-                                            method=args.smooth_method,
-                                            smooth_grid_n=args.smooth_grid_n,
-                                            window=args.smooth_window,
-                                            spline_k=args.spline_k,
-                                            spline_s=args.spline_s,
-                                            lowess_frac=args.lowess_frac,
-                                            lowess_it=args.lowess_it,
-                                        )
-                                        if x_cov.size == 0:
-                                            x_cov_plot = x_plot
-                                            cov_plot = np.interp(x_cov_plot, prop_grid, coverage)
-                                        else:
-                                            x_cov_plot = x_cov
-                                            cov_plot = cov_s
                                     else:
                                         x_plot = prop_grid
                                         w_center_plot = w_center
                                         w_ci_plot = w_ci
-                                        x_cov_plot = prop_grid
-                                        cov_plot = coverage
                                     w_ci_plot = np.clip(w_ci_plot, 0.0, None)
                                     mask = np.isfinite(x_plot) & np.isfinite(w_center_plot)
                                     if show_ci and np.isfinite(w_ci_plot).any():
@@ -1079,16 +1061,6 @@ def main() -> None:
                                         )
                                     else:
                                         ax.plot(x_plot[mask], w_center_plot[mask], color=c, linewidth=2.0, label=div)
-                                    cov_mask = np.isfinite(x_cov_plot) & np.isfinite(cov_plot)
-                                    if np.any(cov_mask):
-                                        ax2.plot(
-                                            x_cov_plot[cov_mask],
-                                            cov_plot[cov_mask],
-                                            color=c,
-                                            linestyle=":",
-                                            linewidth=1.2,
-                                            alpha=0.8,
-                                        )
                                 ax.set_xlabel("e(A=1|X)")
                                 ylabel = (
                                     "Median interval width" if stat_key == "median" else "Mean interval width"
@@ -1099,8 +1071,6 @@ def main() -> None:
                                     else "Mean width vs propensity by divergence"
                                 )
                                 ax.set_ylabel(ylabel)
-                                ax2.set_ylabel("Coverage rate")
-                                ax2.set_ylim(0.0, 1.0)
                                 ax.set_title(title)
                                 ax.legend()
                                 plt.tight_layout()
@@ -1113,6 +1083,54 @@ def main() -> None:
                                 width_plot_paths.append(fig_path)
                                 if width_mean_path is None and stat_key == "mean" and with_ci and smooth:
                                     width_mean_path = fig_path
+
+                    for smooth in (True, False):
+                        plt.figure(figsize=(7.0, 4.0))
+                        ax = plt.gca()
+                        for div in div_list:
+                            if div not in width_stats:
+                                continue
+                            coverage = width_stats[div]["coverage"]
+                            if not np.isfinite(coverage).any():
+                                continue
+                            c = color_map.get(div, None)
+                            if smooth:
+                                x_cov, cov_s = smooth_xy(
+                                    prop_grid,
+                                    coverage,
+                                    method=args.smooth_method,
+                                    smooth_grid_n=args.smooth_grid_n,
+                                    window=args.smooth_window,
+                                    spline_k=args.spline_k,
+                                    spline_s=args.spline_s,
+                                    lowess_frac=args.lowess_frac,
+                                    lowess_it=args.lowess_it,
+                                )
+                                if x_cov.size == 0:
+                                    x_plot = prop_grid
+                                    cov_plot = coverage
+                                else:
+                                    x_plot = x_cov
+                                    cov_plot = cov_s
+                            else:
+                                x_plot = prop_grid
+                                cov_plot = coverage
+                            cov_plot = np.clip(cov_plot, 0.0, 1.0)
+                            mask = np.isfinite(x_plot) & np.isfinite(cov_plot)
+                            if np.any(mask):
+                                ax.plot(x_plot[mask], cov_plot[mask], color=c, linewidth=2.0, label=div)
+                        ax.set_xlabel("e(A=1|X)")
+                        ax.set_ylabel("Coverage rate")
+                        ax.set_ylim(0.0, 1.0)
+                        ax.set_title("Coverage rate vs propensity by divergence")
+                        ax.legend()
+                        plt.tight_layout()
+                        smooth_tag = "smooth" if smooth else "raw"
+                        fig_base = f"{base_name}_coverage_{smooth_tag}"
+                        fig_path = name_with_suffix(fig_base, "png")
+                        plt.savefig(fig_path, dpi=200)
+                        plt.close()
+                        coverage_plot_paths.append(fig_path)
 
         with StepTimer(f"plot ribbons ({axis_key})", use_tqdm=False, enabled=timing_enabled):
             # Plot
@@ -1196,6 +1214,8 @@ def main() -> None:
                 artifacts["width_mean_png"] = width_mean_path
             if width_plot_paths:
                 artifacts["width_plot_pngs"] = width_plot_paths
+            if coverage_plot_paths:
+                artifacts["coverage_plot_pngs"] = coverage_plot_paths
             artifacts_path = name_with_suffix(f"{base_name}_artifacts", "pkl")
             with open(artifacts_path, "wb") as f:
                 pickle.dump(artifacts, f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -1231,6 +1251,8 @@ def main() -> None:
                 summary["files"]["width_mean_png"] = width_mean_path
             if width_plot_paths:
                 summary["files"]["width_plot_pngs"] = width_plot_paths
+            if coverage_plot_paths:
+                summary["files"]["coverage_plot_pngs"] = coverage_plot_paths
             summary_path = name_with_suffix(f"{base_name}_summary", "json")
             with open(summary_path, "w") as f:
                 json.dump(summary, f, indent=2)
