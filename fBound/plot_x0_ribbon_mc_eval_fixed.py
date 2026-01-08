@@ -1131,7 +1131,11 @@ def main() -> None:
                                     ax.plot(x_plot[mask], cov_plot[mask], color=c, linewidth=2.0, label=div)
                             ax.set_xlabel("e(A=1|X)")
                             ax.set_ylabel("Coverage rate")
-                            ax.set_ylim(0.0, 1.0)
+                            if cov_key == "coverage_median":
+                                ax.set_ylim(0.0, 1.25)
+                                ax.axhline(1.0, color="gray", linestyle="--", linewidth=1.0, alpha=0.8)
+                            else:
+                                ax.set_ylim(0.0, 1.0)
                             ax.set_title(f"{cov_label} vs propensity by divergence")
                             ax.legend()
                             plt.tight_layout()
