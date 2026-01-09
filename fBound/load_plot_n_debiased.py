@@ -200,8 +200,8 @@ def main() -> None:
         "--eval_mode",
         type=str,
         default="sample",
-        choices=["sample", "grid_x0"],
-        help="How to construct fixed X_eval: sample from DGP marginal or grid over X0.",
+        choices=["sample", "grid_x0", "grid_ehat"],
+        help="How to construct X_eval: sample from DGP, grid over X0, or grid by estimated propensity.",
     )
     parser.add_argument("--eval_seed", type=int, default=2025, help="Seed for constructing X_eval (sample mode).")
     parser.add_argument("--x0_min", type=float, default=-3.14, help="Min X0 for grid_x0.")

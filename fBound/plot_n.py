@@ -449,6 +449,62 @@ def _make_X_eval(
     raise ValueError(f"Unknown eval_mode: {eval_mode}")
 
 
+def _make_X_eval_from_ehat(
+    X_pool: np.ndarray,
+    ehat: np.ndarray,
+    n_eval: int,
+) -> np.ndarray:
+    X_pool = np.asarray(X_pool, dtype=np.float32)
+    ehat = np.asarray(ehat, dtype=np.float64).reshape(-1)
+    if X_pool.ndim != 2:
+        raise ValueError(f"X_pool must be 2D (n,d). Got shape {X_pool.shape}.")
+    if X_pool.shape[0] != ehat.shape[0]:
+        raise ValueError("X_pool and ehat must have the same length.")
+    if n_eval <= 0:
+        raise ValueError("n_eval must be positive.")
+    n_pool = int(X_pool.shape[0])
+    if n_pool == 0:
+        raise ValueError("X_pool is empty.")
+
+    order = np.argsort(ehat, kind="mergesort")
+    if n_eval == 1:
+        positions = np.array([0.5 * float(n_pool - 1)], dtype=np.float64)
+    else:
+        positions = np.linspace(0.0, float(n_pool - 1), int(n_eval), dtype=np.float64)
+    idx = np.clip(np.round(positions).astype(int), 0, n_pool - 1)
+    chosen = order[idx]
+    return X_pool[chosen]
+
+
+def _resolve_eval_set(
+    eval_mode: str,
+    X_eval_fixed: Optional[np.ndarray],
+    X_pool: np.ndarray,
+    prop_cache: Dict[str, Any],
+    prop_true_fn: Any,
+    n_eval: int,
+) -> Tuple[np.ndarray, np.ndarray]:
+    if eval_mode == "grid_ehat":
+        e1_oof_raw = prop_cache.get("e1_oof", None)
+        if e1_oof_raw is None:
+            raise ValueError("prop_cache['e1_oof'] is required for eval_mode='grid_ehat'.")
+        e1_oof = np.asarray(e1_oof_raw, dtype=np.float32)
+        if e1_oof.ndim != 1:
+            raise ValueError(f"prop_cache['e1_oof'] must be 1D. Got shape {e1_oof.shape}.")
+        X_eval = _make_X_eval_from_ehat(X_pool, e1_oof, n_eval)
+    else:
+        if X_eval_fixed is None:
+            raise ValueError("X_eval_fixed is required when eval_mode != 'grid_ehat'.")
+        X_eval = X_eval_fixed
+
+    e_true_eval = np.asarray(prop_true_fn(X_eval), dtype=np.float32).reshape(-1)
+    if e_true_eval.shape[0] != X_eval.shape[0]:
+        raise RuntimeError(
+            f"propensity_true returned shape {e_true_eval.shape}, expected ({X_eval.shape[0]},)."
+        )
+    return X_eval, e_true_eval
+
+
 class _NoisyPropensityModel:
     def __init__(self, base_model: Any, noise_mean: float, noise_std: float, seed: int, eps: float) -> None:
         self.base_model = base_model
@@ -721,8 +777,8 @@ if __name__ == "__main__":
         "--eval_mode",
         type=str,
         default="sample", # sample?
-        choices=["sample", "grid_x0"],
-        help="How to construct fixed X_eval: sample from DGP marginal or grid over X0.",
+        choices=["sample", "grid_x0", "grid_ehat"],
+        help="How to construct X_eval: sample from DGP, grid over X0, or grid by estimated propensity.",
     )
     parser.add_argument("--eval_seed", type=int, default=190602, help="Seed for constructing X_eval (sample mode).")
     parser.add_argument("--x0_min", type=float, default=-3.14, help="Min X0 for grid_x0.")
@@ -830,19 +886,24 @@ if __name__ == "__main__":
     base_divs = ["KL", "TV", "Hellinger", "Chi2", "JS"]
     div_list = _parse_divergences(args.divergence, base_divs)
 
-    X_eval = _make_X_eval(
-        n_eval=args.n_eval,
-        d=args.d,
-        eval_mode=args.eval_mode,
-        eval_seed=args.eval_seed,
-        structural_type=args.structural_type,
-        x_range=args.x_range,
-        noise_dist=args.noise_dist,
-        x0_min=args.x0_min,
-        x0_max=args.x0_max,
-        x_fill=args.x_eval_fill,
-    )
-    n_eval = int(X_eval.shape[0])
+    X_eval: Optional[np.ndarray]
+    if args.eval_mode == "grid_ehat":
+        X_eval = None
+        n_eval = int(args.n_eval)
+    else:
+        X_eval = _make_X_eval(
+            n_eval=args.n_eval,
+            d=args.d,
+            eval_mode=args.eval_mode,
+            eval_seed=args.eval_seed,
+            structural_type=args.structural_type,
+            x_range=args.x_range,
+            noise_dist=args.noise_dist,
+            x0_min=args.x0_min,
+            x0_max=args.x0_max,
+            x_fill=args.x_eval_fill,
+        )
+        n_eval = int(X_eval.shape[0])
 
     # True propensity on X_eval from the DGP.
     warn_state: Dict[str, bool] = {}
@@ -858,9 +919,11 @@ if __name__ == "__main__":
     prop_true_fn = data_eval.get("propensity_true")
     if prop_true_fn is None:
         raise RuntimeError("generate_data(...) did not return propensity_true.")
-    e_true_eval = np.asarray(prop_true_fn(X_eval), dtype=np.float32).reshape(-1)
-    if e_true_eval.shape[0] != n_eval:
-        raise RuntimeError(f"propensity_true returned shape {e_true_eval.shape}, expected ({n_eval},).")
+    e_true_eval: Optional[np.ndarray] = None
+    if X_eval is not None:
+        e_true_eval = np.asarray(prop_true_fn(X_eval), dtype=np.float32).reshape(-1)
+        if e_true_eval.shape[0] != n_eval:
+            raise RuntimeError(f"propensity_true returned shape {e_true_eval.shape}, expected ({n_eval},).")
 
     dual_net_config = {
         "hidden_sizes": (64, 64),
@@ -924,66 +987,76 @@ if __name__ == "__main__":
     oracle_fit_config["batch_size"] = int(args.oracle_batch_size)
     config_timer.__exit__(None, None, None)
 
-    with StepTimer("oracle setup", use_tqdm=False, enabled=timing_enabled):
-        # Oracle bounds and propensity (near-truth)
-        oracle_seed = int(args.oracle_seed) if args.oracle_seed >= 0 else int(args.base_seed)
-        print("[Oracle] Oracle-A only (Oracle-B disabled/removed).")
-        print("Oracle estimator is being computed...")
-        data_oracle = _call_generate_data_compat(
-            n=int(args.n_oracle),
-            d=args.d,
-            seed=oracle_seed,
-            structural_type=args.structural_type,
-            x_range=args.x_range,
-            noise_dist=args.noise_dist,
-            _warn_state=warn_state,
-        )
-        X_oracle = np.asarray(data_oracle["X"], dtype=np.float32)
-        A_oracle = np.asarray(data_oracle["A"], dtype=np.float32)
-        Y_oracle = np.asarray(data_oracle["Y"], dtype=np.float32)
-
-        prop_true_oracle_fn = data_oracle.get("propensity_true")
-        if prop_true_oracle_fn is None:
-            raise RuntimeError("generate_data(...) did not return propensity_true for oracle data.")
-        e_true_oracle_train = np.asarray(prop_true_oracle_fn(X_oracle), dtype=np.float32).reshape(-1)
-        if e_true_oracle_train.shape[0] != X_oracle.shape[0]:
-            raise RuntimeError(
-                f"propensity_true returned shape {e_true_oracle_train.shape}, expected ({X_oracle.shape[0]},)."
+    oracle_seed = int(args.oracle_seed) if args.oracle_seed >= 0 else int(args.base_seed)
+    U_oracle: Dict[str, np.ndarray] = {
+        div: np.full((n_eval,), np.nan, dtype=np.float32) for div in div_list
+    }
+    e_oracle: Optional[np.ndarray] = None
+    if args.eval_mode == "grid_ehat":
+        print("[Oracle] Skipped: eval_mode=grid_ehat builds X_eval per replicate.")
+    else:
+        with StepTimer("oracle setup", use_tqdm=False, enabled=timing_enabled):
+            # Oracle bounds and propensity (near-truth)
+            if X_eval is None or e_true_eval is None:
+                raise RuntimeError("X_eval/e_true_eval required for oracle computation.")
+            print("[Oracle] Oracle-A only (Oracle-B disabled/removed).")
+            print("Oracle estimator is being computed...")
+            data_oracle = _call_generate_data_compat(
+                n=int(args.n_oracle),
+                d=args.d,
+                seed=oracle_seed,
+                structural_type=args.structural_type,
+                x_range=args.x_range,
+                noise_dist=args.noise_dist,
+                _warn_state=warn_state,
             )
-        print("[ORACLE] using true propensity for training and eval; no propensity model trained")
-        prop_cache_oracle = None
-        assert prop_cache_oracle is None
+            X_oracle = np.asarray(data_oracle["X"], dtype=np.float32)
+            A_oracle = np.asarray(data_oracle["A"], dtype=np.float32)
+            Y_oracle = np.asarray(data_oracle["Y"], dtype=np.float32)
 
-        print(
-            "Fitting oracle bounds..."
-            f" (batch_size={oracle_fit_config['batch_size']}, num_epochs={oracle_fit_config['num_epochs']})"
-        )
-        oracle_bounds = _fit_bounds_for_divs(
-            DebiasedCausalBoundEstimator,
-            div_list,
-            base_divs,
-            X_oracle,
-            A_oracle,
-            Y_oracle,
-            X_eval,
-            dual_net_config,
-            oracle_fit_config,
-            seed=oracle_seed,
-            propensity_model=propensity_model,
-            m_model=m_model,
-            prop_cache=None,
-            e_train_true=e_true_oracle_train,
-            e_eval=e_true_eval,
-            progress_prefix="[oracle]",
-            timing_label="oracle",
-            timing=timing_enabled,
-            timing_detail=timing_detail,
-            use_tqdm=False,
-        )
-        U_oracle = {div: oracle_bounds[div][1] for div in div_list}
-        e_oracle = e_true_eval
-        print("Oracle estimator completed.")
+            prop_true_oracle_fn = data_oracle.get("propensity_true")
+            if prop_true_oracle_fn is None:
+                raise RuntimeError("generate_data(...) did not return propensity_true for oracle data.")
+            e_true_oracle_train = np.asarray(prop_true_oracle_fn(X_oracle), dtype=np.float32).reshape(-1)
+            if e_true_oracle_train.shape[0] != X_oracle.shape[0]:
+                raise RuntimeError(
+                    f"propensity_true returned shape {e_true_oracle_train.shape}, expected ({X_oracle.shape[0]},)."
+                )
+            print("[ORACLE] using true propensity for training and eval; no propensity model trained")
+            prop_cache_oracle = None
+            assert prop_cache_oracle is None
 
+            print(
+                "Fitting oracle bounds..."
+                f" (batch_size={oracle_fit_config['batch_size']}, num_epochs={oracle_fit_config['num_epochs']})"
+            )
+            oracle_bounds = _fit_bounds_for_divs(
+                DebiasedCausalBoundEstimator,
+                div_list,
+                base_divs,
+                X_oracle,
+                A_oracle,
+                Y_oracle,
+                X_eval,
+                dual_net_config,
+                oracle_fit_config,
+                seed=oracle_seed,
+                propensity_model=propensity_model,
+                m_model=m_model,
+                prop_cache=None,
+                e_train_true=e_true_oracle_train,
+                e_eval=e_true_eval,
+                progress_prefix="[oracle]",
+                timing_label="oracle",
+                timing=timing_enabled,
+                timing_detail=timing_detail,
+                use_tqdm=False,
+            )
+            U_oracle = {div: oracle_bounds[div][1] for div in div_list}
+            e_oracle = e_true_eval
+            print("Oracle estimator completed.")
+
+    X_eval_reference: Optional[np.ndarray] = X_eval
     replicate_rows: List[Dict[str, Any]] = []
     seeds_used: List[int] = []
 
@@ -1016,7 +1089,6 @@ if __name__ == "__main__":
                 X_all = X_all[perm]
                 A_all = A_all[perm]
                 Y_all = Y_all[perm]
-            theta_eval = np.asarray(gt_fn(1, X_eval), dtype=np.float32).reshape(-1)
             for idx_n, n in enumerate(n_list):
                 print(f"[VariantB] rep={j} using prefix n={n}")
                 hash_n = stable_hash_n(n) % 100000
@@ -1056,10 +1128,22 @@ if __name__ == "__main__":
                             enabled=args.propensity_noise,
                             seed=seed_propensity_noise,
                         )
+                        X_eval_use, e_true_eval_use = _resolve_eval_set(
+                            args.eval_mode,
+                            X_eval,
+                            X,
+                            prop_cache,
+                            prop_true_fn,
+                            n_eval,
+                        )
+                        if X_eval_reference is None:
+                            X_eval_reference = np.asarray(X_eval_use, dtype=np.float32)
+                        theta_eval = np.asarray(gt_fn(1, X_eval_use), dtype=np.float32).reshape(-1)
+                        e_oracle_use = e_oracle if e_oracle is not None else e_true_eval_use
 
-                        e_hat = _predict_propensity_mean(prop_cache["models"], X_eval, fit_config["eps_propensity"])
-                        prop_rmse = _rmse(e_hat, e_oracle)
-                        prop_rmse_true = _rmse(e_hat, e_true_eval)
+                        e_hat = _predict_propensity_mean(prop_cache["models"], X_eval_use, fit_config["eps_propensity"])
+                        prop_rmse = _rmse(e_hat, e_oracle_use)
+                        prop_rmse_true = _rmse(e_hat, e_true_eval_use)
 
                     with StepTimer("debiased bounds", use_tqdm=True, enabled=timing_enabled):
                         deb_bounds = _fit_bounds_for_divs(
@@ -1069,7 +1153,7 @@ if __name__ == "__main__":
                             X,
                             A,
                             Y,
-                            X_eval,
+                            X_eval_use,
                             dual_net_config,
                             fit_config,
                             seed=seed_propensity_fit,
@@ -1091,7 +1175,7 @@ if __name__ == "__main__":
                             X,
                             A,
                             Y,
-                            X_eval,
+                            X_eval_use,
                             dual_net_config,
                             fit_config,
                             seed=seed_propensity_fit,
@@ -1208,7 +1292,6 @@ if __name__ == "__main__":
                     X = np.asarray(data["X"], dtype=np.float32)
                     A = np.asarray(data["A"], dtype=np.float32)
                     Y = np.asarray(data["Y"], dtype=np.float32)
-                    theta_eval = np.asarray(data["GroundTruth"](1, X_eval), dtype=np.float32).reshape(-1)
 
                 with StepTimer("nuisance fits", use_tqdm=True, enabled=timing_enabled):
                     prop_cache = prefit_propensity_cache(
@@ -1229,9 +1312,22 @@ if __name__ == "__main__":
                         seed=seed_tr,
                     )
 
-                    e_hat = _predict_propensity_mean(prop_cache["models"], X_eval, fit_config["eps_propensity"])
-                    prop_rmse = _rmse(e_hat, e_oracle)
-                    prop_rmse_true = _rmse(e_hat, e_true_eval)
+                    X_eval_use, e_true_eval_use = _resolve_eval_set(
+                        args.eval_mode,
+                        X_eval,
+                        X,
+                        prop_cache,
+                        prop_true_fn,
+                        n_eval,
+                    )
+                    if X_eval_reference is None:
+                        X_eval_reference = np.asarray(X_eval_use, dtype=np.float32)
+                    theta_eval = np.asarray(data["GroundTruth"](1, X_eval_use), dtype=np.float32).reshape(-1)
+                    e_oracle_use = e_oracle if e_oracle is not None else e_true_eval_use
+
+                    e_hat = _predict_propensity_mean(prop_cache["models"], X_eval_use, fit_config["eps_propensity"])
+                    prop_rmse = _rmse(e_hat, e_oracle_use)
+                    prop_rmse_true = _rmse(e_hat, e_true_eval_use)
 
                 with StepTimer("debiased bounds", use_tqdm=True, enabled=timing_enabled):
                     deb_bounds = _fit_bounds_for_divs(
@@ -1241,7 +1337,7 @@ if __name__ == "__main__":
                         X,
                         A,
                         Y,
-                        X_eval,
+                        X_eval_use,
                         dual_net_config,
                         fit_config,
                         seed=seed_tr,
@@ -1263,7 +1359,7 @@ if __name__ == "__main__":
                         X,
                         A,
                         Y,
-                        X_eval,
+                        X_eval_use,
                         dual_net_config,
                         fit_config,
                         seed=seed_tr,
@@ -1801,13 +1897,17 @@ if __name__ == "__main__":
         default_files = runs[0]["files"]
 
     with StepTimer("save artifacts", use_tqdm=False, enabled=timing_enabled):
+        x_eval_note = None
+        if args.eval_mode == "grid_ehat":
+            x_eval_note = "grid_ehat uses per-replicate eval sets; X_eval stores the first grid."
         artifacts = {
             "args": vars(args),
             "fit_config": fit_config,
             "dual_net_config": dual_net_config,
             "divergences": div_list,
             "seeds": seeds_used,
-            "X_eval": X_eval,
+            "X_eval": X_eval_reference,
+            "X_eval_note": x_eval_note,
             "oracle_U": U_oracle,
             "oracle_e": e_oracle,
             "oracle_seed": oracle_seed,
