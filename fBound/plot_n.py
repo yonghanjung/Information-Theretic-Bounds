@@ -187,68 +187,6 @@ class NaiveCausalBoundEstimator(DebiasedCausalBoundEstimator):
         return loss, valid_count, total_count
 
 
-# Order-statistic aggregation helpers
-# -------------------------
-def kth(lower_values, upper_values, k):
-    lowers = np.asarray(lower_values, dtype=np.float64).reshape(-1)
-    uppers = np.asarray(upper_values, dtype=np.float64).reshape(-1)
-
-    if lowers.size != uppers.size:
-        raise ValueError("lower_values and upper_values must have same length.")
-    n = int(lowers.size)
-    if n == 0:
-        return float("nan"), float("nan")
-
-    # clamp k into [1, n]
-    k = int(k)
-    if k < 1:
-        k = 1
-    if k > n:
-        k = n
-
-    # Precompute sorted order-statistics once (O(n log n)).
-    # This is simpler and avoids repeated partition work in recursion.
-    lowers_sorted = np.sort(lowers)
-    uppers_sorted = np.sort(uppers)
-
-    while k >= 1:
-        l_k = float(lowers_sorted[k - 1])       # k-th smallest
-        u_k = float(uppers_sorted[n - k])       # (n-k+1)-th smallest
-
-        if l_k <= u_k:
-            return l_k, u_k
-        k -= 1
-
-    # No feasible k found
-    return float("nan"), float("nan")
-
-
-def tight_kth(lower_values, upper_values, k=None):
-    lowers = np.asarray(lower_values, dtype=np.float64).reshape(-1)
-    uppers = np.asarray(upper_values, dtype=np.float64).reshape(-1)
-    if lowers.size != uppers.size:
-        raise ValueError("tight_kth requires lower_values and upper_values to have same length.")
-    n = int(lowers.size)
-    if n == 0:
-        return float("nan"), float("nan")
-    if k is None:
-        k = n
-    k = int(k)
-    if k < 1:
-        raise ValueError("k must be >= 1.")
-    if k > n:
-        k = n
-
-    last = (float("nan"), float("nan"))
-    while k >= 1:
-        l_k, u_k = kth(lowers, uppers, k)
-        last = (l_k, u_k)
-        if l_k <= u_k:
-            break
-        k -= 1
-    return last
-
-
 # -------------------------
 # Cluster aggregator (fast 1D partition search, no sklearn)
 # -------------------------
@@ -688,12 +626,18 @@ def _fit_bounds_for_divs(
                     lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
                     upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
                 k_val = int(args.kval) if args.kval is not None else int(lower_base.shape[0])
-                L = np.empty(lower_base.shape[1], dtype=np.float32)
-                U = np.empty(lower_base.shape[1], dtype=np.float32)
-                for i in range(lower_base.shape[1]):
-                    lo, up = kth(lower_base[:, i], upper_base[:, i], k_val)
-                    L[i] = np.float32(lo)
-                    U[i] = np.float32(up)
+                valid_up = np.isfinite(upper_base)
+                valid_lo = np.isfinite(lower_base)
+                agg = aggregate_endpointwise(
+                    lower_base,
+                    upper_base,
+                    valid_up,
+                    valid_lo,
+                    k_up=k_val,
+                    k_lo=k_val,
+                )
+                L = agg["lower"]
+                U = agg["upper"]
         elif div == "tight_kth":
             with StepTimer(
                 f"{prefix}aggregate tight_kth".strip(),
@@ -703,13 +647,18 @@ def _fit_bounds_for_divs(
                 if lower_base is None:
                     lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
                     upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
-                k_val = int(lower_base.shape[0])
-                L = np.empty(lower_base.shape[1], dtype=np.float32)
-                U = np.empty(lower_base.shape[1], dtype=np.float32)
-                for i in range(lower_base.shape[1]):
-                    lo, up = tight_kth(lower_base[:, i], upper_base[:, i], k=k_val)
-                    L[i] = np.float32(lo)
-                    U[i] = np.float32(up)
+                valid_up = np.isfinite(upper_base)
+                valid_lo = np.isfinite(lower_base)
+                agg = aggregate_endpointwise(
+                    lower_base,
+                    upper_base,
+                    valid_up,
+                    valid_lo,
+                    k_up=1,
+                    k_lo=1,
+                )
+                L = agg["lower"]
+                U = agg["upper"]
         else:
             with StepTimer(
                 f"{prefix}fit {div}".strip(),
