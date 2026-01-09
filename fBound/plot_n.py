@@ -792,6 +792,24 @@ if __name__ == "__main__":
     parser.add_argument("--score_alpha", type=float, default=0.05, help="Target shortfall alpha (target=1-alpha).")
 
     # Estimator controls
+    parser.add_argument(
+        "--early_stop_patience",
+        type=int,
+        default=10,
+        help="Early stopping patience (0 disables).",
+    )
+    parser.add_argument(
+        "--early_stop_min_delta",
+        type=float,
+        default=0.0,
+        help="Minimum validation loss improvement to reset early stopping.",
+    )
+    parser.add_argument(
+        "--early_stop_fraction",
+        type=float,
+        default=0.2,
+        help="Fraction of fold used for early-stopping validation.",
+    )
     parser.add_argument("--n_folds", type=int, default=2, help="CV folds.")
     parser.add_argument("--eps_propensity", type=float, default=1e-3, help="Propensity clipping.")
     parser.add_argument("--num_epochs", type=int, default=256, help="Dual net epochs.")
