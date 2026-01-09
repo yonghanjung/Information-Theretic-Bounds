@@ -37,6 +37,7 @@ from fbound.estimators.causal_bound import (
     prefit_propensity_cache,
 )
 from fbound.utils.data_generating import generate_data
+from fbound.utils.plotting import DIVERGENCE_COLOR_MAP
 
 from scipy.interpolate import UnivariateSpline
 from statsmodels.nonparametric.smoothers_lowess import lowess
@@ -989,15 +990,7 @@ def main() -> None:
                             )
 
                 if prop_grid is not None and width_stats:
-                    color_map = {
-                        "kth": "tab:cyan",
-                        "tight_kth": "tab:olive",
-                        "KL": "tab:green",
-                        "TV": "tab:red",
-                        "Hellinger": "tab:purple",
-                        "Chi2": "tab:brown",
-                        "JS": "tab:pink",
-                    }
+                    color_map = DIVERGENCE_COLOR_MAP
                     for stat_key in ("mean", "median"):
                         for with_ci in (True, False):
                             for smooth in (True, False):
@@ -1149,15 +1142,7 @@ def main() -> None:
         with StepTimer(f"plot ribbons ({axis_key})", use_tqdm=False, enabled=timing_enabled):
             # Plot
             plt.figure(figsize=(7.0, 4.0))
-            color_map = {
-                "kth": "tab:cyan",
-                "tight_kth": "tab:olive",
-                "KL": "tab:green",
-                "TV": "tab:red",
-                "Hellinger": "tab:purple",
-                "Chi2": "tab:brown",
-                "JS": "tab:pink",
-            }
+            color_map = DIVERGENCE_COLOR_MAP
             for res in aggregated_results:
                 if res["idx_plot"].size == 0:
                     continue

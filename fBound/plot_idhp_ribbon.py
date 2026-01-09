@@ -37,6 +37,7 @@ from fbound.estimators.causal_bound import (
     aggregate_endpointwise,
     prefit_propensity_cache,
 )
+from fbound.utils.plotting import DIVERGENCE_COLOR_MAP
 
 from scipy.interpolate import UnivariateSpline
 from statsmodels.nonparametric.smoothers_lowess import lowess
@@ -840,15 +841,7 @@ if __name__ == "__main__":
         with StepTimer(f"plot ribbons ({axis_key})", use_tqdm=False, enabled=timing_enabled):
             # Smoothed plot
             plt.figure(figsize=(7.0, 4.0))
-            color_map = {
-                "kth": "tab:cyan",
-                "tight_kth": "tab:olive",
-                "KL": "tab:green",
-                "TV": "tab:red",
-                "Hellinger": "tab:purple",
-                "Chi2": "tab:brown",
-                "JS": "tab:pink",
-            }
+            color_map = DIVERGENCE_COLOR_MAP
             for res in aggregated_results:
                 if res["idx_plot"].size == 0:
                     continue
@@ -884,15 +877,27 @@ if __name__ == "__main__":
 
             # Raw-only plot
             plt.figure(figsize=(7.0, 4.0))
-            label_raw = False
             for res in aggregated_results:
                 if res["idx_plot"].size == 0:
                     continue
                 c = color_map.get(res["div"], None)
-                lbl = f"{res['div']} bounds" if not label_raw else None
-                plt.plot(res["x_raw"], res["l_raw"], color=c, alpha=0.7, linewidth=1.0, label=lbl)
+                plt.fill_between(
+                    res["x_raw"],
+                    res["l_raw"],
+                    res["u_raw"],
+                    alpha=0.2,
+                    color=c,
+                    label=f"{res['div']} bounds",
+                )
+                plt.plot(
+                    res["x_raw"],
+                    res["l_raw"],
+                    color=c,
+                    alpha=0.7,
+                    linewidth=1.0,
+                    label=None,
+                )
                 plt.plot(res["x_raw"], res["u_raw"], color=c, alpha=0.7, linewidth=1.0)
-                label_raw = True
             if aggregated_results:
                 plt.plot(
                     aggregated_results[0]["x_raw"],

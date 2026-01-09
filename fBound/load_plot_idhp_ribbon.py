@@ -10,10 +10,19 @@ import json
 import os
 import pickle
 import re
+import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
+
+_ROOT = Path(__file__).resolve().parent
+_SRC = _ROOT / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+from fbound.utils.plotting import DIVERGENCE_COLOR_MAP
 
 BASE_NAME_X0 = "plot_idhp_ribbon"
 BASE_NAME_PROP = "plot_idhp_ribbon_propensity"
@@ -438,15 +447,7 @@ def _run_for_base(args: argparse.Namespace, base_name: str) -> bool:
         raise RuntimeError("Unable to construct aggregated results for plotting.")
 
     res = _select_result(aggregated_results, args.method)
-    color_map = {
-        "kth": "tab:cyan",
-        "tight_kth": "tab:olive",
-        "KL": "tab:green",
-        "TV": "tab:red",
-        "Hellinger": "tab:purple",
-        "Chi2": "tab:brown",
-        "JS": "tab:pink",
-    }
+    color_map = DIVERGENCE_COLOR_MAP
     method_name = str(res.get("div", "") or args.method or "")
     bound_label = f"{method_name} bounds" if method_name else "Bounds"
     color = color_map.get(method_name, "tab:blue")
