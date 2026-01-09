@@ -142,28 +142,49 @@ def phi_neg(y: torch.Tensor) -> torch.Tensor:
 # Naive estimator: omit debiasing correction term
 # -------------------------
 class NaiveCausalBoundEstimator(DebiasedCausalBoundEstimator):
-    def _debiased_loss_batch(self, X, A, Y, e1, e0, h_net, u_net):
+    def _debiased_loss_batch(
+        self,
+        X,
+        A,
+        Y,
+        e1,
+        e0,
+        h_net,
+        u_net,
+        domain_penalty_weight: float = 0.0,
+    ):
         ax = _concat_ax(A, X)
         h_ax = h_net(ax)
         u_ax = u_net(ax)
         h_ax = torch.clamp(h_ax, min=-self.dual_net_cfg.h_clip, max=self.dual_net_cfg.h_clip)
-        lam_ax = torch.exp(h_ax)
+        min_lambda = self.dual_net_cfg.lambda_min
+        if self.divergence.lambda_min_override is not None:
+            min_lambda = max(min_lambda, float(self.divergence.lambda_min_override))
+        lam_ax = torch.exp(h_ax).clamp(min=min_lambda)
 
         phi_y = self.phi(Y)
         t = (phi_y - u_ax) / lam_ax
-        g_star_val = self.divergence.g_star(t)
+        g_star_val, valid_mask = self.divergence.g_star_with_valid(t)
+        valid_mask = valid_mask & torch.isfinite(g_star_val) & torch.isfinite(t)
+        g_star_safe = torch.where(valid_mask, g_star_val, torch.zeros_like(g_star_val))
+        invalid_pen = (~valid_mask).float()
+        domain_pen = domain_penalty_weight * float(self.divergence.domain_penalty_scale) * (
+            self.divergence.domain_violation(t).pow(2) + invalid_pen
+        )
 
         eA = torch.where(A >= 0.5, e1, e0)
         eta = self.divergence.B_torch(eA)
 
-        main = lam_ax * (eta + g_star_val) + u_ax
+        main = lam_ax * (eta + g_star_safe) + u_ax + domain_pen
         loss = main.mean()
 
         if not torch.isfinite(loss):
             raise FloatingPointError(
                 f"Non-finite loss encountered (NAIVE). divergence={self.divergence.name}."
             )
-        return loss
+        valid_count = int(valid_mask.sum().item())
+        total_count = int(valid_mask.numel())
+        return loss, valid_count, total_count
 
 
 # Order-statistic aggregation helpers
