@@ -1598,17 +1598,44 @@ if __name__ == "__main__":
 
     def _plot_target(rows: List[Dict[str, Any]], fname: str) -> str:
         plt.figure(figsize=(7.2, 4.2))
+        any_plotted = False
         for div in div_list:
             sub = [row for row in rows if row["divergence"] == div]
-            xs = [row["n"] for row in sub]
-            yd = [row["err_up_debiased_center"] for row in sub]
-            yn = [row["err_up_naive_center"] for row in sub]
-            lo_d = [row["err_up_debiased_ci_low"] for row in sub]
-            hi_d = [row["err_up_debiased_ci_high"] for row in sub]
-            lo_n = [row["err_up_naive_ci_low"] for row in sub]
-            hi_n = [row["err_up_naive_ci_high"] for row in sub]
-            plt.errorbar(xs, yd, yerr=[np.subtract(yd, lo_d), np.subtract(hi_d, yd)], marker="o", linestyle="-", capsize=3, label=f"{div} debiased")
-            plt.errorbar(xs, yn, yerr=[np.subtract(yn, lo_n), np.subtract(hi_n, yn)], marker="o", linestyle="--", capsize=3, label=f"{div} naive")
+            xs = np.asarray([row["n"] for row in sub], dtype=float)
+            yd = np.asarray([row["err_up_debiased_center"] for row in sub], dtype=float)
+            yn = np.asarray([row["err_up_naive_center"] for row in sub], dtype=float)
+            lo_d = np.asarray([row["err_up_debiased_ci_low"] for row in sub], dtype=float)
+            hi_d = np.asarray([row["err_up_debiased_ci_high"] for row in sub], dtype=float)
+            lo_n = np.asarray([row["err_up_naive_ci_low"] for row in sub], dtype=float)
+            hi_n = np.asarray([row["err_up_naive_ci_high"] for row in sub], dtype=float)
+
+            mask_d = np.isfinite(xs) & np.isfinite(yd)
+            if np.any(mask_d):
+                yerr_d = [np.subtract(yd[mask_d], lo_d[mask_d]), np.subtract(hi_d[mask_d], yd[mask_d])]
+                plt.errorbar(xs[mask_d], yd[mask_d], yerr=yerr_d, marker="o", linestyle="-", capsize=3, label=f"{div} debiased")
+                any_plotted = True
+
+            mask_n = np.isfinite(xs) & np.isfinite(yn)
+            if np.any(mask_n):
+                yerr_n = [np.subtract(yn[mask_n], lo_n[mask_n]), np.subtract(hi_n[mask_n], yn[mask_n])]
+                plt.errorbar(xs[mask_n], yn[mask_n], yerr=yerr_n, marker="o", linestyle="--", capsize=3, label=f"{div} naive")
+                any_plotted = True
+
+        if not any_plotted:
+            xs_all = sorted({float(row["n"]) for row in rows if row.get("n") is not None})
+            if xs_all:
+                xmin = float(min(xs_all))
+                xmax = float(max(xs_all))
+                pad = 0.05 * (xmax - xmin) if xmax > xmin else 1.0
+                plt.xlim(xmin - pad, xmax + pad)
+            plt.text(
+                0.5,
+                0.5,
+                "Oracle error unavailable; target RMSE not plotted.",
+                ha="center",
+                va="center",
+                transform=plt.gca().transAxes,
+            )
         plt.xlabel("Sample size n")
         plt.ylabel("Target RMSE (upper bound)")
         plt.title(f"Target error vs n (struct={args.structural_type}, eval={args.eval_mode})")
