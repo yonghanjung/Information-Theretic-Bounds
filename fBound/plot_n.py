@@ -729,7 +729,6 @@ if __name__ == "__main__":
         help="Data-generating process type.",
     )
     parser.add_argument("--base_seed", type=int, default=12345, help="Base seed for training replicates.")
-    parser.add_argument("--variantB", action="store_true", default=True, help="Use Variant B nested datasets across n.")
     parser.add_argument("--shuffle_master", action="store_true", default=False, help="Shuffle master dataset per replicate.")
     parser.add_argument(
         "--no-shuffle_master",
@@ -1053,236 +1052,52 @@ if __name__ == "__main__":
 
     total_reps = len(n_list) * args.m
     print(f"Running {total_reps} replicate fits...")
-    if args.variantB:
-        n_list = sorted(n_list)
-        n_max = int(max(n_list))
-        for j in tqdm(range(args.m), desc="replicates", leave=False):
-            seed_mc = int(args.base_seed + j)
-            seed_perm = int(seed_mc + 777)
-            print(f"[VariantB] rep={j} seed_mc={seed_mc} n_max={n_max}")
-            print(f"[VariantB] rep={j} seed_perm={seed_perm} shuffle={args.shuffle_master}")
-            data_all = _call_generate_data_compat(
-                n=n_max,
-                d=args.d,
-                seed=seed_mc,
-                structural_type=args.structural_type,
-                x_range=args.x_range,
-                noise_dist=args.noise_dist,
-                _warn_state=warn_state,
-            )
-            X_all = np.asarray(data_all["X"], dtype=np.float32)
-            A_all = np.asarray(data_all["A"], dtype=np.float32)
-            Y_all = np.asarray(data_all["Y"], dtype=np.float32)
-            gt_fn = data_all["GroundTruth"]
-            if args.shuffle_master:
-                rng = np.random.default_rng(seed_perm)
-                perm = rng.permutation(n_max)
-                X_all = X_all[perm]
-                A_all = A_all[perm]
-                Y_all = Y_all[perm]
-            for idx_n, n in enumerate(n_list):
-                print(f"[VariantB] rep={j} using prefix n={n}")
-                hash_n = stable_hash_n(n) % 100000
-                seed_propensity_fit = int(seed_mc + hash_n)
-                seed_propensity_noise = int(seed_mc + 4242 + hash_n) if args.propensity_noise else float("nan")
-                seeds_used.append(seed_propensity_fit)
-                with StepTimer(f"replicate n={n} rep={j}", use_tqdm=True, enabled=timing_enabled):
-                    with StepTimer("data generation", use_tqdm=True, enabled=timing_enabled):
-                        X = X_all[:n]
-                        A = A_all[:n]
-                        Y = Y_all[:n]
-                        if args.debug_variantB:
-                            n_chk = min(50, int(n))
-                            chk_x = float(np.sum(X_all[:n_chk]))
-                            chk_a = float(np.sum(A_all[:n_chk]))
-                            chk_y = float(np.sum(Y_all[:n_chk]))
-                            print(
-                                f"[VariantB-CHK] rep={j} n={int(n)} "
-                                f"chkX50={chk_x:.6f} chkA50={chk_a:.6f} chkY50={chk_y:.6f}"
-                            )
-
-                    with StepTimer("nuisance fits", use_tqdm=True, enabled=timing_enabled):
-                        prop_cache = prefit_propensity_cache(
-                            X=X,
-                            A=A,
-                            propensity_model=propensity_model,
-                            propensity_config=fit_config["propensity_config"],
-                            n_folds=fit_config["n_folds"],
-                            seed=seed_propensity_fit,
-                            eps_propensity=fit_config["eps_propensity"],
-                        )
-                        prop_cache = _apply_propensity_noise(
-                            prop_cache,
-                            n=n,
-                            eps=fit_config["eps_propensity"],
-                            noise_beta=args.propensity_noise_beta,
-                            enabled=args.propensity_noise,
-                            seed=seed_propensity_noise,
-                        )
-                        X_eval_use, e_true_eval_use = _resolve_eval_set(
-                            args.eval_mode,
-                            X_eval,
-                            X,
-                            prop_cache,
-                            prop_true_fn,
-                            n_eval,
-                        )
-                        if X_eval_reference is None:
-                            X_eval_reference = np.asarray(X_eval_use, dtype=np.float32)
-                        theta_eval = np.asarray(gt_fn(1, X_eval_use), dtype=np.float32).reshape(-1)
-                        e_oracle_use = e_oracle if e_oracle is not None else e_true_eval_use
-
-                        e_hat = _predict_propensity_mean(prop_cache["models"], X_eval_use, fit_config["eps_propensity"])
-                        prop_rmse = _rmse(e_hat, e_oracle_use)
-                        prop_rmse_true = _rmse(e_hat, e_true_eval_use)
-
-                    with StepTimer("debiased bounds", use_tqdm=True, enabled=timing_enabled):
-                        deb_bounds = _fit_bounds_for_divs(
-                            DebiasedCausalBoundEstimator,
-                            div_list,
-                            base_divs,
-                            X,
-                            A,
-                            Y,
-                            X_eval_use,
-                            dual_net_config,
-                            fit_config,
-                            seed=seed_propensity_fit,
-                            propensity_model=propensity_model,
-                            m_model=m_model,
-                            prop_cache=prop_cache,
-                            e_eval=None,
-                            e_train_true=None,
-                            timing_label="debiased",
-                            timing=timing_enabled,
-                            timing_detail=timing_detail,
-                            use_tqdm=True,
-                        )
-                    with StepTimer("naive bounds", use_tqdm=True, enabled=timing_enabled):
-                        nai_bounds = _fit_bounds_for_divs(
-                            NaiveCausalBoundEstimator,
-                            div_list,
-                            base_divs,
-                            X,
-                            A,
-                            Y,
-                            X_eval_use,
-                            dual_net_config,
-                            fit_config,
-                            seed=seed_propensity_fit,
-                            propensity_model=propensity_model,
-                            m_model=m_model,
-                            prop_cache=prop_cache,
-                            e_eval=None,
-                            e_train_true=None,
-                            timing_label="naive",
-                            timing=timing_enabled,
-                            timing_detail=timing_detail,
-                            use_tqdm=True,
-                        )
-
-                    with StepTimer("metrics", use_tqdm=True, enabled=timing_enabled):
-                        for div in div_list:
-                            Ld, Ud = deb_bounds[div]
-                            Ln, Un = nai_bounds[div]
-
-                            width_d_raw = Ud - Ld
-                            width_n_raw = Un - Ln
-                            valid_d = np.isfinite(Ld) & np.isfinite(Ud) & (width_d_raw > 0)
-                            valid_n = np.isfinite(Ln) & np.isfinite(Un) & (width_n_raw > 0)
-
-                            v2_d = compute_v2_metrics(Ld, Ud, valid_d, theta_eval, args.width_stat, args.score_alpha)
-                            v2_n = compute_v2_metrics(Ln, Un, valid_n, theta_eval, args.width_stat, args.score_alpha)
-
-                            cov_d = float(v2_d["coverage_uncond"])
-                            cov_n = float(v2_n["coverage_uncond"])
-
-                            width_d_mean = float(np.nanmean(width_d_raw[valid_d])) if np.any(valid_d) else float("nan")
-                            width_d_median = float(np.nanmedian(width_d_raw[valid_d])) if np.any(valid_d) else float("nan")
-                            width_n_mean = float(np.nanmean(width_n_raw[valid_n])) if np.any(valid_n) else float("nan")
-                            width_n_median = float(np.nanmedian(width_n_raw[valid_n])) if np.any(valid_n) else float("nan")
-                            width_d = float(v2_d["width"])
-                            width_n = float(v2_n["width"])
-
-                            err_up_d = _rmse(Ud, U_oracle[div])
-                            err_up_n = _rmse(Un, U_oracle[div])
-
-                            score_d_mean = _score_penalized_width(width_d_mean, cov_d, args.score_lambda, args.score_alpha)
-                            score_d_median = _score_penalized_width(width_d_median, cov_d, args.score_lambda, args.score_alpha)
-                            score_n_mean = _score_penalized_width(width_n_mean, cov_n, args.score_lambda, args.score_alpha)
-                            score_n_median = _score_penalized_width(width_n_median, cov_n, args.score_lambda, args.score_alpha)
-                            score_d = float(v2_d["score"])
-                            score_n = float(v2_n["score"])
-
-                            replicate_rows.append(
-                                {
-                                    "divergence": div,
-                                    "n": int(n),
-                                    "rep": int(j),
-                                    "seed": int(seed_propensity_fit),
-                                    "seed_mc": seed_mc,
-                                    "seed_perm": seed_perm,
-                                    "seed_propensity_fit": seed_propensity_fit,
-                                    "seed_propensity_noise": seed_propensity_noise,
-                                    "propensity_rmse": prop_rmse,
-                                    "propensity_rmse_true": prop_rmse_true,
-                                    "err_up_debiased": err_up_d,
-                                    "err_up_naive": err_up_n,
-                                    "coverage_debiased": cov_d,
-                                    "coverage_naive": cov_n,
-                                    "coverage_uncond_debiased": float(v2_d["coverage_uncond"]),
-                                    "coverage_uncond_naive": float(v2_n["coverage_uncond"]),
-                                    "coverage_cond_debiased": float(v2_d["coverage_cond"]),
-                                    "coverage_cond_naive": float(v2_n["coverage_cond"]),
-                                    "width_debiased": width_d,
-                                    "width_debiased_mean": width_d_mean,
-                                    "width_debiased_median": width_d_median,
-                                    "width_naive": width_n,
-                                    "width_naive_mean": width_n_mean,
-                                    "width_naive_median": width_n_median,
-                                    "score_debiased": score_d,
-                                    "score_debiased_mean": score_d_mean,
-                                    "score_debiased_median": score_d_median,
-                                    "score_naive": score_n,
-                                    "score_naive_mean": score_n_mean,
-                                    "score_naive_median": score_n_median,
-                                    "valid_rate_debiased": float(v2_d["valid_rate"]),
-                                    "valid_rate_naive": float(v2_n["valid_rate"]),
-                                }
-                            )
-    else:
-        n_timer = None
-        current_n = None
-        for t in tqdm(range(total_reps), desc="replicates", leave=False):
-            idx_n = t // args.m
-            j = t % args.m
-            n = n_list[idx_n]
-            if n != current_n:
-                if n_timer is not None:
-                    n_timer.__exit__(None, None, None)
-                current_n = n
-                n_timer = StepTimer(f"n={n} loop", use_tqdm=True, enabled=timing_enabled)
-                n_timer.__enter__()
-            seed_tr = int(args.base_seed + 100000 * idx_n + j)
-            seed_mc = int(seed_tr)
-            seed_perm = float("nan")
-            seed_propensity_fit = int(seed_tr)
-            seed_propensity_noise = int(seed_tr) if args.propensity_noise else float("nan")
-            seeds_used.append(seed_tr)
+    n_list = sorted(n_list)
+    n_max = int(max(n_list))
+    for j in tqdm(range(args.m), desc="replicates", leave=False):
+        seed_mc = int(args.base_seed + j)
+        seed_perm = int(seed_mc + 777)
+        print(f"[VariantB] rep={j} seed_mc={seed_mc} n_max={n_max}")
+        print(f"[VariantB] rep={j} seed_perm={seed_perm} shuffle={args.shuffle_master}")
+        data_all = _call_generate_data_compat(
+            n=n_max,
+            d=args.d,
+            seed=seed_mc,
+            structural_type=args.structural_type,
+            x_range=args.x_range,
+            noise_dist=args.noise_dist,
+            _warn_state=warn_state,
+        )
+        X_all = np.asarray(data_all["X"], dtype=np.float32)
+        A_all = np.asarray(data_all["A"], dtype=np.float32)
+        Y_all = np.asarray(data_all["Y"], dtype=np.float32)
+        gt_fn = data_all["GroundTruth"]
+        if args.shuffle_master:
+            rng = np.random.default_rng(seed_perm)
+            perm = rng.permutation(n_max)
+            X_all = X_all[perm]
+            A_all = A_all[perm]
+            Y_all = Y_all[perm]
+        for idx_n, n in enumerate(n_list):
+            print(f"[VariantB] rep={j} using prefix n={n}")
+            hash_n = stable_hash_n(n) % 100000
+            seed_propensity_fit = int(seed_mc + hash_n)
+            seed_propensity_noise = int(seed_mc + 4242 + hash_n) if args.propensity_noise else float("nan")
+            seeds_used.append(seed_propensity_fit)
             with StepTimer(f"replicate n={n} rep={j}", use_tqdm=True, enabled=timing_enabled):
                 with StepTimer("data generation", use_tqdm=True, enabled=timing_enabled):
-                    data = _call_generate_data_compat(
-                        n=n,
-                        d=args.d,
-                        seed=seed_tr,
-                        structural_type=args.structural_type,
-                        x_range=args.x_range,
-                        noise_dist=args.noise_dist,
-                        _warn_state=warn_state,
-                    )
-                    X = np.asarray(data["X"], dtype=np.float32)
-                    A = np.asarray(data["A"], dtype=np.float32)
-                    Y = np.asarray(data["Y"], dtype=np.float32)
+                    X = X_all[:n]
+                    A = A_all[:n]
+                    Y = Y_all[:n]
+                    if args.debug_variantB:
+                        n_chk = min(50, int(n))
+                        chk_x = float(np.sum(X_all[:n_chk]))
+                        chk_a = float(np.sum(A_all[:n_chk]))
+                        chk_y = float(np.sum(Y_all[:n_chk]))
+                        print(
+                            f"[VariantB-CHK] rep={j} n={int(n)} "
+                            f"chkX50={chk_x:.6f} chkA50={chk_a:.6f} chkY50={chk_y:.6f}"
+                        )
 
                 with StepTimer("nuisance fits", use_tqdm=True, enabled=timing_enabled):
                     prop_cache = prefit_propensity_cache(
@@ -1291,7 +1106,7 @@ if __name__ == "__main__":
                         propensity_model=propensity_model,
                         propensity_config=fit_config["propensity_config"],
                         n_folds=fit_config["n_folds"],
-                        seed=seed_tr,
+                        seed=seed_propensity_fit,
                         eps_propensity=fit_config["eps_propensity"],
                     )
                     prop_cache = _apply_propensity_noise(
@@ -1300,9 +1115,8 @@ if __name__ == "__main__":
                         eps=fit_config["eps_propensity"],
                         noise_beta=args.propensity_noise_beta,
                         enabled=args.propensity_noise,
-                        seed=seed_tr,
+                        seed=seed_propensity_noise,
                     )
-
                     X_eval_use, e_true_eval_use = _resolve_eval_set(
                         args.eval_mode,
                         X_eval,
@@ -1313,7 +1127,7 @@ if __name__ == "__main__":
                     )
                     if X_eval_reference is None:
                         X_eval_reference = np.asarray(X_eval_use, dtype=np.float32)
-                    theta_eval = np.asarray(data["GroundTruth"](1, X_eval_use), dtype=np.float32).reshape(-1)
+                    theta_eval = np.asarray(gt_fn(1, X_eval_use), dtype=np.float32).reshape(-1)
                     e_oracle_use = e_oracle if e_oracle is not None else e_true_eval_use
 
                     e_hat = _predict_propensity_mean(prop_cache["models"], X_eval_use, fit_config["eps_propensity"])
@@ -1331,7 +1145,7 @@ if __name__ == "__main__":
                         X_eval_use,
                         dual_net_config,
                         fit_config,
-                        seed=seed_tr,
+                        seed=seed_propensity_fit,
                         propensity_model=propensity_model,
                         m_model=m_model,
                         prop_cache=prop_cache,
@@ -1353,7 +1167,7 @@ if __name__ == "__main__":
                         X_eval_use,
                         dual_net_config,
                         fit_config,
-                        seed=seed_tr,
+                        seed=seed_propensity_fit,
                         propensity_model=propensity_model,
                         m_model=m_model,
                         prop_cache=prop_cache,
@@ -1403,7 +1217,7 @@ if __name__ == "__main__":
                                 "divergence": div,
                                 "n": int(n),
                                 "rep": int(j),
-                                "seed": int(seed_tr),
+                                "seed": int(seed_propensity_fit),
                                 "seed_mc": seed_mc,
                                 "seed_perm": seed_perm,
                                 "seed_propensity_fit": seed_propensity_fit,
@@ -1434,8 +1248,6 @@ if __name__ == "__main__":
                                 "valid_rate_naive": float(v2_n["valid_rate"]),
                             }
                         )
-        if n_timer is not None:
-            n_timer.__exit__(None, None, None)
 
     def _build_summary(stat_within: str, stat_over_reps: str) -> List[Dict[str, Any]]:
         summary_rows: List[Dict[str, Any]] = []
