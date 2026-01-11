@@ -821,8 +821,8 @@ if __name__ == "__main__":
     parser.add_argument("--oracle_seed", type=int, default=-1, help="Seed for oracle data (negative uses base_seed).")
     parser.add_argument("--oracle_propensity_n_estimators", type=int, default=0, help="Override oracle propensity n_estimators.")
     parser.add_argument("--oracle_propensity_max_depth", type=int, default=0, help="Override oracle propensity max_depth.")
-    parser.add_argument("--oracle_num_epochs", type=int, default=200, help="Oracle num_epochs (default 50).")
-    parser.add_argument("--oracle_batch_size", type=int, default=256, help="Oracle batch_size (default 1024).")
+    parser.add_argument("--oracle_num_epochs", type=int, default=0, help="Oracle num_epochs (<=0 uses --num_epochs).")
+    parser.add_argument("--oracle_batch_size", type=int, default=0, help="Oracle batch_size (<=0 uses default batch rule).")
 
     # Slow propensity noise (optional)
     parser.add_argument("--propensity_noise", action="store_true", help="Add N(n^{-beta}, n^{-beta}) noise to propensity.")
@@ -975,7 +975,7 @@ if __name__ == "__main__":
     oracle_fit_config["propensity_config"] = oracle_prop_cfg
     oracle_num_epochs = int(args.num_epochs) if args.oracle_num_epochs <= 0 else int(args.oracle_num_epochs)
     oracle_fit_config["num_epochs"] = oracle_num_epochs
-    oracle_fit_config["batch_size"] = int(args.oracle_batch_size)
+    oracle_fit_config["batch_size"] = None if args.oracle_batch_size <= 0 else int(args.oracle_batch_size)
     config_timer.__exit__(None, None, None)
 
     oracle_seed = int(args.oracle_seed) if args.oracle_seed >= 0 else int(args.base_seed)
