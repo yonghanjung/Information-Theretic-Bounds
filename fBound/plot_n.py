@@ -973,7 +973,8 @@ if __name__ == "__main__":
     if args.oracle_propensity_max_depth > 0:
         oracle_prop_cfg["max_depth"] = int(args.oracle_propensity_max_depth)
     oracle_fit_config["propensity_config"] = oracle_prop_cfg
-    oracle_fit_config["num_epochs"] = int(args.oracle_num_epochs)
+    oracle_num_epochs = int(args.num_epochs) if args.oracle_num_epochs <= 0 else int(args.oracle_num_epochs)
+    oracle_fit_config["num_epochs"] = oracle_num_epochs
     oracle_fit_config["batch_size"] = int(args.oracle_batch_size)
     config_timer.__exit__(None, None, None)
 
