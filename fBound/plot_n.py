@@ -1463,15 +1463,23 @@ if __name__ == "__main__":
         plt.figure(figsize=(7.2, 4.2))
         for div in div_list:
             sub = [row for row in rows if row["divergence"] == div]
-            xs = [row["n"] for row in sub]
-            yd = [row[f"{key_d}_center"] for row in sub]
-            yn = [row[f"{key_n}_center"] for row in sub]
-            lo_d = [row[f"{key_d}_ci_low"] for row in sub]
-            hi_d = [row[f"{key_d}_ci_high"] for row in sub]
-            lo_n = [row[f"{key_n}_ci_low"] for row in sub]
-            hi_n = [row[f"{key_n}_ci_high"] for row in sub]
-            plt.errorbar(xs, yd, yerr=[np.subtract(yd, lo_d), np.subtract(hi_d, yd)], marker="o", linestyle="-", capsize=3, label=f"{div} debiased")
-            plt.errorbar(xs, yn, yerr=[np.subtract(yn, lo_n), np.subtract(hi_n, yn)], marker="o", linestyle="--", capsize=3, label=f"{div} naive")
+            xs = np.asarray([row["n"] for row in sub], dtype=float)
+            yd = np.asarray([row[f"{key_d}_center"] for row in sub], dtype=float)
+            yn = np.asarray([row[f"{key_n}_center"] for row in sub], dtype=float)
+            lo_d = np.asarray([row[f"{key_d}_ci_low"] for row in sub], dtype=float)
+            hi_d = np.asarray([row[f"{key_d}_ci_high"] for row in sub], dtype=float)
+            lo_n = np.asarray([row[f"{key_n}_ci_low"] for row in sub], dtype=float)
+            hi_n = np.asarray([row[f"{key_n}_ci_high"] for row in sub], dtype=float)
+
+            mask_d = np.isfinite(xs) & np.isfinite(yd) & np.isfinite(lo_d) & np.isfinite(hi_d) & (lo_d <= yd) & (yd <= hi_d)
+            if np.any(mask_d):
+                yerr_d = [np.subtract(yd[mask_d], lo_d[mask_d]), np.subtract(hi_d[mask_d], yd[mask_d])]
+                plt.errorbar(xs[mask_d], yd[mask_d], yerr=yerr_d, marker="o", linestyle="-", capsize=3, label=f"{div} debiased")
+
+            mask_n = np.isfinite(xs) & np.isfinite(yn) & np.isfinite(lo_n) & np.isfinite(hi_n) & (lo_n <= yn) & (yn <= hi_n)
+            if np.any(mask_n):
+                yerr_n = [np.subtract(yn[mask_n], lo_n[mask_n]), np.subtract(hi_n[mask_n], yn[mask_n])]
+                plt.errorbar(xs[mask_n], yn[mask_n], yerr=yerr_n, marker="o", linestyle="--", capsize=3, label=f"{div} naive")
         plt.xlabel("Sample size n")
         plt.ylabel(ylabel)
         plt.title(title)
