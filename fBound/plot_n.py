@@ -322,10 +322,14 @@ def compute_v2_metrics(
     valid_mask = np.asarray(valid, dtype=bool)
     base_valid = np.isfinite(L) & np.isfinite(U) & np.isfinite(theta_eval) & (width > 0)
     valid_mask = valid_mask & base_valid
-    covered = valid_mask & (theta_eval >= L) & (theta_eval <= U)
+    interval_covers = (theta_eval >= L) & (theta_eval <= U)
+    covered = valid_mask & interval_covers
 
-    coverage_uncond = np.mean((Ud >= theta_eval) & (Ld <= theta_eval))
-    coverage_cond = np.mean((Ud >= theta_eval) & (Ld <= theta_eval))
+    coverage_uncond = float(np.mean(interval_covers))
+    if np.any(valid_mask):
+        coverage_cond = float(np.mean(interval_covers[valid_mask]))
+    else:
+        coverage_cond = float("nan")
     valid_rate = float(np.mean(valid_mask))
     width_val = _stat_reduce(width[valid_mask], width_stat)
     score = _score_penalized_width(width_val, coverage_uncond, V2_SCORE_LAMBDA, alpha)
