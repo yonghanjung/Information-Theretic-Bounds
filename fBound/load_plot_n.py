@@ -67,7 +67,7 @@ def _parse_plot_name(raw: str) -> Tuple[str, str, str, str]:
     name, ext = os.path.splitext(base_name)
     ext = ext.lstrip(".") or "png"
     pat = re.compile(
-        r"^(?P<base>.+?)(?:_(?P<stat>stat_(?:mean|median)_over_(?:mean|median)))?_(?P<stamp>\\d{8}_\\d{6})$"
+        r"^(?P<base>.+?)(?:_(?P<stat>stat_(?:mean|median)_over_(?:mean|median)))?_(?P<stamp>\d{8}_\d{6})$"
     )
     match = pat.match(name)
     if not match:
@@ -387,10 +387,7 @@ def main() -> None:
     args = parser.parse_args()
 
     base_name, stat_suffix, stamp, ext = _parse_plot_name(args.plot_name)
-    if not args.outdir:
-        outdir = os.path.dirname(args.plot_name) or args.artifact_dir
-    else:
-        outdir = args.outdir
+    outdir = args.outdir if args.outdir else args.artifact_dir
     os.makedirs(outdir, exist_ok=True)
 
     artifact_path = args.artifact
@@ -457,7 +454,10 @@ def main() -> None:
             args_meta=args_meta,
         )
 
-    output_path = os.path.join(outdir, f"{base_name}_{stat_suffix + '_' if stat_suffix else ''}{stamp}.{ext}")
+    output_path = os.path.join(
+        outdir,
+        f"loaded_{base_name}_{stat_suffix + '_' if stat_suffix else ''}{stamp}.{ext}",
+    )
 
     plot_specs = {
         "plot_n_debiased_nuisance": lambda: _plot_nuisance(
