@@ -332,14 +332,14 @@ def compute_v2_metrics(
         coverage_cond = float("nan")
     valid_rate = float(np.mean(valid_mask))
     width_val = _stat_reduce(width[valid_mask], width_stat)
-    score = _score_penalized_width(width_val, coverage_uncond, V2_SCORE_LAMBDA, alpha)
+    penalized_width = _score_penalized_width(width_val, coverage_uncond, V2_SCORE_LAMBDA, alpha)
 
     return {
         "coverage_uncond": coverage_uncond,
         "coverage_cond": coverage_cond,
         "width": width_val,
         "valid_rate": valid_rate,
-        "score": score,
+        "score": penalized_width,
     }
 
 
@@ -796,7 +796,7 @@ if __name__ == "__main__":
     parser.add_argument("--ci_alpha", type=float, default=0.05, help="Two-sided quantile band level across replicates.")
 
     # Score
-    parser.add_argument("--score_lambda", type=float, default=10.0, help="Penalty lambda for score.")
+    parser.add_argument("--score_lambda", type=float, default=10.0, help="Penalty lambda for penalized width.")
     parser.add_argument("--score_alpha", type=float, default=0.05, help="Target shortfall alpha (target=1-alpha).")
 
     # Estimator controls
@@ -1643,8 +1643,8 @@ if __name__ == "__main__":
             summary_rows,
             "score_debiased",
             "score_naive",
-            ylabel="Score (penalized width)",
-            title=f"Score vs n (struct={args.structural_type}, eval={args.eval_mode})",
+            ylabel="Penalized width",
+            title=f"Penalized width vs n (struct={args.structural_type}, eval={args.eval_mode})",
             fname=f"{score_base}_{suffix}" if suffix else score_base,
         )
 
@@ -1700,8 +1700,8 @@ if __name__ == "__main__":
             summary_rows,
             "score_debiased",
             "score_naive",
-            ylabel="Score (penalized width)",
-            title=f"Score vs n (struct={args.structural_type}, eval={args.eval_mode})",
+            ylabel="Penalized width",
+            title=f"Penalized width vs n (struct={args.structural_type}, eval={args.eval_mode})",
             fname=score_v2_base,
         )
         covu_only_fig = _plot_metric_single(
