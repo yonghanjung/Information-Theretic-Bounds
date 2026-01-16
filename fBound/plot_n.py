@@ -557,7 +557,12 @@ def _predict_propensity_mean(models: List[Any], X: np.ndarray, eps: float) -> np
 
 
 def _rmse(a: np.ndarray, b: np.ndarray) -> float:
-    diff = np.asarray(a, dtype=np.float64) - np.asarray(b, dtype=np.float64)
+    arr_a = np.asarray(a, dtype=np.float64)
+    arr_b = np.asarray(b, dtype=np.float64)
+    mask = np.isfinite(arr_a) & np.isfinite(arr_b)
+    if not np.any(mask):
+        return float("nan")
+    diff = arr_a[mask] - arr_b[mask]
     return float(np.sqrt(np.mean(diff ** 2)))
 
 
