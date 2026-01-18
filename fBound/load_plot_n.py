@@ -189,6 +189,7 @@ def _plot_nuisance(
     structural_type: str,
     eval_mode: str,
     no_errorbar: bool,
+    style: Dict[str, Any],
     path: str,
 ) -> None:
     plt.figure(figsize=(7.2, 4.2))
@@ -214,10 +215,14 @@ def _plot_nuisance(
             plt.plot(xs_ref, ref_025, linestyle="--", color="gray", label="n^-1/4 ref")
             plt.plot(xs_ref, ref_05, linestyle=":", color="gray", label="n^-1/2 ref")
 
-    plt.xlabel("Sample size n")
-    plt.ylabel("Propensity RMSE")
-    plt.title(f"Nuisance error vs n (struct={structural_type}, eval={eval_mode})")
-    plt.legend()
+    _apply_axes_style(
+        plt.gca(),
+        title=style["title"] or f"Nuisance error vs n (struct={structural_type}, eval={eval_mode})",
+        xlabel=style["xlabel"] or "Sample size n",
+        ylabel=style["ylabel"] or "Propensity RMSE",
+        style=style,
+    )
+    _apply_legend(plt.gca(), style)
     plt.tight_layout()
     plt.savefig(path, dpi=200)
     plt.close()
@@ -230,6 +235,7 @@ def _plot_target(
     structural_type: str,
     eval_mode: str,
     no_errorbar: bool,
+    style: Dict[str, Any],
     path: str,
 ) -> None:
     plt.figure(figsize=(7.2, 4.2))
@@ -264,10 +270,14 @@ def _plot_target(
                 capsize=3,
                 label=f"{div} naive",
             )
-    plt.xlabel("Sample size n")
-    plt.ylabel("Target RMSE (upper bound)")
-    plt.title(f"Target error vs n (struct={structural_type}, eval={eval_mode})")
-    plt.legend()
+    _apply_axes_style(
+        plt.gca(),
+        title=style["title"] or f"Target error vs n (struct={structural_type}, eval={eval_mode})",
+        xlabel=style["xlabel"] or "Sample size n",
+        ylabel=style["ylabel"] or "Target RMSE (upper bound)",
+        style=style,
+    )
+    _apply_legend(plt.gca(), style)
     plt.tight_layout()
     plt.savefig(path, dpi=200)
     plt.close()
@@ -282,6 +292,7 @@ def _plot_metric(
     ylabel: str,
     title: str,
     no_errorbar: bool,
+    style: Dict[str, Any],
     path: str,
 ) -> None:
     plt.figure(figsize=(7.2, 4.2))
@@ -316,10 +327,14 @@ def _plot_metric(
                 capsize=3,
                 label=f"{div} naive",
             )
-    plt.xlabel("Sample size n")
-    plt.ylabel(ylabel)
-    plt.title(title)
-    plt.legend()
+    _apply_axes_style(
+        plt.gca(),
+        title=style["title"] or title,
+        xlabel=style["xlabel"] or "Sample size n",
+        ylabel=style["ylabel"] or ylabel,
+        style=style,
+    )
+    _apply_legend(plt.gca(), style)
     plt.tight_layout()
     plt.savefig(path, dpi=200)
     plt.close()
@@ -332,6 +347,7 @@ def _plot_metric_single(
     key_d: str,
     ylabel: str,
     title: str,
+    style: Dict[str, Any],
     path: str,
 ) -> None:
     plt.figure(figsize=(7.2, 4.2))
@@ -350,13 +366,51 @@ def _plot_metric_single(
             capsize=3,
             label=f"{div} debiased",
         )
-    plt.xlabel("Sample size n")
-    plt.ylabel(ylabel)
-    plt.title(title)
-    plt.legend()
+    _apply_axes_style(
+        plt.gca(),
+        title=style["title"] or title,
+        xlabel=style["xlabel"] or "Sample size n",
+        ylabel=style["ylabel"] or ylabel,
+        style=style,
+    )
+    _apply_legend(plt.gca(), style)
     plt.tight_layout()
     plt.savefig(path, dpi=200)
     plt.close()
+
+
+def _apply_axes_style(ax, *, title: str, xlabel: str, ylabel: str, style: Dict[str, Any]) -> None:
+    title_size = style.get("title_size")
+    label_size = style.get("label_size")
+    tick_size = style.get("tick_size")
+    if title:
+        if title_size is None:
+            ax.set_title(title)
+        else:
+            ax.set_title(title, fontsize=title_size)
+    if xlabel:
+        if label_size is None:
+            ax.set_xlabel(xlabel)
+        else:
+            ax.set_xlabel(xlabel, fontsize=label_size)
+    if ylabel:
+        if label_size is None:
+            ax.set_ylabel(ylabel)
+        else:
+            ax.set_ylabel(ylabel, fontsize=label_size)
+    if tick_size is not None:
+        ax.tick_params(axis="both", labelsize=tick_size)
+
+
+def _apply_legend(ax, style: Dict[str, Any]) -> None:
+    if not style.get("legend", True):
+        return
+    legend_loc = style.get("legend_loc") or "best"
+    legend_size = style.get("legend_size")
+    if legend_size is None:
+        ax.legend(loc=legend_loc)
+    else:
+        ax.legend(loc=legend_loc, fontsize=legend_size)
 
 
 def main() -> None:
@@ -373,6 +427,16 @@ def main() -> None:
     parser.add_argument("--artifact_dir", type=str, default="experiments", help="Directory containing artifacts.")
     parser.add_argument("--outdir", type=str, default="", help="Output directory for the redrawn plot.")
     parser.add_argument("--no_errorbar", action="store_true", help="Disable error bars.")
+    parser.add_argument("--title", type=str, default="", help="Override plot title.")
+    parser.add_argument("--xlabel", type=str, default="", help="Override x-axis label.")
+    parser.add_argument("--ylabel", type=str, default="", help="Override y-axis label.")
+    parser.add_argument("--title_size", type=float, default=0.0, help="Title font size (0 disables).")
+    parser.add_argument("--label_size", type=float, default=0.0, help="Axis label font size (0 disables).")
+    parser.add_argument("--tick_size", type=float, default=0.0, help="Tick label font size (0 disables).")
+    parser.add_argument("--legend", dest="legend", action="store_true", default=True, help="Show legend.")
+    parser.add_argument("--no-legend", dest="legend", action="store_false", help="Hide legend.")
+    parser.add_argument("--legend_loc", type=str, default="best", help="Legend location (matplotlib loc).")
+    parser.add_argument("--legend_size", type=float, default=0.0, help="Legend font size (0 disables).")
 
     parser.add_argument("--divergence", type=str, default="", help="Override divergences list.")
     parser.add_argument("--n_list", type=str, default="", help="Override n_list as comma-separated integers.")
@@ -387,6 +451,20 @@ def main() -> None:
     args = parser.parse_args()
 
     base_name, stat_suffix, stamp, ext = _parse_plot_name(args.plot_name)
+    title_override = args.title.strip() or None
+    xlabel_override = args.xlabel.strip() or None
+    ylabel_override = args.ylabel.strip() or None
+    style = {
+        "title": title_override,
+        "xlabel": xlabel_override,
+        "ylabel": ylabel_override,
+        "title_size": args.title_size if args.title_size > 0 else None,
+        "label_size": args.label_size if args.label_size > 0 else None,
+        "tick_size": args.tick_size if args.tick_size > 0 else None,
+        "legend": bool(args.legend),
+        "legend_loc": args.legend_loc,
+        "legend_size": args.legend_size if args.legend_size > 0 else None,
+    }
     outdir = args.outdir if args.outdir else args.artifact_dir
     os.makedirs(outdir, exist_ok=True)
 
@@ -466,6 +544,7 @@ def main() -> None:
             structural_type=structural_type,
             eval_mode=eval_mode,
             no_errorbar=args.no_errorbar,
+            style=style,
             path=output_path,
         ),
         "plot_n_debiased_target": lambda: _plot_target(
@@ -474,6 +553,7 @@ def main() -> None:
             structural_type=structural_type,
             eval_mode=eval_mode,
             no_errorbar=args.no_errorbar,
+            style=style,
             path=output_path,
         ),
         "plot_n_debiased_width": lambda: _plot_metric(
@@ -484,6 +564,7 @@ def main() -> None:
             ylabel="Width",
             title=f"Width vs n (struct={structural_type}, eval={eval_mode})",
             no_errorbar=args.no_errorbar,
+            style=style,
             path=output_path,
         ),
         "plot_n_debiased_coverage": lambda: _plot_metric(
@@ -494,6 +575,7 @@ def main() -> None:
             ylabel="Coverage",
             title=f"Coverage vs n (struct={structural_type}, eval={eval_mode})",
             no_errorbar=args.no_errorbar,
+            style=style,
             path=output_path,
         ),
         "plot_n_debiased_score": lambda: _plot_metric(
@@ -504,6 +586,7 @@ def main() -> None:
             ylabel="Penalized width",
             title=f"Penalized width vs n (struct={structural_type}, eval={eval_mode})",
             no_errorbar=args.no_errorbar,
+            style=style,
             path=output_path,
         ),
         "plot_n_coverage_uncond_debiased_vs_naive": lambda: _plot_metric(
@@ -514,6 +597,7 @@ def main() -> None:
             ylabel="Coverage (unconditional)",
             title=f"Coverage (unconditional) vs n (struct={structural_type}, eval={eval_mode})",
             no_errorbar=args.no_errorbar,
+            style=style,
             path=output_path,
         ),
         "plot_n_coverage_cond_debiased_vs_naive": lambda: _plot_metric(
@@ -524,6 +608,7 @@ def main() -> None:
             ylabel="Coverage (conditional on valid)",
             title=f"Coverage (conditional) vs n (struct={structural_type}, eval={eval_mode})",
             no_errorbar=args.no_errorbar,
+            style=style,
             path=output_path,
         ),
         "plot_n_valid_rate_debiased_vs_naive": lambda: _plot_metric(
@@ -534,6 +619,7 @@ def main() -> None:
             ylabel="Valid rate",
             title=f"Valid rate vs n (struct={structural_type}, eval={eval_mode})",
             no_errorbar=args.no_errorbar,
+            style=style,
             path=output_path,
         ),
         "plot_n_width_debiased_vs_naive": lambda: _plot_metric(
@@ -544,6 +630,7 @@ def main() -> None:
             ylabel="Width",
             title=f"Width vs n (struct={structural_type}, eval={eval_mode})",
             no_errorbar=args.no_errorbar,
+            style=style,
             path=output_path,
         ),
         "plot_n_score_debiased_vs_naive": lambda: _plot_metric(
@@ -554,6 +641,7 @@ def main() -> None:
             ylabel="Penalized width",
             title=f"Penalized width vs n (struct={structural_type}, eval={eval_mode})",
             no_errorbar=args.no_errorbar,
+            style=style,
             path=output_path,
         ),
         "plot_n_coverage_uncond_debiased_only": lambda: _plot_metric_single(
@@ -565,6 +653,7 @@ def main() -> None:
                 f"Coverage (unconditional) vs n (debiased only; "
                 f"struct={structural_type}, eval={eval_mode})"
             ),
+            style=style,
             path=output_path,
         ),
         "plot_n_width_debiased_only": lambda: _plot_metric_single(
@@ -573,6 +662,7 @@ def main() -> None:
             key_d="width_debiased",
             ylabel="Width",
             title=f"Width vs n (debiased only; struct={structural_type}, eval={eval_mode})",
+            style=style,
             path=output_path,
         ),
     }
