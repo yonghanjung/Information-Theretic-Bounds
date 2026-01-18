@@ -430,6 +430,8 @@ def main() -> None:
     parser.add_argument("--title", type=str, default="", help="Override plot title.")
     parser.add_argument("--xlabel", type=str, default="", help="Override x-axis label.")
     parser.add_argument("--ylabel", type=str, default="", help="Override y-axis label.")
+    parser.add_argument("--xtick_title", type=str, default="", help="Alias for --xlabel.")
+    parser.add_argument("--ytick_title", type=str, default="", help="Alias for --ylabel.")
     parser.add_argument("--title_size", type=float, default=0.0, help="Title font size (0 disables).")
     parser.add_argument("--label_size", type=float, default=0.0, help="Axis label font size (0 disables).")
     parser.add_argument("--tick_size", type=float, default=0.0, help="Tick label font size (0 disables).")
@@ -452,8 +454,8 @@ def main() -> None:
 
     base_name, stat_suffix, stamp, ext = _parse_plot_name(args.plot_name)
     title_override = args.title.strip() or None
-    xlabel_override = args.xlabel.strip() or None
-    ylabel_override = args.ylabel.strip() or None
+    xlabel_override = args.xlabel.strip() or args.xtick_title.strip() or None
+    ylabel_override = args.ylabel.strip() or args.ytick_title.strip() or None
     style = {
         "title": title_override,
         "xlabel": xlabel_override,

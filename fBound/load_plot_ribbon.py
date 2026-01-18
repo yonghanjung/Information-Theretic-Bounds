@@ -237,6 +237,7 @@ def _plot_width_by_propensity(
     smooth: bool,
     smooth_cfg: Dict[str, Any],
     title: str,
+    xlabel: str,
     ylabel: str,
     tick_labelsize: float,
     label_size: Optional[float],
@@ -302,15 +303,17 @@ def _plot_width_by_propensity(
 
     ax.tick_params(axis="both", which="major", labelsize=float(tick_labelsize))
     if show_xlabel:
+        x_label = xlabel or "e(A=1|X)"
         if label_size is None:
-            ax.set_xlabel("e(A=1|X)")
+            ax.set_xlabel(x_label)
         else:
-            ax.set_xlabel("e(A=1|X)", fontsize=label_size)
+            ax.set_xlabel(x_label, fontsize=label_size)
     if show_ylabel:
+        y_label = ylabel or ""
         if label_size is None:
-            ax.set_ylabel(ylabel)
+            ax.set_ylabel(y_label)
         else:
-            ax.set_ylabel(ylabel, fontsize=label_size)
+            ax.set_ylabel(y_label, fontsize=label_size)
     if show_title:
         if title_size is None:
             ax.set_title(title)
@@ -331,6 +334,8 @@ def _plot_coverage_by_propensity(
     smooth: bool,
     smooth_cfg: Dict[str, Any],
     title: str,
+    xlabel: str,
+    ylabel: str,
     tick_labelsize: float,
     label_size: Optional[float],
     title_size: Optional[float],
@@ -371,15 +376,17 @@ def _plot_coverage_by_propensity(
 
     ax.tick_params(axis="both", which="major", labelsize=float(tick_labelsize))
     if show_xlabel:
+        x_label = xlabel or "e(A=1|X)"
         if label_size is None:
-            ax.set_xlabel("e(A=1|X)")
+            ax.set_xlabel(x_label)
         else:
-            ax.set_xlabel("e(A=1|X)", fontsize=label_size)
+            ax.set_xlabel(x_label, fontsize=label_size)
     if show_ylabel:
+        y_label = ylabel or "Coverage rate"
         if label_size is None:
-            ax.set_ylabel("Coverage rate")
+            ax.set_ylabel(y_label)
         else:
-            ax.set_ylabel("Coverage rate", fontsize=label_size)
+            ax.set_ylabel(y_label, fontsize=label_size)
     if cov_key == "coverage_median":
         ax.set_ylim(0.0, 1.25)
         ax.axhline(1.0, color="gray", linestyle="--", linewidth=1.0, alpha=0.8)
@@ -505,6 +512,10 @@ if __name__ == "__main__":
     parser.add_argument("--outdir", type=str, default="", help="Output directory for plot.")
     parser.add_argument("--plot_raw_points", action="store_true", help="Overlay raw lower/upper points.")
     parser.add_argument("--title", type=str, default="", help="Override plot title.")
+    parser.add_argument("--xlabel", type=str, default="", help="Override x-axis label.")
+    parser.add_argument("--ylabel", type=str, default="", help="Override y-axis label.")
+    parser.add_argument("--xtick_title", type=str, default="", help="Alias for --xlabel.")
+    parser.add_argument("--ytick_title", type=str, default="", help="Alias for --ylabel.")
     parser.add_argument("--no_xlabel", action="store_true", help="Disable x-axis label.")
     parser.add_argument("--no_ylabel", action="store_true", help="Disable y-axis label.")
     parser.add_argument("--no_title", action="store_true", help="Disable plot title.")
@@ -619,6 +630,8 @@ if __name__ == "__main__":
         show_legend = not args.no_legend
         label_size = float(args.label_size) if args.label_size and args.label_size > 0 else None
         title_size = float(args.title_size) if args.title_size and args.title_size > 0 else None
+        xlabel_override = args.xlabel.strip() or args.xtick_title.strip()
+        ylabel_override = args.ylabel.strip() or args.ytick_title.strip()
 
         figsize_default = (7.0, 4.0)
         figsize = figsize_default if args.figsize == "11,6" else _parse_figsize(args.figsize, figsize_default)
@@ -628,7 +641,7 @@ if __name__ == "__main__":
             stat_key = plot_spec["stat"]
             with_ci = bool(plot_spec.get("with_ci", False))
             smooth = bool(plot_spec.get("smooth", False))
-            ylabel = "Median interval width" if stat_key == "median" else "Mean interval width"
+            ylabel = ylabel_override or ("Median interval width" if stat_key == "median" else "Mean interval width")
             default_title = (
                 "Median width vs propensity by divergence"
                 if stat_key == "median"
@@ -643,6 +656,7 @@ if __name__ == "__main__":
                 smooth=smooth,
                 smooth_cfg=smooth_cfg,
                 title=title,
+                xlabel=xlabel_override,
                 ylabel=ylabel,
                 tick_labelsize=args.tick_labelsize,
                 label_size=label_size,
@@ -659,6 +673,7 @@ if __name__ == "__main__":
             cov_label = "Mean coverage" if plot_spec["stat"] == "mean" else "Median coverage"
             default_title = f"{cov_label} vs propensity by divergence"
             title = args.title or default_title
+            ylabel = ylabel_override or "Coverage rate"
             _plot_coverage_by_propensity(
                 width_stats=width_stats,
                 div_list=div_list,
@@ -666,6 +681,8 @@ if __name__ == "__main__":
                 smooth=bool(plot_spec.get("smooth", False)),
                 smooth_cfg=smooth_cfg,
                 title=title,
+                xlabel=xlabel_override,
+                ylabel=ylabel,
                 tick_labelsize=args.tick_labelsize,
                 label_size=label_size,
                 title_size=title_size,
@@ -746,90 +763,138 @@ if __name__ == "__main__":
         except Exception:
             raise ValueError("--ylim must be in the format 'min,max'.")
 
-    res = aggregated_results[0]
-    x_s = np.asarray(res.get("x_s", []), dtype=np.float32)
-    l_s = np.asarray(res.get("l_s", []), dtype=np.float32)
-    u_s = np.asarray(res.get("u_s", []), dtype=np.float32)
-    theta_s = np.asarray(res.get("theta_s", []), dtype=np.float32)
-    mask = np.isfinite(x_s) & np.isfinite(l_s) & np.isfinite(u_s) & np.isfinite(theta_s)
-    if x_min is not None and x_max is not None:
-        mask &= (x_s >= x_min) & (x_s <= x_max)
-    if y_min is not None and y_max is not None:
-        mask &= (l_s >= y_min) & (l_s <= y_max)
-        mask &= (u_s >= y_min) & (u_s <= y_max)
-        mask &= (theta_s >= y_min) & (theta_s <= y_max)
-    x_s = x_s[mask]
-    l_s = l_s[mask]
-    u_s = u_s[mask]
-    theta_s = theta_s[mask]
-    if x_s.size == 0:
-        raise RuntimeError("No curve data found to plot.")
+    div_order: List[str] = div_list or [res.get("div", "") for res in aggregated_results]
+    div_to_res = {res.get("div", ""): res for res in aggregated_results}
+    ordered_results = [div_to_res[d] for d in div_order if d in div_to_res]
+    extras = [res for res in aggregated_results if res.get("div", "") not in div_order]
+    ordered_results.extend(extras)
 
     try:
         fig_w, fig_h = [float(x.strip()) for x in args.figsize.split(",")]
     except Exception:
         raise ValueError("--figsize must be in the format 'width,height' (e.g., 11,6).")
     plt.figure(figsize=(fig_w, fig_h))
-    plt.plot(
-        x_s,
-        l_s,
-        color="tab:blue",
-        linewidth=3.0,
-        linestyle="-",
-        label="Lower bound",
-        zorder=3,
-    )
-    plt.plot(
-        x_s,
-        u_s,
-        color="tab:green",
-        linewidth=3.0,
-        linestyle="-",
-        label="Upper bound",
-        zorder=3,
-    )
-    plt.plot(
-        x_s,
-        theta_s,
-        color="k",
-        linewidth=2.8,
-        linestyle="--",
-        label="Ground truth",
-        zorder=4,
-    )
+    ax = plt.gca()
+    color_map = DIVERGENCE_COLOR_MAP
 
-    plt.grid(True, alpha=0.25)
-    plt.tick_params(axis="both", which="major", labelsize=float(args.tick_labelsize))
+    raw_by_method = _group_by_method(raw_rows) if (args.plot_raw_points and raw_rows) else {}
+
+    for res in ordered_results:
+        div = res.get("div", "")
+        x_s = np.asarray(res.get("x_s", []), dtype=np.float32)
+        l_s = np.asarray(res.get("l_s", []), dtype=np.float32)
+        u_s = np.asarray(res.get("u_s", []), dtype=np.float32)
+        mask = np.isfinite(x_s) & np.isfinite(l_s) & np.isfinite(u_s)
+        if x_min is not None and x_max is not None:
+            mask &= (x_s >= x_min) & (x_s <= x_max)
+        if y_min is not None and y_max is not None:
+            mask &= (l_s >= y_min) & (l_s <= y_max)
+            mask &= (u_s >= y_min) & (u_s <= y_max)
+        if not np.any(mask):
+            continue
+        c = color_map.get(div, None)
+        ax.fill_between(
+            x_s[mask],
+            l_s[mask],
+            u_s[mask],
+            alpha=0.2,
+            color=c,
+            label=f"{div} bounds",
+        )
+        ax.plot(x_s[mask], l_s[mask], color=c, alpha=0.7, linewidth=1.0)
+        ax.plot(x_s[mask], u_s[mask], color=c, alpha=0.7, linewidth=1.0)
+
+        if args.plot_raw_points:
+            if "x_raw" in res:
+                x_raw = np.asarray(res.get("x_raw", []), dtype=np.float32)
+                l_raw = np.asarray(res.get("l_raw", []), dtype=np.float32)
+                u_raw = np.asarray(res.get("u_raw", []), dtype=np.float32)
+                raw_mask = np.isfinite(x_raw) & np.isfinite(l_raw) & np.isfinite(u_raw)
+                if x_min is not None and x_max is not None:
+                    raw_mask &= (x_raw >= x_min) & (x_raw <= x_max)
+                if y_min is not None and y_max is not None:
+                    raw_mask &= (l_raw >= y_min) & (l_raw <= y_max)
+                    raw_mask &= (u_raw >= y_min) & (u_raw <= y_max)
+                if np.any(raw_mask):
+                    ax.scatter(x_raw[raw_mask], l_raw[raw_mask], color=c, alpha=0.2, s=8)
+                    ax.scatter(x_raw[raw_mask], u_raw[raw_mask], color=c, alpha=0.2, s=8)
+            elif raw_by_method and div in raw_by_method:
+                rows = raw_by_method[div]
+                x_raw = np.asarray([r.get("X0", np.nan) for r in rows], dtype=np.float32)
+                l_raw = np.asarray([r.get("lower", np.nan) for r in rows], dtype=np.float32)
+                u_raw = np.asarray([r.get("upper", np.nan) for r in rows], dtype=np.float32)
+                raw_mask = np.isfinite(x_raw) & np.isfinite(l_raw) & np.isfinite(u_raw)
+                if x_min is not None and x_max is not None:
+                    raw_mask &= (x_raw >= x_min) & (x_raw <= x_max)
+                if y_min is not None and y_max is not None:
+                    raw_mask &= (l_raw >= y_min) & (l_raw <= y_max)
+                    raw_mask &= (u_raw >= y_min) & (u_raw <= y_max)
+                if np.any(raw_mask):
+                    ax.scatter(x_raw[raw_mask], l_raw[raw_mask], color=c, alpha=0.2, s=8)
+                    ax.scatter(x_raw[raw_mask], u_raw[raw_mask], color=c, alpha=0.2, s=8)
+
+    truth_res = None
+    for res in ordered_results:
+        theta_s = np.asarray(res.get("theta_s", []), dtype=np.float32)
+        if np.isfinite(theta_s).any():
+            truth_res = res
+            break
+    if truth_res is not None:
+        x_t = np.asarray(truth_res.get("x_s", []), dtype=np.float32)
+        theta_t = np.asarray(truth_res.get("theta_s", []), dtype=np.float32)
+        mask_t = np.isfinite(x_t) & np.isfinite(theta_t)
+        if x_min is not None and x_max is not None:
+            mask_t &= (x_t >= x_min) & (x_t <= x_max)
+        if y_min is not None and y_max is not None:
+            mask_t &= (theta_t >= y_min) & (theta_t <= y_max)
+        if np.any(mask_t):
+            ax.plot(
+                x_t[mask_t],
+                theta_t[mask_t],
+                color="k",
+                linewidth=1.5,
+                label="Truth",
+            )
+
+    ax.tick_params(axis="both", which="major", labelsize=float(args.tick_labelsize))
     label_size = float(args.label_size) if args.label_size and args.label_size > 0 else None
     title_size = float(args.title_size) if args.title_size and args.title_size > 0 else None
+    xlabel_override = args.xlabel.strip() or args.xtick_title.strip()
+    ylabel_override = args.ylabel.strip() or args.ytick_title.strip()
+    axis_label = "e(A=1|X)" if plot_spec.get("is_propensity", False) else "X0"
+    default_ylabel = "E[Y | do(A=1), X]"
     if not args.no_xlabel:
+        x_label = xlabel_override or axis_label
         if label_size is None:
-            plt.xlabel("Baseline covariate x0")
+            ax.set_xlabel(x_label)
         else:
-            plt.xlabel("Baseline covariate x0", fontsize=label_size)
+            ax.set_xlabel(x_label, fontsize=label_size)
     if not args.no_ylabel:
-        ylabel = r"Conditional causal mean $\mu_1(x_0)=\mathbb{E}[Y\mid \mathrm{do}(A=1),X_0=x_0]$"
+        y_label = ylabel_override or default_ylabel
         if label_size is None:
-            plt.ylabel(ylabel)
+            ax.set_ylabel(y_label)
         else:
-            plt.ylabel(ylabel, fontsize=label_size)
+            ax.set_ylabel(y_label, fontsize=label_size)
     if not args.no_title:
         if args.title:
             title = args.title
         else:
-            title = "Conditional causal mean vs. baseline covariate: bounds track the true curve"
+            divs_str = ",".join(div_order) if div_order else ",".join([res.get("div", "") for res in ordered_results])
+            title = (
+                f"Causal bounds vs {axis_label} (stat={stat_label}, divs={divs_str}, struct={struct_label})"
+            )
         if title_size is None:
-            plt.title(title)
+            ax.set_title(title)
         else:
-            plt.title(title, fontsize=title_size)
+            ax.set_title(title, fontsize=title_size)
     if not args.no_legend:
-        plt.legend(frameon=True)
+        ax.legend()
 
     if x_min is not None and x_max is not None:
-        plt.xlim(x_min, x_max)
+        ax.set_xlim(x_min, x_max)
 
     if y_min is not None and y_max is not None:
-        plt.ylim(y_min, y_max)
+        ax.set_ylim(y_min, y_max)
     plt.tight_layout()
 
     os.makedirs(outdir, exist_ok=True)
