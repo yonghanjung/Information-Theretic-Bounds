@@ -185,10 +185,16 @@ if __name__ == "__main__":
         else:
             raise ValueError(f"--plot_name did not include a timestamp: {args.plot_name}")
     if args.plot_name and not args.smoothed_table:
-        args.smoothed_table = os.path.join(
-            args.artifact_dir or "experiments",
+        base_dir = args.artifact_dir or "experiments"
+        candidates = [
+            f"plot_x0_ribbon_mc_eval_fixed_propensity_smoothed_table_{args.stamp}.csv",
             f"plot_x0_ribbon_mc_eval_fixed_smoothed_table_{args.stamp}.csv",
-        )
+        ]
+        for fname in candidates:
+            candidate = os.path.join(base_dir, fname)
+            if os.path.exists(candidate):
+                args.smoothed_table = candidate
+                break
     inputs = _resolve_inputs(args)
 
     summary = inputs["summary"]
