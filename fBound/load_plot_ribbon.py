@@ -148,6 +148,15 @@ def _resolve_inputs(args: argparse.Namespace) -> Dict[str, Any]:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Reload plot_x0_ribbon_mc_eval_fixed artifacts and redraw plots.")
+    parser.add_argument(
+        "--plot_name",
+        type=str,
+        default="",
+        help=(
+            "Plot name like plot_x0_ribbon_mc_eval_fixed_propensity_width_mean_ci_smooth_YYYYMMDD_HHMMSS "
+            "(used to infer stamp and smoothed table)."
+        ),
+    )
     parser.add_argument("--stamp", type=str, default="", help="Timestamp suffix used in output filenames.")
     parser.add_argument("--artifact", type=str, default="", help="Path to artifacts pickle.")
     parser.add_argument("--summary", type=str, default="", help="Path to summary JSON.")
@@ -162,11 +171,24 @@ if __name__ == "__main__":
     parser.add_argument("--no_title", action="store_true", help="Disable plot title.")
     parser.add_argument("--no_legend", action="store_true", help="Disable legend.")
     parser.add_argument("--tick_labelsize", type=float, default=14.0, help="Tick label font size.")
+    parser.add_argument("--title_size", type=float, default=0.0, help="Title font size (0 disables).")
+    parser.add_argument("--label_size", type=float, default=0.0, help="Axis label font size (0 disables).")
     parser.add_argument("--figsize", type=str, default="11,6", help="Figure size as 'width,height'.")
     parser.add_argument("--xlim", type=str, default="", help="x-axis limits as 'min,max'.")
     parser.add_argument("--ylim", type=str, default="", help="y-axis limits as 'min,max'.")
 
     args = parser.parse_args()
+    if args.plot_name and not args.stamp:
+        m = re.search(r"(\\d{8}_\\d{6})$", args.plot_name)
+        if m:
+            args.stamp = m.group(1)
+        else:
+            raise ValueError(f"--plot_name did not include a timestamp: {args.plot_name}")
+    if args.plot_name and not args.smoothed_table:
+        args.smoothed_table = os.path.join(
+            args.artifact_dir or "experiments",
+            f"plot_x0_ribbon_mc_eval_fixed_smoothed_table_{args.stamp}.csv",
+        )
     inputs = _resolve_inputs(args)
 
     summary = inputs["summary"]
@@ -297,18 +319,28 @@ if __name__ == "__main__":
 
     plt.grid(True, alpha=0.25)
     plt.tick_params(axis="both", which="major", labelsize=float(args.tick_labelsize))
+    label_size = float(args.label_size) if args.label_size and args.label_size > 0 else None
+    title_size = float(args.title_size) if args.title_size and args.title_size > 0 else None
     if not args.no_xlabel:
-        plt.xlabel("Baseline covariate x0")
+        if label_size is None:
+            plt.xlabel("Baseline covariate x0")
+        else:
+            plt.xlabel("Baseline covariate x0", fontsize=label_size)
     if not args.no_ylabel:
-        plt.ylabel(
-            r"Conditional causal mean $\mu_1(x_0)=\mathbb{E}[Y\mid \mathrm{do}(A=1),X_0=x_0]$"
-        )
+        ylabel = r"Conditional causal mean $\mu_1(x_0)=\mathbb{E}[Y\mid \mathrm{do}(A=1),X_0=x_0]$"
+        if label_size is None:
+            plt.ylabel(ylabel)
+        else:
+            plt.ylabel(ylabel, fontsize=label_size)
     if not args.no_title:
         if args.title:
             title = args.title
         else:
             title = "Conditional causal mean vs. baseline covariate: bounds track the true curve"
-        plt.title(title)
+        if title_size is None:
+            plt.title(title)
+        else:
+            plt.title(title, fontsize=title_size)
     if not args.no_legend:
         plt.legend(frameon=True)
 
@@ -320,7 +352,10 @@ if __name__ == "__main__":
     plt.tight_layout()
 
     os.makedirs(outdir, exist_ok=True)
-    fig_path = _name_with_suffix(outdir, "load_plot_x0_ribbon_mc_eval_fixed", "png", stamp)
+    base_name = "load_plot_x0_ribbon_mc_eval_fixed"
+    if args.plot_name:
+        base_name = f"load_{os.path.basename(args.plot_name)}"
+    fig_path = _name_with_suffix(outdir, base_name, "png", stamp)
     plt.savefig(fig_path, dpi=220, bbox_inches="tight")
     plt.close()
     print(f"Saved plot to {fig_path}")
