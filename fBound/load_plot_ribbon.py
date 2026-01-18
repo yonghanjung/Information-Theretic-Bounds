@@ -179,7 +179,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     if args.plot_name and not args.stamp:
-        m = re.search(r"(\\d{8}_\\d{6})$", args.plot_name)
+        m = re.search(r"(\d{8}_\d{6})$", args.plot_name)
         if m:
             args.stamp = m.group(1)
         else:
