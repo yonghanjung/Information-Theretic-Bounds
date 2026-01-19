@@ -246,6 +246,8 @@ def _plot_width_by_propensity(
     show_ylabel: bool,
     show_title: bool,
     show_legend: bool,
+    legend_loc: str,
+    legend_size: Optional[float],
     figsize: tuple[float, float],
     out_path: str,
 ) -> None:
@@ -320,7 +322,10 @@ def _plot_width_by_propensity(
         else:
             ax.set_title(title, fontsize=title_size)
     if show_legend:
-        ax.legend()
+        if legend_size is None:
+            ax.legend(loc=legend_loc)
+        else:
+            ax.legend(loc=legend_loc, fontsize=legend_size)
     plt.tight_layout()
     plt.savefig(out_path, dpi=200)
     plt.close()
@@ -343,6 +348,8 @@ def _plot_coverage_by_propensity(
     show_ylabel: bool,
     show_title: bool,
     show_legend: bool,
+    legend_loc: str,
+    legend_size: Optional[float],
     figsize: tuple[float, float],
     out_path: str,
 ) -> None:
@@ -398,7 +405,10 @@ def _plot_coverage_by_propensity(
         else:
             ax.set_title(title, fontsize=title_size)
     if show_legend:
-        ax.legend()
+        if legend_size is None:
+            ax.legend(loc=legend_loc)
+        else:
+            ax.legend(loc=legend_loc, fontsize=legend_size)
     plt.tight_layout()
     plt.savefig(out_path, dpi=200)
     plt.close()
@@ -520,6 +530,8 @@ if __name__ == "__main__":
     parser.add_argument("--no_ylabel", action="store_true", help="Disable y-axis label.")
     parser.add_argument("--no_title", action="store_true", help="Disable plot title.")
     parser.add_argument("--no_legend", action="store_true", help="Disable legend.")
+    parser.add_argument("--legend_loc", type=str, default="best", help="Legend location (matplotlib loc).")
+    parser.add_argument("--legend_size", type=float, default=0.0, help="Legend font size (0 disables).")
     parser.add_argument("--tick_labelsize", type=float, default=14.0, help="Tick label font size.")
     parser.add_argument("--title_size", type=float, default=0.0, help="Title font size (0 disables).")
     parser.add_argument("--label_size", type=float, default=0.0, help="Axis label font size (0 disables).")
@@ -630,6 +642,8 @@ if __name__ == "__main__":
         show_legend = not args.no_legend
         label_size = float(args.label_size) if args.label_size and args.label_size > 0 else None
         title_size = float(args.title_size) if args.title_size and args.title_size > 0 else None
+        legend_size = float(args.legend_size) if args.legend_size and args.legend_size > 0 else None
+        legend_loc = args.legend_loc or "best"
         xlabel_override = args.xlabel.strip() or args.xtick_title.strip()
         ylabel_override = args.ylabel.strip() or args.ytick_title.strip()
 
@@ -665,6 +679,8 @@ if __name__ == "__main__":
                 show_ylabel=show_ylabel,
                 show_title=show_title,
                 show_legend=show_legend,
+                legend_loc=legend_loc,
+                legend_size=legend_size,
                 figsize=figsize,
                 out_path=out_path,
             )
@@ -690,6 +706,8 @@ if __name__ == "__main__":
                 show_ylabel=show_ylabel,
                 show_title=show_title,
                 show_legend=show_legend,
+                legend_loc=legend_loc,
+                legend_size=legend_size,
                 figsize=figsize,
                 out_path=out_path,
             )
@@ -859,6 +877,8 @@ if __name__ == "__main__":
     ax.tick_params(axis="both", which="major", labelsize=float(args.tick_labelsize))
     label_size = float(args.label_size) if args.label_size and args.label_size > 0 else None
     title_size = float(args.title_size) if args.title_size and args.title_size > 0 else None
+    legend_size = float(args.legend_size) if args.legend_size and args.legend_size > 0 else None
+    legend_loc = args.legend_loc or "best"
     xlabel_override = args.xlabel.strip() or args.xtick_title.strip()
     ylabel_override = args.ylabel.strip() or args.ytick_title.strip()
     axis_label = "e(A=1|X)" if plot_spec.get("is_propensity", False) else "X0"
@@ -888,7 +908,10 @@ if __name__ == "__main__":
         else:
             ax.set_title(title, fontsize=title_size)
     if not args.no_legend:
-        ax.legend()
+        if legend_size is None:
+            ax.legend(loc=legend_loc)
+        else:
+            ax.legend(loc=legend_loc, fontsize=legend_size)
 
     if x_min is not None and x_max is not None:
         ax.set_xlim(x_min, x_max)
