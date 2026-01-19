@@ -245,8 +245,8 @@ def _plot_target(
         yd = [row["err_up_debiased_center"] for row in sub]
         yn = [row["err_up_naive_center"] for row in sub]
         if no_errorbar:
-            plt.plot(xs, yd, marker="o", linestyle="-", label=f"{div} debiased")
-            plt.plot(xs, yn, marker="o", linestyle="--", label=f"{div} naive")
+            plt.plot(xs, yd, marker="o", linestyle="-", label=f"{div}_debiased")
+            plt.plot(xs, yn, marker="o", linestyle="--", label=f"{div}_non-debiased")
         else:
             lo_d = [row["err_up_debiased_ci_low"] for row in sub]
             hi_d = [row["err_up_debiased_ci_high"] for row in sub]
@@ -259,7 +259,7 @@ def _plot_target(
                 marker="o",
                 linestyle="-",
                 capsize=3,
-                label=f"{div} debiased",
+                label=f"{div}_debiased",
             )
             plt.errorbar(
                 xs,
@@ -268,7 +268,7 @@ def _plot_target(
                 marker="o",
                 linestyle="--",
                 capsize=3,
-                label=f"{div} naive",
+                label=f"{div}_non-debiased",
             )
     _apply_axes_style(
         plt.gca(),
@@ -302,8 +302,8 @@ def _plot_metric(
         yd = [row[f"{key_d}_center"] for row in sub]
         yn = [row[f"{key_n}_center"] for row in sub]
         if no_errorbar:
-            plt.plot(xs, yd, marker="o", linestyle="-", label=f"{div} debiased")
-            plt.plot(xs, yn, marker="o", linestyle="--", label=f"{div} naive")
+            plt.plot(xs, yd, marker="o", linestyle="-", label=f"{div}_debiased")
+            plt.plot(xs, yn, marker="o", linestyle="--", label=f"{div}_non-debiased")
         else:
             lo_d = [row[f"{key_d}_ci_low"] for row in sub]
             hi_d = [row[f"{key_d}_ci_high"] for row in sub]
@@ -316,7 +316,7 @@ def _plot_metric(
                 marker="o",
                 linestyle="-",
                 capsize=3,
-                label=f"{div} debiased",
+                label=f"{div}_debiased",
             )
             plt.errorbar(
                 xs,
@@ -325,7 +325,7 @@ def _plot_metric(
                 marker="o",
                 linestyle="--",
                 capsize=3,
-                label=f"{div} naive",
+                label=f"{div}_non-debiased",
             )
     _apply_axes_style(
         plt.gca(),
@@ -364,7 +364,7 @@ def _plot_metric_single(
             marker="o",
             linestyle="-",
             capsize=3,
-            label=f"{div} debiased",
+            label=f"{div}_debiased",
         )
     _apply_axes_style(
         plt.gca(),
