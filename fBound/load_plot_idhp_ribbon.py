@@ -196,7 +196,7 @@ def main() -> None:
     )
     parser.add_argument("--artifact", type=str, default="", help="Path to plot_idhp_ribbon_*_artifacts_*.pkl")
     parser.add_argument("--artifact_dir", type=str, default="experiments", help="Directory containing artifacts.")
-    parser.add_argument("--outdir", type=str, default="", help="Output directory for the redrawn plot.")
+    parser.add_argument("--outdir", type=str, default="experiments", help="Output directory for the redrawn plot.")
     parser.add_argument("--title", type=str, default="", help="Override plot title.")
     parser.add_argument("--xlabel", type=str, default="", help="Override x-axis label.")
     parser.add_argument("--ylabel", type=str, default="", help="Override y-axis label.")
@@ -244,7 +244,7 @@ def main() -> None:
         "legend_loc": args.legend_loc,
         "legend_size": args.legend_size if args.legend_size > 0 else None,
     }
-    outdir = args.outdir if args.outdir else args.artifact_dir
+    outdir = args.outdir
     os.makedirs(outdir, exist_ok=True)
 
     artifact_path = args.artifact
