@@ -150,19 +150,31 @@ def _kl_divergence(cfg: PenaltyConfig, eps_e: float) -> FDivergence:
 def _hellinger_divergence(cfg: PenaltyConfig, eps_e: float) -> FDivergence:
     def B_t(e: torch.Tensor) -> torch.Tensor:
         e = torch.clamp(e, min=eps_e, max=1.0 - eps_e)
-        return 1.0 - torch.sqrt(e)
+        b1 = 1.0 - torch.sqrt(e)
+        b2 = -0.5 * torch.log(e)
+        return torch.minimum(b1, b2)
 
     def dB_t(e: torch.Tensor) -> torch.Tensor:
         e = torch.clamp(e, min=eps_e, max=1.0 - eps_e)
-        return -0.5 / torch.sqrt(e)
+        b1 = 1.0 - torch.sqrt(e)
+        b2 = -0.5 * torch.log(e)
+        d1 = -0.5 / torch.sqrt(e)
+        d2 = -0.5 / e
+        return torch.where(b1 <= b2, d1, d2)
 
     def B_n(e: np.ndarray) -> np.ndarray:
         e = np.clip(e, eps_e, 1.0 - eps_e)
-        return 1.0 - np.sqrt(e)
+        b1 = 1.0 - np.sqrt(e)
+        b2 = -0.5 * np.log(e)
+        return np.minimum(b1, b2)
 
     def dB_n(e: np.ndarray) -> np.ndarray:
         e = np.clip(e, eps_e, 1.0 - eps_e)
-        return -0.5 / np.sqrt(e)
+        b1 = 1.0 - np.sqrt(e)
+        b2 = -0.5 * np.log(e)
+        d1 = -0.5 / np.sqrt(e)
+        d2 = -0.5 / e
+        return np.where(b1 <= b2, d1, d2)
 
     def g_star(t: torch.Tensor) -> torch.Tensor:
         t = _ensure_tensor(t)
@@ -179,7 +191,7 @@ def _hellinger_divergence(cfg: PenaltyConfig, eps_e: float) -> FDivergence:
 
     return FDivergence(
         name="Hellinger",
-        notes="Hellinger divergence with B(e)=1-sqrt(e). g*(t) domain t<1/2.",
+        notes="Hellinger divergence with B(e)=min(1-sqrt(e), -0.5*log e). g*(t) domain t<1/2.",
         domain="t < 1/2",
         _B_torch=B_t,
         _dB_torch=dB_t,
