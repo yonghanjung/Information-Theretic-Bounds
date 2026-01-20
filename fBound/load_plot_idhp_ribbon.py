@@ -88,6 +88,31 @@ def _apply_legend(ax, style: Dict[str, Any]) -> None:
         ax.legend(loc=legend_loc, fontsize=legend_size)
 
 
+def _parse_legend_labels(raw: str) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    if not raw:
+        return out
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if "=" not in item:
+            raise ValueError(f"Legend label entry must be key=value. Got: {item!r}")
+        key, val = item.split("=", 1)
+        key = key.strip()
+        val = val.strip()
+        if not key:
+            continue
+        out[key.lower()] = val
+    return out
+
+
+def _legend_label(legend_labels: Dict[str, str], key: str, default: str) -> str:
+    if not legend_labels:
+        return default
+    return legend_labels.get(key.lower(), default)
+
+
 def _plot_smoothed(
     results: List[Dict[str, Any]],
     *,
@@ -97,6 +122,7 @@ def _plot_smoothed(
     style: Dict[str, Any],
     plot_raw: bool,
     plot_raw_points: bool,
+    legend_labels: Dict[str, str],
     path: str,
 ) -> None:
     plt.figure(figsize=(7.0, 4.0))
@@ -108,7 +134,8 @@ def _plot_smoothed(
         c = DIVERGENCE_COLOR_MAP.get(div)
         l_s = np.asarray(res.get("l_s", []), dtype=float)
         u_s = np.asarray(res.get("u_s", []), dtype=float)
-        plt.fill_between(x_s, l_s, u_s, alpha=0.2, color=c, label=f"{div} bounds")
+        bounds_label = _legend_label(legend_labels, div, f"{div} bounds")
+        plt.fill_between(x_s, l_s, u_s, alpha=0.2, color=c, label=bounds_label)
         plt.plot(x_s, l_s, color=c, alpha=0.7, linewidth=1.0)
         plt.plot(x_s, u_s, color=c, alpha=0.7, linewidth=1.0)
         if plot_raw:
@@ -128,7 +155,8 @@ def _plot_smoothed(
         x_s = np.asarray(results[0].get("x_s", []), dtype=float)
         theta_s = np.asarray(results[0].get("theta_s", []), dtype=float)
         if x_s.size > 0:
-            plt.plot(x_s, theta_s, color="k", linewidth=1.5, label="Truth")
+            truth_label = _legend_label(legend_labels, "Truth", "Truth")
+            plt.plot(x_s, theta_s, color="k", linewidth=1.5, label=truth_label)
 
     _apply_axes_style(
         plt.gca(),
@@ -150,6 +178,7 @@ def _plot_raw(
     title: str,
     ylabel: str,
     style: Dict[str, Any],
+    legend_labels: Dict[str, str],
     path: str,
 ) -> None:
     plt.figure(figsize=(7.0, 4.0))
@@ -161,7 +190,8 @@ def _plot_raw(
         c = DIVERGENCE_COLOR_MAP.get(div)
         l_raw = np.asarray(res.get("l_raw", []), dtype=float)
         u_raw = np.asarray(res.get("u_raw", []), dtype=float)
-        plt.fill_between(x_raw, l_raw, u_raw, alpha=0.2, color=c, label=f"{div} bounds")
+        bounds_label = _legend_label(legend_labels, div, f"{div} bounds")
+        plt.fill_between(x_raw, l_raw, u_raw, alpha=0.2, color=c, label=bounds_label)
         plt.plot(x_raw, l_raw, color=c, alpha=0.7, linewidth=1.0)
         plt.plot(x_raw, u_raw, color=c, alpha=0.7, linewidth=1.0)
 
@@ -169,7 +199,8 @@ def _plot_raw(
         x_raw = np.asarray(results[0].get("x_raw", []), dtype=float)
         theta_raw = np.asarray(results[0].get("theta_raw", []), dtype=float)
         if x_raw.size > 0:
-            plt.plot(x_raw, theta_raw, color="k", linewidth=1.5, label="Truth")
+            truth_label = _legend_label(legend_labels, "Truth", "Truth")
+            plt.plot(x_raw, theta_raw, color="k", linewidth=1.5, label=truth_label)
 
     _apply_axes_style(
         plt.gca(),
@@ -207,6 +238,12 @@ def main() -> None:
     parser.add_argument("--no-legend", dest="legend", action="store_false", help="Hide legend.")
     parser.add_argument("--legend_loc", type=str, default="best", help="Legend location (matplotlib loc).")
     parser.add_argument("--legend_size", type=float, default=0.0, help="Legend font size (0 disables).")
+    parser.add_argument(
+        "--legend_labels",
+        type=str,
+        default="",
+        help="Comma-separated key=value labels (e.g., 'TV=Total Variation,Truth=Ground Truth').",
+    )
     parser.add_argument("--plot_raw", dest="plot_raw", action="store_true", default=None, help="Overlay raw lines.")
     parser.add_argument(
         "--no-plot_raw",
@@ -244,6 +281,7 @@ def main() -> None:
         "legend_loc": args.legend_loc,
         "legend_size": args.legend_size if args.legend_size > 0 else None,
     }
+    legend_labels = _parse_legend_labels(args.legend_labels)
     outdir = args.outdir
     os.makedirs(outdir, exist_ok=True)
 
@@ -293,6 +331,7 @@ def main() -> None:
             title=title,
             ylabel=ylabel,
             style=style,
+            legend_labels=legend_labels,
             path=output_path,
         )
     else:
@@ -304,6 +343,7 @@ def main() -> None:
             style=style,
             plot_raw=plot_raw,
             plot_raw_points=plot_raw_points,
+            legend_labels=legend_labels,
             path=output_path,
         )
 
