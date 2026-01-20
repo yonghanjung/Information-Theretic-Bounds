@@ -269,31 +269,18 @@ def _tv_divergence(cfg: PenaltyConfig, eps_e: float, scaled: bool) -> FDivergenc
     if scaled:
         def B_t(e: torch.Tensor) -> torch.Tensor:
             e = torch.clamp(e, min=eps_e, max=1.0 - eps_e)
-            b1 = torch.sqrt(1.0 - e)
-            b2 = torch.sqrt(-0.5 * torch.log(e))
-            return torch.minimum(b1, b2)
+            return 1.0 - e
 
         def dB_t(e: torch.Tensor) -> torch.Tensor:
-            e = torch.clamp(e, min=eps_e, max=1.0 - eps_e)
-            b1 = torch.sqrt(1.0 - e)
-            b2 = torch.sqrt(-0.5 * torch.log(e))
-            d1 = -0.5 / b1
-            d2 = -0.25 / (e * b2)
-            return torch.where(b1 <= b2, d1, d2)
+            _ = e
+            return torch.full_like(e, -1.0)
 
         def B_n(e: np.ndarray) -> np.ndarray:
             e = np.clip(e, eps_e, 1.0 - eps_e)
-            b1 = np.sqrt(1.0 - e)
-            b2 = np.sqrt(-0.5 * np.log(e))
-            return np.minimum(b1, b2)
+            return 1.0 - e
 
         def dB_n(e: np.ndarray) -> np.ndarray:
-            e = np.clip(e, eps_e, 1.0 - eps_e)
-            b1 = np.sqrt(1.0 - e)
-            b2 = np.sqrt(-0.5 * np.log(e))
-            d1 = -0.5 / b1
-            d2 = -0.25 / (e * b2)
-            return np.where(b1 <= b2, d1, d2)
+            return -np.ones_like(e, dtype=float)
 
         thr = 0.5
         c = 0.5
@@ -312,7 +299,7 @@ def _tv_divergence(cfg: PenaltyConfig, eps_e: float, scaled: bool) -> FDivergenc
 
         return FDivergence(
             name="TV",
-            notes="Standard TV: f(t)=|t-1|/2, B(e)=min(sqrt(1-e), sqrt(-0.5 log e)), g* thresholds ±1/2.",
+            notes="Standard TV: f(t)=|t-1|/2, B(e)=1-e, g* thresholds ±1/2.",
             domain="t <= 1/2 (finite); penalty for t>1/2.",
             _B_torch=B_t,
             _dB_torch=dB_t,
