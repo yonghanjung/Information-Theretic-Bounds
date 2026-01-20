@@ -222,27 +222,29 @@ def _chi2_divergence(cfg: PenaltyConfig, eps_e: float) -> FDivergence:
 
     def g_star(t: torch.Tensor) -> torch.Tensor:
         t = _ensure_tensor(t)
-        # Pearson chi-square conjugate:
-        # g*(t) = t + 0.5 t^2 for t >= -1, else -0.5
-        quad = t + 0.5 * (t**2)
-        const = torch.full_like(t, -0.5)
-        return torch.where(t >= -1.0, quad, const)
+        # Pearson chi-square g*:
+        # g*(t) = 1 - sqrt(1 - 2t) for t < 1/2; penalty otherwise.
+        bound = 0.5
+        valid = t < (bound - cfg.boundary_eps)
+        rad = torch.clamp(1.0 - 2.0 * t, min=cfg.boundary_eps)
+        val = 1.0 - torch.sqrt(rad)
+        return torch.where(valid, val, _penalty_like(t, cfg))
 
     def valid_mask(t: torch.Tensor) -> torch.Tensor:
         t = _ensure_tensor(t)
-        return torch.ones_like(t, dtype=torch.bool)
+        return t < (0.5 - cfg.boundary_eps)
 
     return FDivergence(
         name="Chi2",
-        notes="Pearson chi-square divergence with B(e)=(1-e)/(2e). g*(t)=t+0.5 t^2 for t>=-1 else -0.5.",
-        domain="t in R (piecewise at t=-1)",
+        notes="Pearson chi-square divergence with B(e)=(1-e)/(2e). g*(t)=1-sqrt(1-2t) for t<1/2.",
+        domain="t < 1/2",
         _B_torch=B_t,
         _dB_torch=dB_t,
         _B_numpy=B_n,
         _dB_numpy=dB_n,
         _g_star=g_star,
         _valid_mask=valid_mask,
-        t_max=float("inf"),
+        t_max=0.5 - cfg.boundary_eps,
         domain_penalty_scale=1.0,
         lambda_min_override=None,
     )
