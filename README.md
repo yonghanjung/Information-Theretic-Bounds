@@ -185,19 +185,3 @@ This is implemented by running the estimator twice: once for `phi`, once for `-p
 - Saves a summary:
   - `gstar_bounds_summary.csv`: coverage_rate, mean_width, and validity fractions per method
     (`KL`, `TV`, `Hellinger`, `Chi2`, `JS`, `kth`, `tight_kth`, `Manski_empirical`).
-
-### Empirical Manski quick start
-
-```python
-from manski import empirical_extrema_manski_bounds
-res = empirical_extrema_manski_bounds(
-    Y=Y, A=A, X=X, a=1,
-    propensity_model="logistic", propensity_config={...},
-    outcome_model="random_forest", outcome_config={...},
-    seed=123,
-    eps_propensity=1e-3,
-)
-print(res["mu_lower"], res["mu_upper"])
-```
-
-This uses empirical min/max of `Y` as `(L,U)`; use `empirical_manski_bounds(...)` if you already know `(L,U)`.
