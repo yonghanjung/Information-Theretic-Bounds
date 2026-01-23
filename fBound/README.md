@@ -1,4 +1,4 @@
-# Data-Driven Information-Theoretic Causal Bounds under Unmeasured Confounding (ITB)
+# Data-Driven Information-Theoretic Causal Bounds under Unmeasured Confounding
 
 This repo implements the method in `docs/ITB.pdf` (Jung & Kang, 2026). It provides **data-driven** lower and upper bounds on causal estimands under unmeasured confounding without bounded outcomes, sensitivity parameters, instruments/proxies, or full SCM specification.
 
