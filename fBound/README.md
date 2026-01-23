@@ -1,10 +1,14 @@
-# Information-Theoretic Causal Bounds (CLeaR) — Research-Grade Refactor
+# Data-Driven Information-Theoretic Causal Bounds under Unmeasured Confounding (ITB)
 
-This folder is a modular refactor of the original monolithic `fBound.py` into a small codebase that:
+This repo implements the method in `docs/ITB.pdf` (Jung & Kang, 2026). It provides **data-driven** lower and upper bounds on causal estimands under unmeasured confounding without bounded outcomes, sensitivity parameters, instruments/proxies, or full SCM specification.
 
-- Implements the **debiased loss** in **Definition 3 / Eq. (25)–(26)**, and
-- Implements the full estimator pipeline in **Definition 4 (Step 1–6)**,
-- Preserves the working design decisions in the script (PyTorch dual nets + sklearn propensity + sklearn regressor).
+Target estimands (paper notation):
+\[
+\theta(a,x)=\mathbb{E}_{Q_{a,x}}[\varphi(Y)],\quad Q_{a,x}=\mathbb{P}(Y\mid do(A=a),X=x)
+\]
+\[
+\theta(a)=\mathbb{E}_{Q_a}[\varphi(Y)]
+\]
 
 ## Quick start (minimal, fast)
 
@@ -84,20 +88,36 @@ Endpoint-wise aggregation reports per-point diagnostics:
 
 Run example outputs include validity masks and these diagnostics in the saved tables.
 
-## What is implemented
+## Theory at a glance (ITB.pdf)
 
-### Debiased loss (Def. 12)
+### Divergence bound from propensity (Theorem 1)
 
-The training objective for the dual nets `h_β` and `u_γ` is the **debiased loss** (Definition 3):
+For any action `a` and covariates `x` with `P(a|x)>0`:
+\[
+D_f(P_{a,x}\|Q_{a,x})\le B_f(e_a(x)),\quad B_f(e)=e f(1/e)+(1-e)f(0)
+\]
+This upper bound depends **only** on the propensity score, making the divergence radius fully data-driven.
 
-- Main dual loss (Eq. (25)):
-  \[
-  \exp(h(A,X))\left\{\eta_f(A,X) + g^*\left(\frac{\phi(Y)-u(A,X)}{\exp(h(A,X))}\right)\right\} + u(A,X)
-  \]
-- Debiasing correction term (Eq. (26)):
-  \[
-  \sum_{a\in\{0,1\}} e_a(X)\exp(h(a,X))\eta_f'(e_a(X))\left(\mathbf{1}(A=a)-e_a(X)\right)
-  \]
+Specializations used in the code:
+- `KL`: `D_KL(P||Q) ≤ -log e`
+- `Hellinger`: `D_H(P||Q) ≤ 1 - sqrt(e)`
+- `Chi2`: `D_{chi2}(P||Q) ≤ (1-e)/(2e)`
+- `TV`: `D_TV(P||Q) ≤ 1 - e`
+- `JS`: `D_JS(P||Q) ≤ B_fJS(e)` (closed form in the paper)
+
+### Dual causal bound (Theorem 2)
+
+Define `g(s)=s f(1/s)` and its convex conjugate `g*(t)`. The upper bound solves:
+\[
+\theta_{up}(a,x)=\inf_{\lambda>0,\,u\in\mathbb{R}}
+\Big\{\lambda\,\eta_f(a,x)+u+\lambda\,\mathbb{E}_{P_{a,x}}\big[g^*\big((\varphi(Y)-u)/\lambda\big)\big]\Big\}.
+\]
+
+### Debiased semiparametric estimator (Section 5)
+
+The code minimizes the paper’s risk function (Definition 4) with cross-fitting and a Neyman-orthogonal correction, using:
+- PyTorch dual nets for `h(a,x)` and `u(a,x)` with `\lambda(a,x)=exp(h(a,x))`
+- sklearn propensity + outcome regressors for nuisances
 
 ### Cross-fitting estimator (Definition 4, Step 1–6)
 
@@ -146,11 +166,14 @@ This is implemented by running the estimator twice: once for `phi`, once for `-p
 - `run_example.py`  
   End-to-end run on simulated data for base divergences plus kth/tight_kth aggregation.
 
+- `src/experiments/`  
+  Experiment scripts: `plot_*.py` and `load_plot_*.py` (moved from repo root).
+
+- `scripts/reproduce_final_arxiv_plots.py`  
+  Reproduces final-arxiv figures from the JSON summaries without rerunning simulations.
+
 - `tests/`  
   Smoke and P0 validity tests (`pytest -q`).
-
-- Root shims (`causal_bound.py`, `divergences.py`, `models.py`, `data_generating.py`)  
-  Thin import shims for backward compatibility with prior scripts.
 
 ### `run_example.py` outputs
 
