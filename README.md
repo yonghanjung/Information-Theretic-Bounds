@@ -3,12 +3,12 @@
 This repo implements the method in `docs/ITB.pdf` (Jung & Kang, 2026). It provides **data-driven** lower and upper bounds on causal estimands under unmeasured confounding without bounded outcomes, sensitivity parameters, instruments/proxies, or full SCM specification.
 
 Target estimands (paper notation):
-\[
+$$
 \theta(a,x)=\mathbb{E}_{Q_{a,x}}[\varphi(Y)],\quad Q_{a,x}=\mathbb{P}(Y\mid do(A=a),X=x)
-\]
-\[
+$$
+$$
 \theta(a)=\mathbb{E}_{Q_a}[\varphi(Y)]
-\]
+$$
 
 ## Quick start (minimal, fast)
 
@@ -93,9 +93,9 @@ Run example outputs include validity masks and these diagnostics in the saved ta
 ### Divergence bound from propensity (Theorem 1)
 
 For any action `a` and covariates `x` with `P(a|x)>0`:
-\[
+$$
 D_f(P_{a,x}\|Q_{a,x})\le B_f(e_a(x)),\quad B_f(e)=e f(1/e)+(1-e)f(0)
-\]
+$$
 This upper bound depends **only** on the propensity score, making the divergence radius fully data-driven.
 
 Specializations used in the code:
@@ -108,10 +108,10 @@ Specializations used in the code:
 ### Dual causal bound (Theorem 2)
 
 Define `g(s)=s f(1/s)` and its convex conjugate `g*(t)`. The upper bound solves:
-\[
+$$
 \theta_{up}(a,x)=\inf_{\lambda>0,\,u\in\mathbb{R}}
 \Big\{\lambda\,\eta_f(a,x)+u+\lambda\,\mathbb{E}_{P_{a,x}}\big[g^*\big((\varphi(Y)-u)/\lambda\big)\big]\Big\}.
-\]
+$$
 
 ### Debiased semiparametric estimator (Section 5)
 
@@ -128,21 +128,21 @@ For each fold `k`:
 3. Train dual nets by minimizing the debiased loss **on `D^k`** (paper-faithful).
 4. Compute `\hat\lambda_k = exp(\hat h_k)` and `\hat\eta_f^k = B_f(\hat e^k)`.
 5. Construct pseudo-outcome:
-   \[
+   $$
    Z_i^k = g^*\left(\frac{\phi(Y_i)-\hat u_k(A_i,X_i)}{\hat\lambda_k(A_i,X_i)}\right)
-   \]
+   $$
    and regress `Z_i^k` on `(A,X)` using `D^k` to obtain `\hat m^k`.
 6. Return the bound:
-   \[
+   $$
    \hat\theta_\phi(a,x)= \frac{1}{K}\sum_{k=1}^K \hat\lambda_k(a,x)(\hat\eta_f^k(a,x)+\hat m^k(a,x))+\hat u_k(a,x).
-   \]
+   $$
 
 ### Lower bounds
 
 The code computes the lower bound via the “sign-flip” identity:
-\[
+$$
 \theta_\phi^{\text{lower}}(a,x) = -\theta_{-\phi}^{\text{upper}}(a,x).
-\]
+$$
 
 This is implemented by running the estimator twice: once for `phi`, once for `-phi`.
 
