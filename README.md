@@ -1,7 +1,7 @@
 # Data-Driven Information-Theoretic Causal Bounds under Unmeasured Confounding
 
 This repo implements the method in [Data-Driven Information-Theoretic Causal Bounds under Unmeasured Confounding
-(Jung & Kang, 2026)](https://yonghanjung.me/assets/pdf/R_18.pdf). It provides **data-driven** lower and upper bounds on causal estimands under unmeasured confounding without bounded outcomes, sensitivity parameters, instruments/proxies, or full SCM specification.
+(Jung & Kang, 2026)](https://yonghanjung.me/assets/pdf/R_19.pdf). It provides **data-driven** lower and upper bounds on causal estimands under unmeasured confounding without bounded outcomes, sensitivity parameters, instruments/proxies, or full SCM specification.
 
 Target estimands (paper notation):
 
