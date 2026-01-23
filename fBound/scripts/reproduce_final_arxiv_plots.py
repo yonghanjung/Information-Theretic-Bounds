@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set
 
 ROOT = Path(__file__).resolve().parent.parent
+EXPERIMENTS_DIR = ROOT / "src" / "experiments"
 
 _PLOT_N_RE = re.compile(
     r"^(?P<base>.+?)(?:_(?P<stat>stat_(?:mean|median)_over_(?:mean|median)))?_(?P<stamp>\d{8}_\d{6})$"
@@ -151,7 +152,7 @@ def _run_plot_n(
     outdir = dest_path.parent
     cmd = [
         sys.executable,
-        str(ROOT / "load_plot_n.py"),
+        str(EXPERIMENTS_DIR / "load_plot_n.py"),
         "--plot_name",
         plot_name,
         "--artifact",
@@ -177,7 +178,7 @@ def _run_plot_ribbon(
     outdir = dest_path.parent
     cmd = [
         sys.executable,
-        str(ROOT / "load_plot_ribbon.py"),
+        str(EXPERIMENTS_DIR / "load_plot_ribbon.py"),
         "--plot_name",
         plot_name,
         "--summary",
@@ -204,7 +205,7 @@ def _run_plot_idhp(
     outdir = dest_path.parent
     cmd = [
         sys.executable,
-        str(ROOT / "load_plot_idhp_ribbon.py"),
+        str(EXPERIMENTS_DIR / "load_plot_idhp_ribbon.py"),
         "--plot_name",
         plot_name,
         "--artifact",
