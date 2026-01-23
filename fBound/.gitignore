@@ -6,6 +6,9 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Local tooling
+.claude/
+
 # Virtual environments
 .venv/
 venv/
