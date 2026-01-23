@@ -4,8 +4,10 @@ This repo implements the method in `docs/ITB.pdf` (Jung & Kang, 2026). It provid
 
 Target estimands (paper notation):
 $$
-\theta(a,x)=\mathbb{E}_{Q_{a,x}}[\varphi(Y)],\quad Q_{a,x}=\mathbb{P}(Y\mid do(A=a),X=x)
+\theta(a,x)=\mathbb{E}_{Q_{a,x}}[\varphi(Y)],\quad Q_{a,x}=\mathbb{P}(Y\mid do(A=a),X=x),
 $$
+
+with 
 $$
 \theta(a)=\mathbb{E}_{Q_a}[\varphi(Y)]
 $$
