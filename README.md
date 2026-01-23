@@ -113,11 +113,11 @@ Specializations used in the code:
 
 ### Dual causal bound (Theorem 2)
 
-Define `g(s)=s f(1/s)` and its convex conjugate `g*(t)`. The upper bound solves:
+Define $g(s)=s f(1/s)$ and its convex conjugate $g^*(t)$. The upper bound solves:
 
 $$
 \theta_{up}(a,x)=\inf_{\lambda>0,\,u\in\mathbb{R}}
-\Big\{\lambda\,\eta_f(a,x)+u+\lambda\,\mathbb{E}_{P_{a,x}}\big[g^*\big((\varphi(Y)-u)/\lambda\big)\big]\Big\}.
+\left\{\lambda\,\eta_f(a,x)+u+\lambda\,\mathbb{E}_{P_{a,x}}\left[g^*\left((\varphi(Y)-u)/\lambda\right)\right]\right\}.
 $$
 
 ### Debiased semiparametric estimator (Section 5)
@@ -128,19 +128,19 @@ The code minimizes the paper’s risk function (Definition 4) with cross-fitting
 
 ### Cross-fitting estimator (Definition 4, Step 1–6)
 
-For each fold `k`:
+For each fold $k$:
 
-1. Split data into `K` folds.
-2. Fit propensity `\hat e^k` on `D^{-k}`.
-3. Train dual nets by minimizing the debiased loss **on `D^k`** (paper-faithful).
-4. Compute `\hat\lambda_k = exp(\hat h_k)` and `\hat\eta_f^k = B_f(\hat e^k)`.
+1. Split data into $K$ folds.
+2. Fit propensity $\hat e^k$ on $D^{-k}$.
+3. Train dual nets by minimizing the debiased loss **on $D^k$** (paper-faithful).
+4. Compute $\hat\lambda_k = \exp(\hat h_k)$ and $\hat\eta_f^k = B_f(\hat e^k)$.
 5. Construct pseudo-outcome:
 
    $$
    Z_i^k = g^*\left(\frac{\phi(Y_i)-\hat u_k(A_i,X_i)}{\hat\lambda_k(A_i,X_i)}\right)
    $$
 
-   and regress `Z_i^k` on `(A,X)` using `D^k` to obtain `\hat m^k`.
+   and regress $Z_i^k$ on $(A,X)$ using $D^k$ to obtain $\hat m^k$.
 6. Return the bound:
 
    $$
