@@ -30,7 +30,7 @@ try:
 except Exception:  # pragma: no cover
     tqdm = lambda x, **k: x  # type: ignore
 
-_ROOT = Path(__file__).resolve().parent
+_ROOT = Path(__file__).resolve().parents[2]
 _SRC = _ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))

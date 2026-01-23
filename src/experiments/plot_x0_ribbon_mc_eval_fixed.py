@@ -1,5 +1,5 @@
 """
-Monte Carlo ribbon plot of causal bounds vs X0 using a fixed IHDP evaluation set.
+Monte Carlo ribbon plot of causal bounds vs X0 using a fixed evaluation grid.
 
 Uses DebiasedCausalBoundEstimator with propensity caching and the sign-flip trick
 to compute lower/upper bounds for E[Y | do(A=1), X] at a shared evaluation set X_eval.
@@ -15,17 +15,16 @@ import sys
 import time
 import warnings
 from pathlib import Path
-from typing import Optional, Tuple
-
-_ROOT = Path(__file__).resolve().parent
-_SRC = _ROOT / "src"
-if str(_SRC) not in sys.path:
-    sys.path.insert(0, str(_SRC))
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import torch
+
+_ROOT = Path(__file__).resolve().parents[2]
+_SRC = _ROOT / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
 
 try:
     from tqdm import tqdm
@@ -37,6 +36,7 @@ from fbound.estimators.causal_bound import (
     aggregate_endpointwise,
     prefit_propensity_cache,
 )
+from fbound.utils.data_generating import generate_data
 from fbound.utils.plotting import DIVERGENCE_COLOR_MAP
 
 from scipy.interpolate import UnivariateSpline
@@ -159,7 +159,7 @@ def smooth_xy(
         grid_n = max(2, int(smooth_grid_n))
         x_grid = np.linspace(float(x.min()), float(x.max()), grid_n)
 
-        def _eval_spline(s_val_inner: Optional[float]) -> Optional[np.ndarray]:
+        def _eval_spline(s_val_inner):
             try:
                 spline = UnivariateSpline(x, y, k=int(spline_k), s=s_val_inner)
                 y_grid = spline(x_grid)
@@ -186,39 +186,39 @@ def smooth_xy(
     raise ValueError(f"Unknown smoothing method '{method}'.")
 
 
-CANDIDATE_FILES = ["ihdp_npci_1.csv"]
-COLUMN_NAMES = ["treatment", "y_factual", "y_cfactual", "mu0", "mu1"] + [f"x{i}" for i in range(1, 26)]
-LEGACY_COLUMNS = {"t": "treatment", "yf": "y_factual", "ycf": "y_cfactual"}
-DEFAULT_D = 10
+def _predict_proba_class1(model: Any, X: np.ndarray) -> np.ndarray:
+    """Return P(A=1|X) while respecting sklearn's class ordering."""
+    proba = model.predict_proba(X)
+    if proba.ndim != 2 or proba.shape[1] < 2:
+        raise ValueError(f"predict_proba must return shape (n,2+). Got {proba.shape}")
+    col = 1
+    classes = getattr(model, "classes_", None)
+    if classes is not None:
+        classes = np.asarray(classes)
+        if 1 in classes:
+            col = int(np.where(classes == 1)[0][0])
+    return proba[:, col]
 
 
-def load_ihdp_csv(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    if set(COLUMN_NAMES).issubset(df.columns):
-        return df
-    if set(LEGACY_COLUMNS).issubset(df.columns):
-        return df.rename(columns=LEGACY_COLUMNS)
-    return pd.read_csv(path, header=None, names=COLUMN_NAMES)
-
-
-def _resolve_data_path(data_path: Optional[str]) -> str:
-    if data_path:
-        return data_path
-    return next((path for path in CANDIDATE_FILES if Path(path).exists()), CANDIDATE_FILES[0])
-
-
-def prepare_ihdp_arrays(df: pd.DataFrame, d: Optional[int] = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    X_full = df[[f"x{i}" for i in range(1, 26)]].to_numpy(dtype=np.float32)
-    if d is not None:
-        if d < 1 or d > X_full.shape[1]:
-            raise ValueError(f"d must be in [1, {X_full.shape[1]}], got d={d}.")
-        X = X_full[:, :d]
-    else:
-        X = X_full
-    A = df["treatment"].to_numpy(dtype=np.float32).reshape(-1)
-    Y = df["y_factual"].to_numpy(dtype=np.float32).reshape(-1)
-    groundtruth = df["mu1"].to_numpy(dtype=np.float32).reshape(-1)
-    return A, Y, groundtruth, X
+def _predict_propensity_eval(
+    propensity_cache: dict,
+    X_eval: np.ndarray,
+    eps_propensity: float,
+) -> np.ndarray:
+    models = propensity_cache.get("models", None)
+    if not models:
+        raise ValueError("propensity_cache is missing fitted models for eval-axis predictions.")
+    Xc = np.asarray(X_eval, dtype=np.float64)
+    acc = None
+    for model in models:
+        e1 = _predict_proba_class1(model, Xc)
+        if acc is None:
+            acc = e1
+        else:
+            acc += e1
+    e1_mean = acc / float(len(models))
+    e1_mean = np.clip(e1_mean, eps_propensity, 1.0 - eps_propensity).astype(np.float32)
+    return e1_mean
 
 # -------------------------
 # Phi definitions
@@ -272,32 +272,27 @@ def fit_two_pass_do1_cached(
     L = (-est_neg.predict_bound(a=1, X=X_eval)).astype(np.float32)
     return L, U
 
-if __name__ == "__main__":
+
+
+def main() -> None:
     warnings.filterwarnings("ignore")
-    parser = argparse.ArgumentParser(description="MC ribbon plot of causal bounds vs X0 using IHDP data.")
-    parser.add_argument(
-        "--data_path",
-        "--data-path",
-        dest="data_path",
-        type=str,
-        default="",
-        help="IHDP CSV path (empty uses the first existing candidate).",
-    )
-    parser.add_argument(
-        "--dataset",
-        type=str,
-        default="",
-        help="Dataset name like 'ihdp_npci_1' or 'ihdp_npci_10' (auto-appends .csv).",
-    )
+    parser = argparse.ArgumentParser(description="MC ribbon plot of causal bounds vs X0 (fixed evaluation grid).")
     parser.add_argument("--m", type=int, default=20, help="number of MC replicates")
     parser.add_argument("--base_seed", type=int, default=20190602, help="base seed; seed_j = base_seed + j")
-    parser.add_argument("--n", type=int, default=500, help="samples per replicate")
-    parser.add_argument("--d", type=int, default=DEFAULT_D, help="feature dimension")
+    parser.add_argument("--n", type=int, default=5000, help="samples per replicate")
+    parser.add_argument("--d", type=int, default=10, help="feature dimension")
     parser.add_argument(
         "--divergence",
         type=str,
-        default="kth, tight_kth",
+        default="kth",
         help="Comma-separated divergences from {KL,TV,Hellinger,Chi2,JS,kth,tight_kth}.",
+    )
+    parser.add_argument(
+        "--structural_type",
+        type=str,
+        default="cyclic2",
+        choices=["linear", "nonlinear", "simpson", "cyclic", "cyclic2", "probit_sine"],
+        help="Data-generating process type.",
     )
     parser.add_argument(
         "--stat",
@@ -306,11 +301,18 @@ if __name__ == "__main__":
         choices=["median", "mean"],
         help="Aggregation statistic across MC replicates.",
     )
+    parser.add_argument(
+        "--eval_axis",
+        type=str,
+        default="x0",
+        choices=["x0", "propensity", "both"],
+        help="Axis for ribbon plots: X0, estimated propensity, or both.",
+    )
     parser.add_argument("--min_valid_rate", type=float, default=1.0, help="Minimum validity rate for keeping an eval point.")
-    parser.add_argument("--unique_save", action="store_true", default=True, help="Add unique timestamp suffix to outputs.")
+    parser.add_argument("--unique_save", action="store_true", help="Add unique timestamp suffix to outputs.")
     parser.add_argument("--outdir", type=str, default="experiments", help="Output directory.")
     parser.add_argument("--xgb_n_jobs", type=int, default=-1, help="n_jobs for xgboost models (-1 uses all cores).")
-    parser.add_argument("--num_epochs", type=int, default=200, help="Dual net epochs.")
+    parser.add_argument("--num_epochs", type=int, default=100, help="Dual net epochs.")
     parser.add_argument("--n_folds", type=int, default=2, help="Number of CV folds.")
     parser.add_argument("--eps_propensity", type=float, default=1e-3, help="Propensity clipping epsilon.")
     parser.add_argument(
@@ -326,26 +328,15 @@ if __name__ == "__main__":
         choices=["cpu", "cuda"],
         help="Device for dual nets (use cuda if GPU available).",
     )
-    parser.add_argument(
-        "--eval_dim",
-        type=int,
-        default=0,
-        help="Dimension X[:,eval_dim]",
-    )
-    parser.add_argument(
-        "--n_eval",
-        type=int,
-        default=500,
-        help="Number of evaluation points sampled from IHDP (<=0 uses all rows).",
-    )
-    parser.add_argument(
-        "--eval_axis",
-        type=str,
-        default="both",
-        choices=["x0", "propensity", "both"],
-        help="Eval grid axis: X0, propensity e(A=1|X), or both.",
-    )
+    parser.add_argument("--n_eval", type=int, default=20, help="Number of evaluation points (sampled).")
     parser.add_argument("--smooth_window", type=int, default=5, help="Smoothing window (moving average) for plotting.")
+    parser.add_argument(
+        "--noise_dist",
+        type=str,
+        default="normal",
+        choices=["normal", "t3"],
+        help="Noise distribution used in generate_data.",
+    )
     parser.add_argument(
         "--smooth_method",
         type=str,
@@ -358,20 +349,42 @@ if __name__ == "__main__":
     parser.add_argument("--spline_s", type=float, default=-1.0, help="Spline smoothing factor (<0 => auto heuristic).")
     parser.add_argument("--lowess_frac", type=float, default=0.2, help="LOWESS frac parameter.")
     parser.add_argument("--lowess_it", type=int, default=1, help="LOWESS iterations.")
+    parser.add_argument("--plot_raw_points", action="store_true", help="Overlay raw (unsmoothed) points on the plot.")
     parser.add_argument(
-        "--plot_raw_points",
-        action="store_true",
-        help="Overlay raw (unsmoothed) points on the plot.",
+        "--no_width_ci",
+        dest="width_ci",
+        action="store_false",
+        help="Disable 95% CI error bars for the width plot.",
     )
     parser.add_argument(
-        "--plot_raw",
-        action="store_true",
-        help="Overlay raw (unsmoothed) lower/upper lines on the plot.",
+        "--width_stat",
+        type=str,
+        default="mean",
+        choices=["mean", "median"],
+        help="Summary statistic for width vs propensity (used in width plot/CSV).",
+    )
+    parser.add_argument(
+        "--early_stop_patience",
+        type=int,
+        default=10,
+        help="Early stopping patience (0 disables).",
+    )
+    parser.add_argument(
+        "--early_stop_min_delta",
+        type=float,
+        default=0.0,
+        help="Minimum validation loss improvement to reset early stopping.",
+    )
+    parser.add_argument(
+        "--early_stop_fraction",
+        type=float,
+        default=0.2,
+        help="Fraction of fold used for early-stopping validation.",
     )
     parser.add_argument(
         "--kval",
         type=int,
-        default=4,
+        default=None,
         help="k for kth/tight_kth aggregation (default: number of base divergences).",
     )
     parser.add_argument(
@@ -387,6 +400,7 @@ if __name__ == "__main__":
         action="store_false",
         help="Disable progress/timing logs.",
     )
+    parser.set_defaults(width_ci=True)
     parser.add_argument(
         "--timing_detail",
         "--timing-detail",
@@ -408,12 +422,6 @@ if __name__ == "__main__":
     except Exception:
         pass
 
-    if args.dataset:
-        args.data_path = args.dataset if args.dataset.endswith(".csv") else f"{args.dataset}.csv"
-    args.data_path = _resolve_data_path(args.data_path)
-    df = load_ihdp_csv(args.data_path)
-    A_all, Y_all, groundtruth_all, X_all = prepare_ihdp_arrays(df, d=args.d)
-
     os.makedirs(args.outdir, exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S") if args.unique_save else ""
 
@@ -424,7 +432,7 @@ if __name__ == "__main__":
     dual_net_config = {
         "hidden_sizes": (64, 64),
         "activation": "relu",
-        "dropout": 0.0,
+        "dropout": 0.1,
         "h_clip": 20.0,
         "device": args.device,
     }
@@ -435,13 +443,16 @@ if __name__ == "__main__":
     fit_config = {
         "n_folds": args.n_folds,
         "num_epochs": args.num_epochs,
-        "batch_size": 32,
+        "batch_size": None,
         "lr": 5e-4,
         "weight_decay": 1e-4,
-        "max_grad_norm": 10.0,
+        "max_grad_norm": None,
         "eps_propensity": args.eps_propensity,
         "deterministic_torch": True,
         "train_m_on_fold": True,
+        "early_stop_patience": args.early_stop_patience,
+        "early_stop_min_delta": args.early_stop_min_delta,
+        "early_stop_fraction": args.early_stop_fraction,
         "propensity_config": {
             "n_estimators": 300,
             "max_depth": 10,
@@ -489,40 +500,43 @@ if __name__ == "__main__":
         needs_base.update(base_divs)
     needs_base.update([div for div in div_list if div in base_divs])
 
-    n_total = int(X_all.shape[0])
-    if n > n_total:
-        raise ValueError(f"n={n} exceeds IHDP rows {n_total}.")
-
-    # Fixed evaluation set sampled from the IHDP dataset (shared across replicates)
+    # Fixed evaluation set sampled from the DGP (shared across replicates)
     with StepTimer("build X_eval grid", use_tqdm=False, enabled=timing_enabled):
         eval_seed = args.base_seed + 10**6
-        rng_eval = np.random.default_rng(eval_seed)
-        if args.n_eval <= 0 or args.n_eval >= n_total:
-            eval_idx = np.arange(n_total)
-        else:
-            eval_idx = rng_eval.choice(n_total, size=args.n_eval, replace=False)
-        X_eval = np.asarray(X_all[eval_idx], dtype=np.float32)
-        X0_eval = X_eval[:, args.eval_dim]
-        truth_eval = np.asarray(groundtruth_all[eval_idx], dtype=np.float32).reshape(-1)
+        eval_data = generate_data(
+            n=args.n_eval,
+            d=d,
+            seed=eval_seed,
+            structural_type=args.structural_type,
+            noise_dist=args.noise_dist,
+        )
+        X_eval = np.asarray(eval_data["X"], dtype=np.float32)
+        X0_eval = X_eval[:, 0]
+    need_propensity_axis = args.eval_axis in {"propensity", "both"}
 
-    n_eval = int(X_eval.shape[0])
-    truth_mat = np.full((m, n_eval), np.nan, dtype=np.float32)
+    truth_mat = np.full((m, args.n_eval), np.nan, dtype=np.float32)
+    prop_eval_mat = np.full((m, args.n_eval), np.nan, dtype=np.float32) if need_propensity_axis else None
     seeds = []
-    upper_dict = {div: np.full((m, n_eval), np.nan, dtype=np.float32) for div in div_list}
-    lower_dict = {div: np.full((m, n_eval), np.nan, dtype=np.float32) for div in div_list}
-    valid_dict = {div: np.zeros((m, n_eval), dtype=bool) for div in div_list}
-
+    upper_dict = {div: np.full((m, args.n_eval), np.nan, dtype=np.float32) for div in div_list}
+    lower_dict = {div: np.full((m, args.n_eval), np.nan, dtype=np.float32) for div in div_list}
+    valid_dict = {div: np.zeros((m, args.n_eval), dtype=bool) for div in div_list}
     with StepTimer("MC replicate loop", use_tqdm=True, enabled=timing_enabled):
         for j in tqdm(range(m), desc="MC replicates"):
             seed = args.base_seed + j
             seeds.append(seed)
             with StepTimer(f"replicate {j}", use_tqdm=True, enabled=timing_enabled):
                 with StepTimer("data generation", use_tqdm=True, enabled=timing_enabled):
-                    rng = np.random.default_rng(seed)
-                    train_idx = rng.permutation(n_total)[:n]
-                    X_tr = np.asarray(X_all[train_idx], dtype=np.float32)
-                    A_tr = np.asarray(A_all[train_idx], dtype=np.float32)
-                    Y_tr = np.asarray(Y_all[train_idx], dtype=np.float32)
+                    data = generate_data(
+                        n=n,
+                        d=d,
+                        seed=seed,
+                        structural_type=args.structural_type,
+                        noise_dist=args.noise_dist,
+                    )
+                    X_tr = np.asarray(data["X"], dtype=np.float32)
+                    A_tr = np.asarray(data["A"], dtype=np.float32)
+                    Y_tr = np.asarray(data["Y"], dtype=np.float32)
+                    truth_eval = np.asarray(data["GroundTruth"](1, X_eval), dtype=np.float32).reshape(-1)
 
                 with StepTimer("nuisance fits", use_tqdm=True, enabled=timing_enabled):
                     prop_cache = prefit_propensity_cache(
@@ -534,6 +548,12 @@ if __name__ == "__main__":
                         seed=seed,
                         eps_propensity=fit_config["eps_propensity"],
                     )
+                    if need_propensity_axis and prop_eval_mat is not None:
+                        prop_eval_mat[j, :] = _predict_propensity_eval(
+                            prop_cache,
+                            X_eval,
+                            fit_config["eps_propensity"],
+                        )
 
                 with StepTimer("bounds per divergence", use_tqdm=True, enabled=timing_enabled):
                     base_outputs = {}
@@ -573,7 +593,7 @@ if __name__ == "__main__":
                                 raise ValueError(f"--kval must be in [1, {int(lower_base.shape[0])}] (got {k_val}).")
                             valid_up = np.isfinite(upper_base)
                             valid_lo = np.isfinite(lower_base)
-                            agg_kth = aggregate_endpointwise(
+                            agg = aggregate_endpointwise(
                                 lower_mat=lower_base,
                                 upper_mat=upper_base,
                                 valid_up=valid_up,
@@ -581,18 +601,15 @@ if __name__ == "__main__":
                                 k_up=k_val,
                                 k_lo=k_val,
                             )
-                            L = agg_kth["lower"].astype(np.float32)
-                            U = agg_kth["upper"].astype(np.float32)
+                            L = agg["lower"].astype(np.float32)
+                            U = agg["upper"].astype(np.float32)
                         elif div == "tight_kth":
                             if lower_base is None:
                                 lower_base = np.vstack([base_outputs[b][0] for b in base_divs])
                                 upper_base = np.vstack([base_outputs[b][1] for b in base_divs])
-                            k_val = int(args.kval) if args.kval is not None else int(lower_base.shape[0])
-                            if k_val < 1 or k_val > int(lower_base.shape[0]):
-                                raise ValueError(f"--kval must be in [1, {int(lower_base.shape[0])}] (got {k_val}).")
                             valid_up = np.isfinite(upper_base)
                             valid_lo = np.isfinite(lower_base)
-                            agg_tight = aggregate_endpointwise(
+                            agg = aggregate_endpointwise(
                                 lower_mat=lower_base,
                                 upper_mat=upper_base,
                                 valid_up=valid_up,
@@ -600,8 +617,8 @@ if __name__ == "__main__":
                                 k_up=1,
                                 k_lo=1,
                             )
-                            L = agg_tight["lower"].astype(np.float32)
-                            U = agg_tight["upper"].astype(np.float32)
+                            L = agg["lower"].astype(np.float32)
+                            U = agg["upper"].astype(np.float32)
                         else:
                             raise ValueError(f"Unsupported divergence '{div}'")
 
@@ -614,35 +631,33 @@ if __name__ == "__main__":
                 with StepTimer("store truth", use_tqdm=True, enabled=timing_enabled):
                     truth_mat[j, :] = truth_eval
 
+    if args.stat == "mean":
+        agg_fn = np.nanmean
+    else:
+        agg_fn = np.nanmedian
+
     axis_specs = []
     if args.eval_axis in {"x0", "both"}:
-        if args.eval_dim < 0 or args.eval_dim >= X_eval.shape[1]:
-            raise ValueError(f"--eval_dim must be in [0, {X_eval.shape[1] - 1}] (got {args.eval_dim}).")
-        axis_specs.append(("x0", X_eval[:, args.eval_dim], f"X{args.eval_dim}"))
-
+        axis_specs.append(("x0", X0_eval, "X0"))
     if args.eval_axis in {"propensity", "both"}:
-        with StepTimer("build propensity eval axis", use_tqdm=False, enabled=timing_enabled):
-            prop_cache_eval = prefit_propensity_cache(
-                X=X_all,
-                A=A_all,
-                propensity_model=propensity_model,
-                propensity_config=fit_config["propensity_config"],
-                n_folds=fit_config["n_folds"],
-                seed=int(eval_seed + 777),
-                eps_propensity=fit_config["eps_propensity"],
-            )
-            e1_oof = np.asarray(prop_cache_eval["e1_oof"], dtype=np.float32).reshape(-1)
-            axis_specs.append(("propensity", e1_oof[eval_idx], "e(A=1|X)"))
+        if prop_eval_mat is None:
+            raise RuntimeError("Propensity axis requested but estimated propensities are unavailable.")
+        axis_eval = agg_fn(prop_eval_mat, axis=0)
+        axis_specs.append(("propensity", axis_eval, "e(A=1|X)"))
 
     for axis_key, axis_eval, axis_label in axis_specs:
-        base_name = "plot_idhp_ribbon" if axis_key == "x0" else f"plot_idhp_ribbon_{axis_key}"
+        base_name = (
+            "plot_x0_ribbon_mc_eval_fixed"
+            if axis_key == "x0"
+            else "plot_x0_ribbon_mc_eval_fixed_propensity"
+        )
+        prop_xlim = None
+        if axis_key == "propensity":
+            finite = np.isfinite(axis_eval)
+            if np.any(finite):
+                prop_xlim = (float(np.min(axis_eval[finite])), float(np.max(axis_eval[finite])))
 
         with StepTimer(f"aggregate + smooth ribbons ({axis_key})", use_tqdm=False, enabled=timing_enabled):
-            if args.stat == "mean":
-                agg_fn = np.nanmean
-            else:
-                agg_fn = np.nanmedian
-
             aggregated_results = []
             for div in div_list:
                 upper_mat = upper_dict[div]
@@ -835,11 +850,297 @@ if __name__ == "__main__":
                     f.write(header + "\n")
                     for row in sm_table_rows:
                         f.write(
-                            f"{row['method']},{row['X0']},{row['theta']},{row['lower']},{row['upper']},{row['width']}\n"
+                        f"{row['method']},{row['X0']},{row['theta']},{row['lower']},{row['upper']},{row['width']}\n"
+                    )
+
+        width_table_path = None
+        width_mean_path = None
+        width_plot_paths = []
+        coverage_plot_paths = []
+        if axis_key == "propensity":
+            with StepTimer("save width summary (propensity)", use_tqdm=False, enabled=timing_enabled):
+                grid_n = max(2, int(args.smooth_grid_n))
+                finite_axis = np.isfinite(axis_eval)
+                prop_grid = None
+                if np.any(finite_axis):
+                    p_min = float(np.min(axis_eval[finite_axis]))
+                    p_max = float(np.max(axis_eval[finite_axis]))
+                    if p_max > p_min:
+                        prop_grid = np.linspace(p_min, p_max, grid_n)
+
+                width_rows = []
+                width_stats = {}
+                for res in aggregated_results:
+                    div = res["div"]
+                    if prop_grid is None or prop_eval_mat is None:
+                        width_mat = np.full((m, grid_n), np.nan, dtype=np.float64)
+                    else:
+                        width_mat = np.full((m, grid_n), np.nan, dtype=np.float64)
+                        for j in range(m):
+                            prop_j = prop_eval_mat[j, :]
+                            width_j = upper_dict[div][j, :] - lower_dict[div][j, :]
+                            width_j = np.where(valid_dict[div][j, :], width_j, np.nan)
+                            mask = np.isfinite(prop_j) & np.isfinite(width_j)
+                            if np.count_nonzero(mask) < 2:
+                                continue
+                            order = np.argsort(prop_j[mask])
+                            p_sorted = prop_j[mask][order]
+                            w_sorted = width_j[mask][order]
+                            width_mat[j, :] = np.interp(
+                                prop_grid,
+                                p_sorted,
+                                w_sorted,
+                                left=np.nan,
+                                right=np.nan,
+                            )
+                    width_mean = np.nanmean(width_mat, axis=0)
+                    width_median = np.nanmedian(width_mat, axis=0)
+                    width_std = np.nanstd(width_mat, axis=0)
+                    width_n = np.sum(np.isfinite(width_mat), axis=0).astype(int)
+                    width_se = np.full_like(width_std, np.nan)
+                    valid_n = width_n > 1
+                    if np.any(valid_n):
+                        width_se[valid_n] = width_std[valid_n] / np.sqrt(width_n[valid_n])
+                    width_ci = 1.96 * width_se
+                    if prop_grid is None or prop_eval_mat is None:
+                        coverage_mean = np.full((grid_n,), np.nan, dtype=np.float64)
+                        coverage_median = np.full((grid_n,), np.nan, dtype=np.float64)
+                    else:
+                        coverage_mat = np.full((m, grid_n), np.nan, dtype=np.float64)
+                        for j in range(m):
+                            prop_j = prop_eval_mat[j, :]
+                            lower_j = lower_dict[div][j, :]
+                            upper_j = upper_dict[div][j, :]
+                            truth_j = truth_mat[j, :]
+                            valid_j = valid_dict[div][j, :]
+                            cov_mask = (
+                                valid_j
+                                & np.isfinite(lower_j)
+                                & np.isfinite(upper_j)
+                                & np.isfinite(truth_j)
+                            )
+                            coverage_j = np.where(
+                                cov_mask,
+                                (truth_j >= lower_j) & (truth_j <= upper_j),
+                                np.nan,
+                            ).astype(np.float64)
+                            mask = np.isfinite(prop_j) & np.isfinite(coverage_j)
+                            if np.count_nonzero(mask) < 2:
+                                continue
+                            order = np.argsort(prop_j[mask])
+                            p_sorted = prop_j[mask][order]
+                            c_sorted = coverage_j[mask][order]
+                            coverage_mat[j, :] = np.interp(
+                                prop_grid,
+                                p_sorted,
+                                c_sorted,
+                                left=np.nan,
+                                right=np.nan,
+                            )
+                        coverage_mean = np.nanmean(coverage_mat, axis=0)
+                        coverage_median = np.nanmedian(coverage_mat, axis=0)
+                    width_stats[div] = {
+                        "mean": width_mean,
+                        "median": width_median,
+                        "ci": width_ci,
+                        "coverage_mean": coverage_mean,
+                        "coverage_median": coverage_median,
+                    }
+                    prop_vals = prop_grid if prop_grid is not None else np.full((grid_n,), np.nan)
+                    for idx, (p_val, w_mean, w_median, w_std, w_ci, w_n) in enumerate(
+                        zip(prop_vals, width_mean, width_median, width_std, width_ci, width_n)
+                    ):
+                        if prop_grid is not None and coverage_mean.size == prop_vals.size:
+                            cov_val = float(coverage_mean[idx])
+                            cov_med_val = float(coverage_median[idx])
+                        else:
+                            cov_val = float("nan")
+                            cov_med_val = float("nan")
+                        width_rows.append(
+                            {
+                                "method": div,
+                                "propensity": float(p_val),
+                                "width_mean": float(w_mean),
+                                "width_median": float(w_median),
+                                "width_std": float(w_std),
+                                "width_ci": float(w_ci),
+                                "coverage_mean": cov_val,
+                                "coverage_median": cov_med_val,
+                                "width_n": int(w_n),
+                            }
                         )
 
+                width_table_path = name_with_suffix(f"{base_name}_width_by_propensity", "csv")
+                try:
+                    import pandas as pd
+
+                    pd.DataFrame(width_rows).to_csv(width_table_path, index=False)
+                except Exception:
+                    header = (
+                        "method,propensity,width_mean,width_median,width_std,width_ci,"
+                        "coverage_mean,coverage_median,width_n"
+                    )
+                    with open(width_table_path, "w") as f:
+                        f.write(header + "\n")
+                        for row in width_rows:
+                            f.write(
+                                f"{row['method']},{row['propensity']},{row['width_mean']},"
+                                f"{row['width_median']},{row['width_std']},{row['width_ci']},"
+                                f"{row['coverage_mean']},{row['coverage_median']},{row['width_n']}\n"
+                            )
+
+                if prop_grid is not None and width_stats:
+                    color_map = DIVERGENCE_COLOR_MAP
+                    for stat_key in ("mean", "median"):
+                        for with_ci in (True, False):
+                            for smooth in (True, False):
+                                plt.figure(figsize=(7.0, 4.0))
+                                show_ci = with_ci
+                                ax = plt.gca()
+                                for div in div_list:
+                                    if div not in width_stats:
+                                        continue
+                                    w_center = width_stats[div][stat_key]
+                                    w_ci = width_stats[div]["ci"]
+                                    if not np.isfinite(w_center).any():
+                                        continue
+                                    c = color_map.get(div, None)
+                                    if smooth:
+                                        x_center, w_center_s = smooth_xy(
+                                            prop_grid,
+                                            w_center,
+                                            method=args.smooth_method,
+                                            smooth_grid_n=args.smooth_grid_n,
+                                            window=args.smooth_window,
+                                            spline_k=args.spline_k,
+                                            spline_s=args.spline_s,
+                                            lowess_frac=args.lowess_frac,
+                                            lowess_it=args.lowess_it,
+                                        )
+                                        x_ci, w_ci_s = smooth_xy(
+                                            prop_grid,
+                                            w_ci,
+                                            method=args.smooth_method,
+                                            smooth_grid_n=args.smooth_grid_n,
+                                            window=args.smooth_window,
+                                            spline_k=args.spline_k,
+                                            spline_s=args.spline_s,
+                                            lowess_frac=args.lowess_frac,
+                                            lowess_it=args.lowess_it,
+                                        )
+                                        if x_center.size == 0:
+                                            x_plot = prop_grid
+                                            w_center_plot = w_center
+                                            if x_ci.size > 0:
+                                                w_ci_plot = np.interp(x_plot, x_ci, w_ci_s)
+                                            else:
+                                                w_ci_plot = w_ci
+                                        else:
+                                            x_plot = x_center
+                                            w_center_plot = w_center_s
+                                            if x_ci.size > 0:
+                                                w_ci_plot = np.interp(x_plot, x_ci, w_ci_s)
+                                            else:
+                                                w_ci_plot = np.interp(x_plot, prop_grid, w_ci)
+                                    else:
+                                        x_plot = prop_grid
+                                        w_center_plot = w_center
+                                        w_ci_plot = w_ci
+                                    w_ci_plot = np.clip(w_ci_plot, 0.0, None)
+                                    mask = np.isfinite(x_plot) & np.isfinite(w_center_plot)
+                                    if show_ci and np.isfinite(w_ci_plot).any():
+                                        mask &= np.isfinite(w_ci_plot)
+                                        ax.errorbar(
+                                            x_plot[mask],
+                                            w_center_plot[mask],
+                                            yerr=w_ci_plot[mask],
+                                            color=c,
+                                            linewidth=1.8,
+                                            elinewidth=0.8,
+                                            capsize=2,
+                                            alpha=0.8,
+                                            label=div,
+                                        )
+                                    else:
+                                        ax.plot(x_plot[mask], w_center_plot[mask], color=c, linewidth=2.0, label=div)
+                                ax.set_xlabel("e(A=1|X)")
+                                ylabel = (
+                                    "Median interval width" if stat_key == "median" else "Mean interval width"
+                                )
+                                title = (
+                                    "Median width vs propensity by divergence"
+                                    if stat_key == "median"
+                                    else "Mean width vs propensity by divergence"
+                                )
+                                ax.set_ylabel(ylabel)
+                                ax.set_title(title)
+                                ax.legend()
+                                plt.tight_layout()
+                                ci_tag = "ci" if with_ci else "noci"
+                                smooth_tag = "smooth" if smooth else "raw"
+                                fig_base = f"{base_name}_width_{stat_key}_{ci_tag}_{smooth_tag}"
+                                fig_path = name_with_suffix(fig_base, "png")
+                                plt.savefig(fig_path, dpi=200)
+                                plt.close()
+                                width_plot_paths.append(fig_path)
+                                if width_mean_path is None and stat_key == "mean" and with_ci and smooth:
+                                    width_mean_path = fig_path
+
+                    for cov_key, cov_label in (("coverage_mean", "Mean coverage"), ("coverage_median", "Median coverage")):
+                        for smooth in (True, False):
+                            plt.figure(figsize=(7.0, 4.0))
+                            ax = plt.gca()
+                            for div in div_list:
+                                if div not in width_stats:
+                                    continue
+                                coverage = width_stats[div][cov_key]
+                                if not np.isfinite(coverage).any():
+                                    continue
+                                c = color_map.get(div, None)
+                                if smooth:
+                                    x_cov, cov_s = smooth_xy(
+                                        prop_grid,
+                                        coverage,
+                                        method=args.smooth_method,
+                                        smooth_grid_n=args.smooth_grid_n,
+                                        window=args.smooth_window,
+                                        spline_k=args.spline_k,
+                                        spline_s=args.spline_s,
+                                        lowess_frac=args.lowess_frac,
+                                        lowess_it=args.lowess_it,
+                                    )
+                                    if x_cov.size == 0:
+                                        x_plot = prop_grid
+                                        cov_plot = coverage
+                                    else:
+                                        x_plot = x_cov
+                                        cov_plot = cov_s
+                                else:
+                                    x_plot = prop_grid
+                                    cov_plot = coverage
+                                cov_plot = np.clip(cov_plot, 0.0, 1.0)
+                                mask = np.isfinite(x_plot) & np.isfinite(cov_plot)
+                                if np.any(mask):
+                                    ax.plot(x_plot[mask], cov_plot[mask], color=c, linewidth=2.0, label=div)
+                            ax.set_xlabel("e(A=1|X)")
+                            ax.set_ylabel("Coverage rate")
+                            if cov_key == "coverage_median":
+                                ax.set_ylim(0.0, 1.25)
+                                ax.axhline(1.0, color="gray", linestyle="--", linewidth=1.0, alpha=0.8)
+                            else:
+                                ax.set_ylim(0.0, 1.0)
+                            ax.set_title(f"{cov_label} vs propensity by divergence")
+                            ax.legend()
+                            plt.tight_layout()
+                            smooth_tag = "smooth" if smooth else "raw"
+                            fig_base = f"{base_name}_{cov_key}_{smooth_tag}"
+                            fig_path = name_with_suffix(fig_base, "png")
+                            plt.savefig(fig_path, dpi=200)
+                            plt.close()
+                            coverage_plot_paths.append(fig_path)
+
         with StepTimer(f"plot ribbons ({axis_key})", use_tqdm=False, enabled=timing_enabled):
-            # Smoothed plot
+            # Plot
             plt.figure(figsize=(7.0, 4.0))
             color_map = DIVERGENCE_COLOR_MAP
             for res in aggregated_results:
@@ -847,13 +1148,15 @@ if __name__ == "__main__":
                     continue
                 c = color_map.get(res["div"], None)
                 plt.fill_between(
-                    res["x_s"], res["l_s"], res["u_s"], alpha=0.2, color=c, label=f"{res['div']} bounds"
+                    res["x_s"],
+                    res["l_s"],
+                    res["u_s"],
+                    alpha=0.2,
+                    color=c,
+                    label=f"{res['div']} bounds",
                 )
                 plt.plot(res["x_s"], res["l_s"], color=c, alpha=0.7, linewidth=1.0)
                 plt.plot(res["x_s"], res["u_s"], color=c, alpha=0.7, linewidth=1.0)
-                if args.plot_raw:
-                    plt.plot(res["x_raw"], res["l_raw"], color=c, alpha=0.7, linewidth=1.0)
-                    plt.plot(res["x_raw"], res["u_raw"], color=c, alpha=0.7, linewidth=1.0)
                 if args.plot_raw_points:
                     plt.scatter(res["x_raw"], res["l_raw"], color=c, alpha=0.2, s=8)
                     plt.scatter(res["x_raw"], res["u_raw"], color=c, alpha=0.2, s=8)
@@ -868,51 +1171,15 @@ if __name__ == "__main__":
                 )
             plt.xlabel(axis_label)
             plt.ylabel("E[Y | do(A=1), X]")
-            plt.title(f"Causal bounds vs {axis_label} (stat={args.stat}, divs={','.join(div_list)})")
+            plt.title(
+                f"Causal bounds vs {axis_label} (stat={args.stat}, divs={','.join(div_list)}, struct={args.structural_type})"
+            )
+            if prop_xlim is not None:
+                plt.xlim(*prop_xlim)
             plt.legend()
             plt.tight_layout()
-            fig_path = name_with_suffix(f"{base_name}_smoothed", "png")
+            fig_path = name_with_suffix(base_name, "png")
             plt.savefig(fig_path, dpi=200)
-            plt.close()
-
-            # Raw-only plot
-            plt.figure(figsize=(7.0, 4.0))
-            for res in aggregated_results:
-                if res["idx_plot"].size == 0:
-                    continue
-                c = color_map.get(res["div"], None)
-                plt.fill_between(
-                    res["x_raw"],
-                    res["l_raw"],
-                    res["u_raw"],
-                    alpha=0.2,
-                    color=c,
-                    label=f"{res['div']} bounds",
-                )
-                plt.plot(
-                    res["x_raw"],
-                    res["l_raw"],
-                    color=c,
-                    alpha=0.7,
-                    linewidth=1.0,
-                    label=None,
-                )
-                plt.plot(res["x_raw"], res["u_raw"], color=c, alpha=0.7, linewidth=1.0)
-            if aggregated_results:
-                plt.plot(
-                    aggregated_results[0]["x_raw"],
-                    aggregated_results[0]["theta_raw"],
-                    color="k",
-                    linewidth=1.5,
-                    label="Truth",
-                )
-            plt.xlabel(axis_label)
-            plt.ylabel("E[Y | do(A=1), X]")
-            plt.title(f"Raw bounds vs {axis_label} (stat={args.stat}, divs={','.join(div_list)})")
-            plt.legend()
-            plt.tight_layout()
-            fig_raw_path = name_with_suffix(f"{base_name}_raw", "png")
-            plt.savefig(fig_raw_path, dpi=200)
             plt.close()
 
         with StepTimer(f"save artifacts ({axis_key})", use_tqdm=False, enabled=timing_enabled):
@@ -921,16 +1188,11 @@ if __name__ == "__main__":
                 "X_eval": X_eval,
                 "x_axis_eval": axis_eval,
                 "eval_axis": axis_key,
-                "eval_idx": eval_idx,
-                "truth_eval": truth_eval,
                 "lower_dict": lower_dict,
                 "upper_dict": upper_dict,
                 "truth_mat": truth_mat,
                 "valid_dict": valid_dict,
                 "args": vars(args),
-                "n_total": n_total,
-                "n_eval": n_eval,
-                "data_path": args.data_path,
                 "fit_config": fit_config,
                 "dual_net_config": dual_net_config,
                 "seeds": seeds,
@@ -945,6 +1207,14 @@ if __name__ == "__main__":
                 "lowess_frac": args.lowess_frac,
                 "lowess_it": args.lowess_it,
             }
+            if width_table_path:
+                artifacts["width_table_csv"] = width_table_path
+            if width_mean_path:
+                artifacts["width_mean_png"] = width_mean_path
+            if width_plot_paths:
+                artifacts["width_plot_pngs"] = width_plot_paths
+            if coverage_plot_paths:
+                artifacts["coverage_plot_pngs"] = coverage_plot_paths
             artifacts_path = name_with_suffix(f"{base_name}_artifacts", "pkl")
             with open(artifacts_path, "wb") as f:
                 pickle.dump(artifacts, f, protocol=pickle.HIGHEST_PROTOCOL)
@@ -955,17 +1225,14 @@ if __name__ == "__main__":
                     "table_csv": table_path,
                     "smoothed_table_csv": sm_table_path,
                     "plot_png": fig_path,
-                    "plot_raw_png": fig_raw_path,
                     "artifacts_pkl": artifacts_path,
                 },
                 "args": vars(args),
                 "n": n,
                 "d": d,
                 "m": m,
-                "n_total": n_total,
-                "n_eval": n_eval,
-                "data_path": args.data_path,
                 "divergences": div_list,
+                "structural_type": args.structural_type,
                 "stat": args.stat,
                 "min_valid_rate": args.min_valid_rate,
                 "eval_axis": axis_key,
@@ -977,15 +1244,30 @@ if __name__ == "__main__":
                 "lowess_frac": args.lowess_frac,
                 "lowess_it": args.lowess_it,
             }
+            if width_table_path:
+                summary["files"]["width_table_csv"] = width_table_path
+            if width_mean_path:
+                summary["files"]["width_mean_png"] = width_mean_path
+            if width_plot_paths:
+                summary["files"]["width_plot_pngs"] = width_plot_paths
+            if coverage_plot_paths:
+                summary["files"]["coverage_plot_pngs"] = coverage_plot_paths
             summary_path = name_with_suffix(f"{base_name}_summary", "json")
             with open(summary_path, "w") as f:
                 json.dump(summary, f, indent=2)
 
             log_line = (
-                f"[{base_name}] axis={axis_key} ts={summary['timestamp']} m={m} n={n} d={d} stat={args.stat} "
-                f"divs={','.join(div_list)} selected={summary['selected_counts']} "
+                f"[{base_name}] ts={summary['timestamp']} m={m} n={n} d={d} stat={args.stat} "
+                f"divs={','.join(div_list)} struct={args.structural_type} selected={summary['selected_counts']} "
                 f"args={vars(args)} files={summary['files']}"
             )
             log_path = name_with_suffix(f"{base_name}_log", "txt")
             with open(log_path, "a") as f:
                 f.write(log_line + "\n")
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:
+        _log_active_step_error(use_tqdm=False)
+        raise

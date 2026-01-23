@@ -1,4 +1,3 @@
-
 # macOS
 .DS_Store
 
@@ -7,9 +6,27 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Local caches
+.cache/
+.mplconfig/
+.pycache/
+.pytest_cache/
+
+# Local tooling
+.claude/
+
 # Virtual environments
 .venv/
 venv/
 ENV/
 env/
 
+# Experiments artifacts
+/experiments/
+
+# Plots / binary artifacts
+*.png
+*.pkl
+
+# Archived code (keep locally, ignore in Git)
+archive/
