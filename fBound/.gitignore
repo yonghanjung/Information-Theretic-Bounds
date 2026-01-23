@@ -16,7 +16,7 @@ env/
 fBound/archive/
 
 # Experiments artifacts
-experiments/
+/experiments/
 
 # Plots / binary artifacts
 *.png
