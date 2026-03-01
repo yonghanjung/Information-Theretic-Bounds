@@ -1,79 +1,37 @@
 # Data-Driven Information-Theoretic Causal Bounds under Unmeasured Confounding
 
-This repo implements the method in [Data-Driven Information-Theoretic Causal Bounds under Unmeasured Confounding
-(Jung & Kang, 2026)](https://yonghanjung.me/assets/pdf/R_19.pdf). It provides **data-driven** lower and upper bounds on causal estimands under unmeasured confounding without bounded outcomes, sensitivity parameters, instruments/proxies, or full SCM specification.
+This repo implements the method in "Data-Driven Information-Theoretic Causal Bounds under Unmeasured Confounding (Jung & Kang, 2026)." It provides data-driven lower and upper bounds on causal estimands under unmeasured confounding without bounded outcomes, sensitivity parameters, instruments/proxies, or full SCM specification.
 
 Target estimands (paper notation):
 
-$$
-\theta(a,x)=\mathbb{E}_{Q_{a,x}}[\varphi(Y)],\quad Q_{a,x}=\mathbb{P}(Y\mid do(A=a),X=x),
-$$
-
-with
-
-$$
-\theta(a)=\mathbb{E}_{Q_a}[\varphi(Y)]
-$$
-
-## Quick start (minimal, fast)
-
-```bash
-PYTHONPATH=src python3 - <<'PY'
-import numpy as np
-import torch
-from fbound.utils.data_generating import generate_data
-from fbound.estimators.causal_bound import compute_causal_bounds
-
-data = generate_data(n=200, d=3, seed=123, structural_type="linear")
-dual_net_config = {
-    "hidden_sizes": (16, 16),
-    "activation": "relu",
-    "dropout": 0.0,
-    "h_clip": 10.0,
-    "device": "cpu",
-}
-fit_config = {
-    "n_folds": 2,
-    "num_epochs": 3,
-    "batch_size": 32,
-    "lr": 5e-3,
-    "weight_decay": 0.0,
-    "max_grad_norm": 5.0,
-    "eps_propensity": 1e-3,
-    "deterministic_torch": True,
-    "train_m_on_fold": True,
-    "propensity_config": {"C": 1.0, "max_iter": 200, "penalty": "l2", "solver": "lbfgs", "n_jobs": 1},
-    "m_config": {"alpha": 1.0},
-    "verbose": False,
-    "log_every": 1,
-}
-
-def phi_identity(y: torch.Tensor) -> torch.Tensor:
-    return y
-
-df = compute_causal_bounds(
-    Y=data["Y"],
-    A=data["A"],
-    X=data["X"],
-    divergence="KL",
-    phi=phi_identity,
-    propensity_model="logistic",
-    m_model="linear",
-    dual_net_config=dual_net_config,
-    fit_config=fit_config,
-    seed=123,
-)
-print(df[["lower", "upper"]].head())
-PY
+```
+θ(a, x) = E_{Q_{a,x}}[φ(Y)],  Q_{a,x} = P(Y | do(A=a), X=x)
+θ(a)    = E_{Q_a}[φ(Y)]
 ```
 
-## Install (productization v1)
+## Install
+
+From the repo root:
+
+```bash
+pip install .
+```
+
+For development installs:
 
 ```bash
 pip install -e .
 ```
 
-Python import (new wrapper):
+Optional extras for figure reproduction:
+
+```bash
+pip install .[experiments]
+```
+
+## Python API
+
+New wrapper (recommended):
 
 ```python
 import itbound
@@ -85,35 +43,40 @@ Legacy import (still supported):
 import fbound
 ```
 
-Optional extras for figure reproduction:
-
-```bash
-pip install -e .[experiments]
-```
-
 ## CLI
 
-Run bounds from config:
+### Run bounds from config
 
 ```bash
 itbound run --config docs/cli-config.example.yaml
 ```
 
-Run a quick synthetic example:
+You can override output path:
 
 ```bash
-itbound example --out itbound_example.csv
+itbound run --config docs/cli-config.example.yaml --out /tmp/itbound_bounds.csv
 ```
 
-Reproduce arXiv plots (dry run):
+### Run a quick synthetic example
+
+```bash
+itbound example --out /tmp/itbound_example.csv
+```
+
+### Reproduce arXiv plots
 
 ```bash
 itbound reproduce --dry-run
 ```
 
+Notes:
+- `reproduce` expects the final-arxiv JSON summaries under `experiments/final-arxiv`.
+- If you installed the package, run `itbound reproduce` from the repo root so the data files are found.
+- Install extras first: `pip install .[experiments]`.
+
 ## Config schema (CLI)
 
-Config must be YAML/JSON and include:
+The config must be YAML or JSON and include:
 
 - `data`: one of `synthetic`, `npz_path`, or `csv_path`
 - `divergence`
@@ -127,28 +90,107 @@ Optional:
 - `phi` (default: `identity`)
 - `output_path` (default: `itbound_bounds.csv`)
 
-See `docs/cli-config.example.yaml` for a full example.
+See `docs/cli-config.example.yaml` for a complete example.
+
+## Toy CSV example
+
+Create a toy CSV and run:
+
+```bash
+python - <<'PY'
+import numpy as np
+import pandas as pd
+
+rng = np.random.default_rng(0)
+n = 50
+x1 = rng.normal(size=n)
+x2 = rng.normal(size=n)
+a = (x1 + rng.normal(scale=0.5, size=n) > 0).astype(int)
+y = 1.0 + 0.5 * a + 0.3 * x1 - 0.2 * x2 + rng.normal(scale=0.1, size=n)
+
+df = pd.DataFrame({"y": y, "a": a, "x1": x1, "x2": x2})
+df.to_csv("/tmp/itbound_toy.csv", index=False)
+print("/tmp/itbound_toy.csv")
+PY
+
+cat <<'YAML' > /tmp/itbound_toy.yaml
+data:
+  csv_path: /tmp/itbound_toy.csv
+  y_col: y
+  a_col: a
+  x_cols: [x1, x2]
+divergence: KL
+phi: identity
+propensity_model: logistic
+m_model: linear
+dual_net_config:
+  hidden_sizes: [8, 8]
+  activation: relu
+  dropout: 0.0
+  h_clip: 10.0
+  device: cpu
+fit_config:
+  n_folds: 2
+  num_epochs: 2
+  batch_size: 16
+  lr: 0.005
+  weight_decay: 0.0
+  max_grad_norm: 5.0
+  eps_propensity: 0.001
+  deterministic_torch: true
+  train_m_on_fold: true
+  propensity_config:
+    C: 1.0
+    max_iter: 200
+    penalty: l2
+    solver: lbfgs
+    n_jobs: 1
+  m_config:
+    alpha: 1.0
+  verbose: false
+  log_every: 1
+seed: 123
+YAML
+
+itbound run --config /tmp/itbound_toy.yaml --out /tmp/itbound_toy_bounds.csv
+```
 
 ## Agent Skill
 
 Agent-friendly usage is documented in `docs/agent/SKILL.md`.
 
-## End-to-end example
+## Theory at a glance (ITB.pdf)
 
-```bash
-python3 run_example.py
+### Divergence bound from propensity (Theorem 1)
+
+For any action `a` and covariates `x` with `P(a|x) > 0`:
+
+```
+D_f(P_{a,x} || Q_{a,x}) <= B_f(e_a(x)),  B_f(e) = e f(1/e) + (1-e) f(0)
 ```
 
-Notes:
-- `kth`/`tight_kth` use endpoint-wise order statistics via `aggregate_endpointwise`.
+This upper bound depends only on the propensity score, making the divergence radius fully data-driven.
 
-## Validity + NaN semantics (AGENTS P0)
+Specializations used in the code:
+- `KL`: `D_KL(P||Q) <= -log e`
+- `Hellinger`: `D_H(P||Q) <= 1 - sqrt(e)`
+- `Chi2`: `D_chi2(P||Q) <= (1-e)/(2e)`
+- `TV`: `D_TV(P||Q) <= 1 - e`
+- `JS`: `D_JS(P||Q) <= B_fJS(e)` (closed form in the paper)
 
-- Upper and lower bounds are computed independently: upper uses `+phi`, lower uses `-phi` then sign-flip.
-- `valid_up` and `valid_lo` are tracked separately per divergence.
-- Interval validity is `valid_interval = valid_up & valid_lo & isfinite(lower) & isfinite(upper) & (lower <= upper)`.
-- If `valid_interval` is false, both endpoints are blanked (set to NaN).
-- NaN/inf are never passed into aggregation; endpoints are filtered before sorting.
+### Dual causal bound (Theorem 2)
+
+Define `g(s)=s f(1/s)` and its convex conjugate `g*(t)`. The upper bound solves:
+
+```
+θ_up(a,x) = inf_{λ>0, u in R} { λ η_f(a,x) + u + λ E_{P_{a,x}}[g*((φ(Y)-u)/λ)] }
+```
+
+### Debiased semiparametric estimator (Section 5)
+
+The code minimizes the paper's risk function (Definition 4) with cross-fitting and a Neyman-orthogonal correction, using:
+- PyTorch dual nets for `h(a,x)` and `u(a,x)` with `λ(a,x)=exp(h(a,x))`
+- sklearn propensity + outcome regressors for nuisances
 
 ## Diagnostics (AGENTS P0)
 
@@ -158,100 +200,3 @@ Endpoint-wise aggregation reports per-point diagnostics:
 - `invalid_up`, `invalid_lo`, `nonfinite_upper`, `nonfinite_lower`, `inverted_filtered`: rejection counts.
 
 Run example outputs include validity masks and these diagnostics in the saved tables.
-
-## Theory at a glance (ITB.pdf)
-
-### Divergence bound from propensity (Theorem 1)
-
-For any action `a` and covariates `x` with `P(a|x)>0`:
-
-$$
-D_f(P_{a,x}\|Q_{a,x})\le B_f(e_a(x)),\quad B_f(e)=e f(1/e)+(1-e)f(0)
-$$
-
-This upper bound depends **only** on the propensity score, making the divergence radius fully data-driven.
-
-Specializations used in the code:
-- `KL`: `D_KL(P||Q) ≤ -log e`
-- `Hellinger`: `D_H(P||Q) ≤ 1 - sqrt(e)`
-- `Chi2`: `D_{chi2}(P||Q) ≤ (1-e)/(2e)`
-- `TV`: `D_TV(P||Q) ≤ 1 - e`
-- `JS`: `D_JS(P||Q) ≤ B_fJS(e)` (closed form in the paper)
-
-### Dual causal bound (Theorem 2)
-
-Define $g(s)=s f(1/s)$ and its convex conjugate $g^*(t)$. The upper bound solves:
-
-$$
-\theta_{up}(a,x)=\inf_{\lambda>0,\,u\in\mathbb{R}}
-\{\lambda\,\eta_f(a,x)+u+\lambda\,\mathbb{E}_{P_{a,x}}[g^*((\varphi(Y)-u)/\lambda)]\}.
-$$
-
-### Debiased semiparametric estimator (Section 5)
-
-The code minimizes the paper’s risk function (Definition 4) with cross-fitting and a Neyman-orthogonal correction, using:
-- PyTorch dual nets for `h(a,x)` and `u(a,x)` with `\lambda(a,x)=exp(h(a,x))`
-- sklearn propensity + outcome regressors for nuisances
-
-### Cross-fitting estimator (Definition 4, Step 1–6)
-
-For each fold $k$:
-
-1. Split data into $K$ folds.
-2. Fit propensity $\hat e^k$ on $D^{-k}$.
-3. Train dual nets by minimizing the debiased loss **on $D^k$** (paper-faithful).
-4. Compute $\hat\lambda_k = \exp(\hat h_k)$ and $\hat\eta_f^k = B_f(\hat e^k)$.
-5. Construct pseudo-outcome $Z_i^k = g^*((\phi(Y_i)-\hat u_k(A_i,X_i))/\hat\lambda_k(A_i,X_i))$
-   and regress $Z_i^k$ on $(A,X)$ using $D^k$ to obtain $\hat m^k$.
-6. Return the bound:
-   $\hat\theta_\phi(a,x)= \frac{1}{K}\sum_{k=1}^K \hat\lambda_k(a,x)(\hat\eta_f^k(a,x)+\hat m^k(a,x))+\hat u_k(a,x)$.
-
-### Lower bounds
-
-The code computes the lower bound via the “sign-flip” identity:
-
-$$
-\theta_\phi^{\text{lower}}(a,x) = -\theta_{-\phi}^{\text{upper}}(a,x).
-$$
-
-This is implemented by running the estimator twice: once for `phi`, once for `-phi`.
-
-## File guide
-
-- `src/fbound/estimators/causal_bound.py`  
-  Core estimator (`DebiasedCausalBoundEstimator`) and `compute_causal_bounds(...)`.
-
-- `src/fbound/utils/divergences.py`  
-  Divergence registry providing `B(e)`, `dB(e)`, and domain-safe `g_star_with_valid(...)`.
-
-- `src/fbound/utils/models.py`  
-  Model factories:
-  - propensity: `"logistic"`, `"xgboost"` (optional)
-  - regression: `"random_forest"`, `"linear"`, `"xgboost"` (optional)
-  - includes the PyTorch `TorchMLP` used for dual nets.
-
-- `src/fbound/utils/data_generating.py`  
-  Toy generator with known `GroundTruth(a, X)` (analytic).
-
-- `run_example.py`  
-  End-to-end run on simulated data for base divergences plus kth/tight_kth aggregation.
-
-- `src/experiments/`  
-  Experiment scripts: `plot_*.py` and `load_plot_*.py` (moved from repo root).
-
-- `scripts/reproduce_final_arxiv_plots.py`  
-  Reproduces final-arxiv figures from the JSON summaries without rerunning simulations.
-
-- `tests/`  
-  Smoke and P0 validity tests (`pytest -q`).
-
-### `run_example.py` outputs
-
-- Prints mean width and empirical coverage for the selected `div` (set inside the script).
-- Saves per-sample tables with bounds, validity, and diagnostics:
-  - `gstar_bounds_table.csv`: per-divergence lower/upper, `valid_up/valid_lo/valid_interval`, `inverted`,
-    g* validity masks, and kth diagnostics (`k_used_up_kth`, `k_used_lo_kth`).
-  - `gstar_bounds_any_invalid.csv`: subset where any g* validity flag or interval validity flag is false.
-- Saves a summary:
-  - `gstar_bounds_summary.csv`: coverage_rate, mean_width, and validity fractions per method
-    (`KL`, `TV`, `Hellinger`, `Chi2`, `JS`, `kth`, `tight_kth`, `Manski_empirical`).

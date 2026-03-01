@@ -23,3 +23,16 @@ def test_cli_reproduce_dry_run():
     )
 
     assert result.returncode == 0, result.stderr
+    expected = str(root / "scripts" / "reproduce_final_arxiv_plots.py")
+    assert expected in result.stdout
+
+
+def test_cli_reproduce_packaged_fallback(monkeypatch, capsys):
+    import itbound.cli as cli
+
+    monkeypatch.setattr(cli, "ROOT", Path("/tmp/itbound-missing-root"))
+    rc = cli._reproduce(True, "", "", "")
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "-m itbound.reproduce_final_arxiv_plots" in out

@@ -10,7 +10,16 @@ from fbound.estimators.causal_bound import compute_causal_bounds
 
 from .config import ConfigError, build_phi, default_example_config, load_config, resolve_data
 
-ROOT = Path(__file__).resolve().parents[3]
+def _find_repo_root(start: Path) -> Path:
+    for candidate in [start] + list(start.parents):
+        if (candidate / "pyproject.toml").is_file():
+            return candidate
+        if (candidate / "scripts" / "reproduce_final_arxiv_plots.py").is_file():
+            return candidate
+    return start.parents[2]
+
+
+ROOT = _find_repo_root(Path(__file__).resolve().parent)
 
 
 def _write_bounds(cfg_path: Path, output_override: Optional[Path]) -> Path:
@@ -62,12 +71,13 @@ def _example(out_path: Path) -> Path:
 
 
 def _reproduce(dry_run: bool, outdir: str, only: str, final_arxiv_dir: str) -> int:
+    script_path = ROOT / "scripts" / "reproduce_final_arxiv_plots.py"
+    use_module = not script_path.is_file()
     if dry_run:
-        cmd = [
-            sys.executable,
-            str(ROOT / "scripts" / "reproduce_final_arxiv_plots.py"),
-            "--dry-run",
-        ]
+        if use_module:
+            cmd = [sys.executable, "-m", "itbound.reproduce_final_arxiv_plots", "--dry-run"]
+        else:
+            cmd = [sys.executable, str(script_path), "--dry-run"]
         if outdir:
             cmd += ["--outdir", outdir]
         if only:
@@ -86,10 +96,10 @@ def _reproduce(dry_run: bool, outdir: str, only: str, final_arxiv_dir: str) -> i
         )
         return 2
 
-    cmd = [
-        sys.executable,
-        str(ROOT / "scripts" / "reproduce_final_arxiv_plots.py"),
-    ]
+    if use_module:
+        cmd = [sys.executable, "-m", "itbound.reproduce_final_arxiv_plots"]
+    else:
+        cmd = [sys.executable, str(script_path)]
     if outdir:
         cmd += ["--outdir", outdir]
     if only:
