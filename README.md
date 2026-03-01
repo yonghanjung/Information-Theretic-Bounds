@@ -79,6 +79,18 @@ Python import (new wrapper):
 import itbound
 ```
 
+Legacy import (still supported):
+
+```python
+import fbound
+```
+
+Optional extras for figure reproduction:
+
+```bash
+pip install -e .[experiments]
+```
+
 ## CLI
 
 Run bounds from config:
@@ -98,6 +110,28 @@ Reproduce arXiv plots (dry run):
 ```bash
 itbound reproduce --dry-run
 ```
+
+## Config schema (CLI)
+
+Config must be YAML/JSON and include:
+
+- `data`: one of `synthetic`, `npz_path`, or `csv_path`
+- `divergence`
+- `propensity_model`
+- `m_model`
+- `dual_net_config`
+- `fit_config`
+- `seed`
+
+Optional:
+- `phi` (default: `identity`)
+- `output_path` (default: `itbound_bounds.csv`)
+
+See `docs/cli-config.example.yaml` for a full example.
+
+## Agent Skill
+
+Agent-friendly usage is documented in `docs/agent/SKILL.md`.
 
 ## End-to-end example
 
