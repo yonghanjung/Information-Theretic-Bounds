@@ -1,0 +1,125 @@
+Causal Graph 
+
+\begin{wrapfigure}{r}{.3\textwidth}
+    \vspace{-0.3in}
+    \centering
+    \begin{tikzpicture}[x=.95cm, y=1.1cm,>={Latex[width=1.4mm,length=1.7mm]},
+  font=\sffamily\sansmath\scriptsize,
+  RR/.style={draw,circle,inner sep=0mm, minimum size=4.5mm,font=\sffamily\sansmath\footnotesize}]
+        \pgfmathsetmacro{\u}{1}
+        \node[RR, betterblue] (a) at (0*\u, 0*\u) {$A$};
+        \node[RR] (m) at (1*\u, 0.5*\u) {$M$};
+        \node[RR, betterred] (y) at (2*\u, 0*\u) {$Y$};
+        \node[RR] (c) at (1*\u, 1.5*\u) {$C$};
+
+        \draw[->] (a) -- (m);
+        \draw[->] (m) -- (y);
+        \draw[->] (c) -- (a);
+        \draw[->] (c) -- (y);
+
+        \begin{scope}[gray!100]
+            \draw[<->,dashed] (c) to [bend left=45] (y);
+            \draw[<->,dashed] (c) to [bend left=-45] (a);
+            \draw[<->,dashed] (a) to [bend left=-45] (y);
+        \end{scope}
+    \end{tikzpicture}
+    \caption{Front-door}
+    \label{fig:fd-example}
+    \vspace{-0.2in}
+\end{wrapfigure}
+
+\begin{figure}[t]
+    \hfill\begin{minipage}[b]{0.25\textwidth}\centering
+    \subfloat[$\G$]{
+        \begin{tikzpicture}[x=1.2cm,y=.9cm,>={Latex[width=1.4mm,length=1.7mm]},
+  font=\sffamily\sansmath\scriptsize,
+  RR/.style={draw,circle,inner sep=0mm, minimum size=4.5mm,font=\sffamily\sansmath\footnotesize}]
+  \pgfmathsetmacro{\u}{1}
+    \node[RR, betterblue] (X1) at (0,0.1){$X_1$};
+    \node[RR] (Zb) at (1,0) {$Z_b$};
+    \node[RR] (Zc) at (2,-.1) {$Z_c$};
+    \node[RR] (Za) at (1.2,-1) {$Z_a$};    
+    \node[RR, betterblue] (X2) at (1.4,-2) {$X_2$};
+    \node[RR, betterred] (Y) at (1.6,-3) {$Y$};
+
+    \draw[->] (X1) -- (Zb);
+    \draw[->] (X1) -- (Za);
+    \draw[->] (X1) to [bend right=25] (X2);
+    \draw[->] (X1) to [bend right=33] (Y);
+    \draw[->] (Zb) -- (Za);
+    \draw[->] (Zb) -- (Zc);
+    \draw[->] (Zc) -- (Za);
+    \draw[->] (Za) -- (X2);
+    \draw[->] (X2) -- (Y);
+
+    \begin{scope}[gray!70]
+        \draw[<->,dashed] (Za) to [bend left] (Y);
+        \draw[<->,dashed] (Za) to [bend left=22] (X1);
+        \draw[<->,dashed] (X1) to [bend left] (Zb);
+        \draw[<->,dashed] (Zc) to [bend left] (Y);
+    \end{scope}
+\end{tikzpicture}\label{fig:minimal-sac-1}}
+    \end{minipage}\hfill
+    \begin{minipage}[b]{0.25\textwidth}\centering
+    \subfloat[$\G^{\mf{X},\mf{Y}}_{\operatorname{psbd},1}$]{
+        \begin{tikzpicture}[x=1.2cm,y=.9cm,>={Latex[width=1.4mm,length=1.7mm]},
+  font=\sffamily\sansmath\scriptsize,
+  RR/.style={draw,circle,inner sep=0mm, minimum size=4.5mm,font=\sffamily\sansmath\footnotesize}]
+    \node[RR, betterblue] (X1) at (0,0.1){$X_1$};
+    \node[RR] (Zb) at (1,0) {$Z_b$};
+    \node[RR] (Zc) at (2,-.1) {$Z_c$};
+    \node[RR] (Za) at (1.2,-1) {$Z_a$};    
+    \node[RR, betterblue] (X2) at (1.4,-2) {$X_2$};
+    \node[RR, betterred] (Y) at (1.6,-3) {$Y$};
+
+    \draw[->] (X1) -- (Zb);
+    \draw[->] (X1) -- (Za);
+    % \draw[->] (X1) to [bend right=25] (X2);
+    % \draw[->] (X1) to [bend right=33] (Y);
+    \draw[->] (Zb) -- (Za);
+    \draw[->] (Zb) -- (Zc);
+    \draw[->] (Zc) -- (Za);
+    % \draw[->] (Za) -- (X2);
+    \draw[->] (X2) -- (Y);
+
+    \begin{scope}[gray!70]
+        \draw[<->,dashed] (Za) to [bend left] (Y);
+        \draw[<->,dashed] (Za) to [bend left=22] (X1);
+        \draw[<->,dashed] (X1) to [bend left] (Zb);
+        \draw[<->,dashed] (Zc) to [bend left] (Y);
+    \end{scope}
+\end{tikzpicture}\label{fig:minimal-sac-2}}
+    \end{minipage}\hfill
+    \begin{minipage}[b]{0.25\textwidth}\centering
+    \subfloat[$\G^{\mf{X},\mf{Y}}_{\operatorname{psbd},2}$]{
+        \begin{tikzpicture}[x=1.2cm,y=.9cm,>={Latex[width=1.4mm,length=1.7mm]},
+  font=\sffamily\sansmath\scriptsize,
+  RR/.style={draw,circle,inner sep=0mm, minimum size=4.5mm,font=\sffamily\sansmath\footnotesize}]
+    \node[RR, betterblue] (X1) at (0,0.1){$X_1$};
+    \node[RR] (Zb) at (1,0) {$Z_b$};
+    \node[RR] (Zc) at (2,-.1) {$Z_c$};
+    \node[RR] (Za) at (1.2,-1) {$Z_a$};    
+    \node[RR, betterblue] (X2) at (1.4,-2) {$X_2$};
+    \node[RR, betterred] (Y) at (1.6,-3) {$Y$};
+
+    \draw[->] (X1) -- (Zb);
+    \draw[->] (X1) -- (Za);
+    \draw[->] (X1) to [bend right=25] (X2);
+    \draw[->] (X1) to [bend right=33] (Y);
+    \draw[->] (Zb) -- (Za);
+    \draw[->] (Zb) -- (Zc);
+    \draw[->] (Zc) -- (Za);
+    \draw[->] (Za) -- (X2);
+    % \draw[->] (X2) -- (Y);
+
+    \begin{scope}[gray!70]
+        \draw[<->,dashed] (Za) to [bend left] (Y);
+        \draw[<->,dashed] (Za) to [bend left=22] (X1);
+        \draw[<->,dashed] (X1) to [bend left] (Zb);
+        \draw[<->,dashed] (Zc) to [bend left] (Y);
+    \end{scope}
+\end{tikzpicture}\label{fig:minimal-sac-3}}
+    \end{minipage}\hfill\null
+\caption{Example for \texttt{minSCA} and corresponding proper sequential back-door graphs}
+\label{fig:minimal-sac}
+\end{figure}

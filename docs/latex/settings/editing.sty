@@ -1,0 +1,24 @@
+% editing.sty
+\usepackage{soul}
+\usepackage[normalem]{ulem}
+\DeclareOption{on}{
+\newcommand{\xhl}[1]{\hl{#1}}
+\newcommand{\xcomment}[1]{{\sethlcolor{yellow}\textcolor{black}{\hl{#1}}}}
+\newcommand{\xst}[1]{{\sethlcolor{red}\hl{\ }}\st{#1}{\sethlcolor{red}\hl{\ }}}
+\newcommand{\xadd}[1]{\textcolor{blue}{#1}}
+% \definecolor{opaquegray}{RGB}{192, 192, 192}
+%\newcommand{\xdel}[1]{\textcolor{gray}{#1}}
+ \newcommand{\xdel}[1]{\textcolor{opaquegray}{#1}}
+\newcommand{\xmathst}[1]{\cancel{#1}}
+%\newcommand{\stkout}[1]{\ifmmode\text{\sout{\ensuremath{#1}}}\else\sout{#1}\fi}
+\newcommand\stkout{\bgroup\markoverwith{\textcolor{red}{\rule[0.5ex]{2pt}{1pt}}}\ULon}
+
+}
+\DeclareOption{off}{
+\newcommand{\xhl}[1]{#1}
+\newcommand{\xcomment}[1]{}
+\newcommand{\xst}[1]{#1}
+\newcommand{\xadd}[1]{}
+\newcommand{\xmathst}[1]{#1}
+}
+\ProcessOptions\relax

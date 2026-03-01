@@ -1,0 +1,78 @@
+\section{Introduction}
+\label{sec:intro}
+
+Causal effect identification aims to characterize interventional quantities, such as $\Pr(Y=y \mid \mathrm{do}(A=a),X=x)$, as functionals of the observational distribution $P(X,A,Y)$. In the presence of unmeasured confounders $U$, as depicted in Fig.~\ref{fig:dgp}, point identification is generally impossible without auxiliary variables or structural restrictions. In such settings, \textit{partial identification} seeks to recover bounds that provably contain the true causal quantity. However, as described in literature review in Sec.~\ref{subsec:related}, most existing methods suffer from one or more of the following fundamental limitations: 
+\begin{enumerate}[label=\textbf{(Lim-\arabic*)}, leftmargin=*, topsep=0pt]
+    \item \textbf{Bounded outcomes:} Restricting outcomes to bounded or discrete supports (e.g., $Y \in [0,1]$).
+    \item \textbf{Externality of parameters:} Requiring auxiliary inputs—such as instrumental variables, proxies, or sensitivity parameters—to quantify confounding strength.
+    \item \textbf{Full SCM specification:} Necessitating the specification of the entire structural causal model (SCM) \citep{pearl:2k}, which is computationally intensive and prone to error propagation.
+    \item \textbf{Neglect of heterogeneity:} Focusing on population-level averages while neglecting covariate-conditional treatment effects.
+\end{enumerate}
+
+To universally address these limitations, we develop an information-theoretic framework that provides (i) data-driven upper bounds on statistical divergences between observational and interventional distributions, and (ii) sharp partial identification of conditional causal effects $\mathbb{E}[Y \mid \mathrm{do}(A=a),X=x]$. Our framework accommodates \textit{unbounded} continuous outcomes without requiring full structural modeling or external inputs. The core mechanism involves deriving \textit{data-driven} upper bounds on statistical divergences (e.g., f-divergence \citep{csiszar1967fdivergenceDPI}) between the interventional law $Q_{a,x}$ and the observational law $P_{a,x}$, and then translating these into sharp causal intervals. Specifically, we make three main contributions:
+\begin{enumerate}[leftmargin=*, itemsep=0pt, topsep=0pt, label=(\roman*)]
+    \item We show that $f$-divergences \citep{csiszar1967fdivergenceDPI} between $P_{a,x}$ and $Q_{a,x}$ are upper bounded by a function of the propensity score $e_a(x)$.
+    \item We leverage these bounds to obtain sharp intervals for arbitrary expectations of the form $\theta(a,x)\triangleq \mathbb{E}_{Q_{a,x}}[\varphi(Y)]$ for user-specified functions $\varphi$ without imposing outcome boundedness or support restrictions.
+    \item We develop a semiparametric estimator that satisfies Neyman-orthogonality \citep{chernozhukov2018double} ensuring robust inference even when nuisance components are estimated via high-dimensional machine learning models.
+\end{enumerate}
+Together, these results provide a principled path to \textit{data-driven} partial identification of conditional causal effects under unmeasured confounding.
+
+\subsection{Related Work} \label{subsec:related}
+We organize existing work on partial identification based on which of the limitations (Lim-1--4) they retain or address. 
+
+\paragraph{Bounded/discrete outcomes (Lim-1).} Early work imposed restrictions requiring outcomes to be bounded or discrete. For example, \citet{manski1990nonparametric} derived nonparametric bounds using the extreme values outcomes can attain. Linear-programming (LP)–based approaches (e.g., \citet{balke1994counterfactual}, \citet{tian2000probabilities}) yield sharp bounds with discrete variables. \citet{sachs2023general} and \citet{shridharan2023scalable} have extended these LP-based bounds to general graphical settings but remain restricted to discrete outcomes. \citet{zhang2021bounding} extended these LP ideas to continuous outcomes, but still rely on bounded-support assumptions (e.g., $Y \in [0,1]$). These methods avoid auxiliary inputs (addressing Lim-2) but fail to accommodate unbounded outcomes (Lim-1) or provide conditional effect bounds (Lim-4).
+
+\paragraph{Auxiliary inputs (Lim-2).} Another line of work leverages auxiliary inputs. While auxiliary-variable methods can yield sharp bounds, most methods still assume bounded outcomes (Lim-1); and valid auxiliary inputs are often not available in practice or not identifiable from data. 
+\begin{itemize}[leftmargin=*, topsep=0pt, itemsep=0pt]
+    \item \textit{Instrumental variables.} \citet{balke1997bounds} provide tight nonparametric bounds on average treatment effects by leveraging instrumental variables, assuming bounded binary outcomes. \citet{kitagawa2021IV} extends this framework to continuous outcomes while maintaining bounded support assumptions (see \citet{swanson2018partial} for a comprehensive survey). Recently, \citet{levis2025covariate} develop covariate-assisted IV bounds to target conditional treatment effects (addressing Lim-4), but also under bounded outcome assumptions (Lim-1). 
+    \item \textit{Additional assumptions or variables.} \citet{ghassami2023partial} leverage proxy variables of hidden confounders to provide bounds on average effects, again requiring bounded outcomes (Lim-1). \citet{lee2009training} and \citet{semenova2025generalized} avoid bounded outcomes for sharp bounds on the average effect, but rely on structural assumptions about the selection mechanism.
+    \item \textit{Sensitivity analysis.} Sensitivity analysis introduces user-specified parameters to quantify confounding strength (e.g., \citet{rosenbaum1987sensitivity}, \citet{tan2006distributional}, \citet{yadlowsky2022bounds}, \citet{jin2022sensitivity}, \citet{dorn2023sharp}, \citet{oprescu2023b}). Unlike IV and proxy methods, modern sensitivity approaches can accommodate unbounded outcomes (addressing Lim-1). Among these, \citet{jin2022sensitivity} are most closely related to our approach, as they use an $f$-divergence-based sensitivity model to constrain divergences between observational and interventional distributions. \citet{oprescu2023b} extend sensitivity analysis to bound conditional effects (addressing Lim-4). However, all sensitivity methods require external sensitivity parameters (Lim-2) that are not identifiable from observational data alone.
+\end{itemize}
+
+
+\begin{figure}[t]
+  \centering
+  \begin{minipage}[c]{0.25\textwidth}
+    \centering
+    \subfloat[]{%
+      \begin{tikzpicture}[x=1.0cm,y=1.4cm,>={Latex[width=1.4mm,length=1.7mm]},
+        font=\sffamily\sansmath\scriptsize,
+        RR/.style={draw,circle,inner sep=0mm, minimum size=5.8mm,font=\sffamily\sansmath\footnotesize}]%
+        \pgfmathsetmacro{\u}{0.95}%
+        \node[RR, betterblue] (a) at (0*\u, 0*\u) {$A$};%
+        \node[RR, lightgray] (u) at (1.5*\u, 2*\u) {$U$};%
+        \node[RR, betterred] (y) at (3*\u, 0*\u) {$Y$};%
+        \node[RR] (x) at (1.5*\u, 1*\u) {$X$};%
+        \draw[->] (x) -- (a);%
+        \draw[->] (x) -- (y);%
+        \draw[->] (a) -- (y);%
+        \draw[->, lightgray] (u) -- (x);%
+        \draw[->, lightgray] (u) -- (a);%
+        \draw[->, lightgray] (u) -- (y);%
+      \end{tikzpicture}%
+      \label{fig:dgp}%
+    }%
+    % \vspace{-10pt}
+  \end{minipage}
+  \hfill 
+  \begin{minipage}[c]{0.70\textwidth}
+    \centering
+    \subfloat[]{%
+      \input{figures/contribution_viz}%
+      % \adjincludegraphics[scale=0.15,trim={{.00\width} {.17\width} {.02\width} {.05\width}},clip]{figures/contribution_table.pdf}%
+      \label{fig:positioning}%
+    }%
+  \end{minipage}
+
+  \caption{\textbf{(a)} Causal diagram with unmeasured confounding.
+  \textbf{(b)} Systematic comparison of our method against existing literature (detailed in Sec.~\ref{subsec:related}).}
+  \label{fig:positioning_and_dgp}
+  % \vspace{-10pt}
+\end{figure}
+
+
+\paragraph{Full SCM-modeling approaches (Lim-3).} 
+Another approach leverages machine-learning methods to learn entire SCMs consistent with observational data (e.g., \citet{hu2021generative}, \citet{balazadeh2022partial}, \citet{padh2023stochastic}, \citet{xia2022neural}, \citet{tan2024consistency}). These approaches find the SCMs that maximize/minimize the target causal effect subject to observations, using flexible neural architectures to model structural functions. In principle, such methods can accommodate unbounded outcomes and target conditional effects (addressing Lim-(1,4)). However, they require estimating the entire SCM (Lim-3), which is computationally intensive and sensitive to misspecification in high-dimensional structural components.
+
+
+\paragraph{Our novelty.} Existing methods each resolve some limitations; however, no existing approach overcomes all four limitations (Lim-1--4) universally. In contrast, our work simultaneously addresses all four limitations by developing bounds that (Lim-1) accommodate unbounded continuous outcomes without support restrictions; (Lim-2) require no auxiliary variables or sensitivity parameters; (Lim-3) avoid full SCM modeling; and (Lim-4) provide bounds for conditional effects $\mathbb{E}[Y \mid \mathrm{do}(A=a),X=x]$ beyond the population-level average. We compare our work with representative existing methods in Fig.~\ref{fig:positioning}.

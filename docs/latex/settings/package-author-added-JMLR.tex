@@ -1,0 +1,76 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Added by authors
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\usepackage{wrapfig}
+\usepackage{mdframed}
+% \usepackage[authoryear,round]{natbib}
+\usepackage{tikz}
+\usetikzlibrary{positioning,shadows,arrows,shapes,shapes.arrows,arrows.meta,trees,shapes.misc,shapes.geometric,decorations.pathreplacing,calc}
+\tikzset{
+    -Latex,auto,node distance =1 cm and 1 cm,semithick,
+    % state/.style ={ellipse, draw, minimum width = 0.7 cm},
+    state/.style ={circle, draw=white, inner sep=0.01cm, minimum width = 0.35 cm},
+    snode/.style = {rectangle, draw, inner sep=0.1cm,node contents={}},
+    unmeasured/.style = {circle, draw, inner sep=0.05cm,node contents={}},
+    point/.style = {circle, draw, inner sep=0.04cm,fill,node contents={}},
+    bidirected/.style={Latex-Latex,dashed},
+    el/.style = {inner sep=2pt, align=left, sloped}
+}
+\tikzstyle{mybox} = [draw=gray, fill=gray!20, very thick,
+rectangle, rounded corners, inner xsep=3pt, inner ysep=7pt]
+\usepackage{bm}
+
+\usepackage[on]{settings/editing}
+\usepackage{enumerate}
+\usepackage{cancel}
+\usepackage{multirow}
+\usepackage{bbm}
+\usepackage{color}
+\usepackage{authblk,epstopdf}
+\usepackage{array} % for better arrays (eg matrices) in maths
+\usepackage{paralist}
+\usepackage{verbatim} % adds environment for commenting out blocks of text & for better verbatim
+% \usepackage[noline, ruled, boxed, linesnumbered, vlined]{algorithm2e}
+% \usepackage{caption}   % after caption, before algorithm2e
+% \usepackage{subcaption}   % after caption, before algorithm2e
+\usepackage[normalem]{ulem}
+\usepackage{thmtools}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{setspace}
+\usepackage{adjustbox}
+\usepackage{graphicx}
+\usepackage{subfig}
+\usepackage[useregional]{datetime2}
+\usepackage{clipboard}
+\usepackage{enumitem,kantlipsum} 
+\usepackage[some]{background}
+\usepackage{optidef}
+\usepackage[most]{tcolorbox}
+\tcbuselibrary{theorems}
+\usepackage{longtable}
+\usepackage{ltablex}
+\usepackage{nccmath}
+\usepackage{minted}
+\usepackage{pifont}
+\usepackage{sansmath}
+\usepackage{booktabs,tabularx}    % nicely-formatted tables
+\usepackage{makecell}  
+\usepackage{float}
+
+
+
+\definecolor{betterred}{RGB}{228,26,28}
+\definecolor{betterblue}{RGB}{55,126,184}
+
+\newcommand\labelAndRemember[2]
+  {\expandafter\gdef\csname labeled:#1\endcsname{#2}%
+   \label{#1}#2}
+\newcommand\recallLabel[1]
+   {\csname labeled:#1\endcsname\tag{\ref{#1}}}
+
+
+\input{settings/commands-JMLR}
+\usepackage[dvipsnames]{xcolor}
+% \usepackage[colorlinks=true, citecolor=afblue, linkcolor=RoyalBlue]{hyperref}%

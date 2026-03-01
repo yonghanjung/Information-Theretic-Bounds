@@ -1,0 +1,128 @@
+\documentclass[a4paper,11pt]{scrartcl}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Basic Configuration 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% \renewcommand{\baselinestretch}{1.00} 
+\setlength{\pdfpagewidth}{8.5in}
+\setlength{\pdfpageheight}{11in}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{amsfonts,amsmath,amssymb,amsthm,dsfont,epsfig,graphicx,booktabs,latexsym,mathtools} %
+\usepackage[margin=1.00in]{geometry}
+\usepackage[english]{babel}
+
+
+\setlength\parindent{1pt}
+\setlength{\parskip}{0.75em}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Author added package and settings
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\input{settings/package-author-added}
+\newtheorem{innercustomthm}{Theorem}
+\newenvironment{customthm}[1]
+  {\renewcommand\theinnercustomthm{#1}\innercustomthm}
+  {\endinnercustomthm}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Title 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\title{\Copy{title}{Information-Theoretic Causal Bounds under Unmeasured Confounding}}
+
+\author{
+Yonghan Jung$^{1}$ and Bogyeong Kang$^{2}$ \\
+{\small $^{1}$ University of Illinois Urbana-Champaign,
+\texttt{yonghan@illinois.edu} \\
+$^{2}$ Independent Researcher,
+\texttt{bgyeong.kang@gmail.com}}
+}
+
+% Date 
+\date{\today}
+\begin{document}
+\setbox0\hbox{\Copy{shorttitle}{Information-Theoretic Causal Bounds}}
+\maketitle
+\allowdisplaybreaks
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Add no circulation box if needed  
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% \input{module-no-circulation-box}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Abstract & Tech-band 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{abstract}
+     \input{abstract}
+\end{abstract}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Table of Contents 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\tableofcontents
+\newpage 
+ 
+ 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Main text 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begingroup
+\allowdisplaybreaks
+\sloppy
+\input{main/1}
+\input{main/2}
+\input{main/3}
+\input{main/4}
+\input{main/5}
+\input{main/6}
+\input{main/7}
+\endgroup
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Reference
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newpage
+% \renewcommand{\bibsection}{}
+\bibliographystyle{apalike}
+\bibliography{reference}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Appendix
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Appendix Template 
+\input{settings/recommand-appendix}
+% Appendix Title
+\vtop{
+    \centering
+    \vspace{0cm}
+    \hspace{0cm}
+    \begin{tikzpicture}
+        \centering 
+        \node (box){
+          \begin{minipage}[t!]{0.9\textwidth}
+            \centering
+            {\Large Supplement of \Paste{title} }
+          \end{minipage}
+        };
+    \end{tikzpicture}
+    \vspace{0.5cm}
+}
+% Appendix Text
+\begingroup
+\allowdisplaybreaks
+\sloppy
+\input{appendix/simulations}
+\input{appendix/proof}
+\endgroup
+
+
+
+
+\end{document}

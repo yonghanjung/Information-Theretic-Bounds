@@ -1,0 +1,80 @@
+\begin{tikzpicture}[
+    node distance=0mm,
+    every node/.style={font=\sffamily\scriptsize, align=center},
+    header/.style={font=\sffamily\bfseries\scriptsize, text=betterblue},
+    cell/.style={inner sep=2pt, minimum height=0.55cm},
+    check/.style={text=betterblue!80!black},
+    cross/.style={text=betterred!90!black}
+]
+
+% Define column X coordinates (Centers for C2-C5, West for C1)
+% Increased spacing to prevent overlaps
+\def\xC{0}       % Method (West anchor)
+\def\xLine{3.2}  % Vertical Separator
+\def\xU{4.2}     % Unbounded (Center)
+\def\xA{6.4}     % No Aux (Center)
+\def\xS{8.6}     % No SCM (Center)
+\def\xE{10.8}    % Cond Effect (Center)
+\def\xEnd{11.9}  % For line drawing
+
+% Define Row Y coordinates
+\def\yH{0}
+\def\yI{-0.75}
+\def\yII{-1.5}
+\def\yIII{-2.25}
+\def\yIV{-3.0}
+\def\yV{-3.75}
+
+% Headers
+\node[cell, anchor=west, font=\sffamily\bfseries\scriptsize, text=black] at (\xC, \yH) {Method};
+\node[cell, header] at (\xU, \yH) {Unbounded\\Outcome};
+\node[cell, header] at (\xA, \yH) {No Aux\\Input};
+\node[cell, header] at (\xS, \yH) {No Full\\SCM};
+\node[cell, header] at (\xE, \yH) {Cond.\\Effect};
+
+% Header Line (Blue, Explicitly no arrow [-])
+\draw[betterblue, thick, -] (\xC, \yH-0.35) -- (\xEnd, \yH-0.35);
+
+% Vertical Separator (Gray, avoiding text overlap)
+\draw[gray!50, -] (\xLine, 0.2) -- (\xLine, -4.1);
+
+% Row 1: LP
+\node[cell, anchor=west, text width=3.0cm, align=left] at (\xC, \yI) {LP / Discrete};
+\node[cell, cross] at (\xU, \yI) {\xmark};
+\node[cell, check] at (\xA, \yI) {\cmark};
+\node[cell, check] at (\xS, \yI) {\cmark};
+\node[cell, cross] at (\xE, \yI) {\xmark};
+\draw[gray!20, -] (\xC, \yI-0.375) -- (\xEnd, \yI-0.375);
+
+% Row 2: Additional Vars
+\node[cell, anchor=west, text width=3.0cm, align=left] at (\xC, \yII) {Additional Vars. \\ \tiny (IV, Proxy)};
+\node[cell, cross] at (\xU, \yII) {\xmark};
+\node[cell, cross] at (\xA, \yII) {\xmark};
+\node[cell, check] at (\xS, \yII) {\cmark};
+\node[cell, check] at (\xE, \yII) {\cmark};
+\draw[gray!20, -] (\xC, \yII-0.375) -- (\xEnd, \yII-0.375);
+
+% Row 3: Sensitivity
+\node[cell, anchor=west, text width=3.0cm, align=left] at (\xC, \yIII) {Sensitivity};
+\node[cell, check] at (\xU, \yIII) {\cmark};
+\node[cell, cross] at (\xA, \yIII) {\xmark};
+\node[cell, check] at (\xS, \yIII) {\cmark};
+\node[cell, check] at (\xE, \yIII) {\cmark};
+\draw[gray!20, -] (\xC, \yIII-0.375) -- (\xEnd, \yIII-0.375);
+
+% Row 4: Full SCM
+\node[cell, anchor=west, text width=3.0cm, align=left] at (\xC, \yIV) {Full SCM};
+\node[cell, check] at (\xU, \yIV) {\cmark};
+\node[cell, check] at (\xA, \yIV) {\cmark};
+\node[cell, cross] at (\xS, \yIV) {\xmark};
+\node[cell, check] at (\xE, \yIV) {\cmark};
+
+% Row 5: Ours
+\fill[betterblue!8, rounded corners=4pt] (\xC, \yV+0.375) rectangle (\xEnd, \yV-0.375);
+\node[cell, anchor=west, text width=3.0cm, align=left, font=\sffamily\bfseries\small, text=black] at (\xC, \yV) {Ours};
+\node[cell, check] at (\xU, \yV) {\cmark};
+\node[cell, check] at (\xA, \yV) {\cmark};
+\node[cell, check] at (\xS, \yV) {\cmark};
+\node[cell, check] at (\xE, \yV) {\cmark};
+
+\end{tikzpicture}

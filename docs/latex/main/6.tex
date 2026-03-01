@@ -1,0 +1,53 @@
+\section{Experiments}
+\label{sec:experiments}
+
+This section empirically validates our framework across both synthetic and real-world data. Our goal is to bound the conditional causal mean $\theta(1,x) \triangleq \mathbb{E}[Y \mid \mathrm{do}(A=1), X=x]$ using our proposed bounds in Def.~\ref{def:cross-fit}. All implementation can be found in the \href{https://github.com/yonghanjung/Information-Theretic-Bounds}{Github repository}. 
+
+Across all experiments, we estimate the propensity score via XGBoost \citep{chen2016xgboost} and fit the dual functions $\lambda(a,x)=\exp(h(a,x))$ and $u(\cdot)$ using a neural network trained with two-fold cross-fitting. We consider the $f$-divergences in Cor.~\ref{cor:f-divergence} (KL, Jensen--Shannon, Hellinger, TV, and $\chi^2$), and the order-statistics aggregator (Def.~\ref{def:kth}). In the figures below, the label \texttt{tight\_kth} denotes the aggregated interval with $k= 5$. 
+
+
+\begin{figure}[t]
+    \centering
+    \begin{minipage}[b]{0.32\textwidth}
+        \centering
+        \subfloat[]{
+            \adjincludegraphics[scale=0.18,trim={{.0\width} {.0\width} {.0\width} {.0\width}},clip]{figures/ribbon_plot.png}
+            \label{fig:synthetic-a}
+        }
+    \end{minipage}\hfill
+    \begin{minipage}[b]{0.32\textwidth}
+        \centering
+        \subfloat[]{
+            \adjincludegraphics[scale=0.27,trim={{.0\width} {.0\width} {.0\width} {.0\width}},clip]{figures/penalized_width.png}
+            \label{fig:penalized-width}
+        }
+    \end{minipage}\hfill
+    \begin{minipage}[b]{0.32\textwidth}
+        \centering
+        \subfloat[]{
+            \adjincludegraphics[scale=0.27,trim={{.0\width} {.0\width} {.0\width} {.0\width}},clip]{figures/RMSE.png}
+            \label{fig:rmse}
+        }
+    \end{minipage}
+    \caption{\textbf{(a)} Bounds vs. propensity scores; \textbf{(b)} Penalized width vs. sample size, where the penalized width is $\text{p-width}\triangleq \mathrm{width} \times (1+ a \times \max (0, (1-\alpha)-\mathrm{coverage}))$ with $a=10$ and $\alpha=0.95$; \textbf{(c)} Convergence rate comparison}
+    \label{fig:synthetic}
+\end{figure}
+
+\paragraph{Synthetic data experiments.} We generate synthetic data from the SCM in Fig.~\ref{fig:dgp} with $X\in\mathbb{R}^5$, binary treatment $A\in\{0,1\}$, and a continuous outcome $Y$ with heavy-tail noise following a Student's t-distribution with 3 degrees of freedom, which has substantially thicker tails than the standard normal distribution. Fig.~\ref{fig:synthetic-a} demonstrates the validity of our method: the true effect curve for $\theta(1,x)$ lies within the estimated \texttt{tight\_kth} bounds across all propensity score regimes, even under heavy-tailed noise. This plot also shows how interval width shrinks as $e_a(x) \rightarrow 1$, as expected from our theory. Notably, the $\chi^2$ divergence consistently produces the tightest bounds among all f-divergences considered.
+
+We next examine the debiasing benefit formalized in Thm.~\ref{thm:error-analysis}. Fig.~\ref{fig:penalized-width} compares penalized width, defined as $\text{p-width}\triangleq \mathrm{width} \times (1+ a \times \max (0, (1-\alpha)-\mathrm{coverage}))$ with $a=10$ and $\alpha=0.95$, where $\mathrm{coverage}$ denotes the fraction of evaluation points $\{x_1,\cdots,x_n\}$ satisfying $\theta(1,x_i) \in [\widehat{\theta}_{\mathrm{lo}}(1,x_i),\widehat{\theta}_{\mathrm{up}}(1,x_i)]$, between debiased and non-debiased estimators. As expected, the debiased estimator achieves tighter penalized width as $n$ increases, reflecting improved finite-sample efficiency. Fig.~\ref{fig:rmse} further illustrates robustness to nuisance estimation error: we add convergence noise $\epsilon \sim \mathcal{N}(n^{-1/4}, n^{-1/4})$ to the estimated propensity score and compare convergence rates using an oracle estimator equipped with the true propensity score. The debiased estimator maintains its convergence rate despite slower propensity score estimation, confirming the theoretical guarantee of first-order insensitivity.
+
+
+\begin{wrapfigure}{r}{.4\textwidth}
+    \vspace{-0.3in}
+    \centering
+    \adjincludegraphics[scale=0.35,trim={{.0\width} {.0\width} {.0\width} {.0\width}},clip]{figures/ribbon_ihdp.png}
+    \caption{IHDP data analysis}
+    \label{fig:ribbon-idhp}
+    % \vspace{-0.2in}
+\end{wrapfigure}
+
+\paragraph{Semi-synthetic IHDP benchmark.} We also validate our method on the well-known IHDP (Infant Health and Development Program) benchmark \citep{hill2011bayesian,louizos2017causal,amlab_cevae_github2020}. This dataset originates from a randomized trial studying the effect of home visits by specialists on future cognitive test scores, with confounders $X \in \mathbb{R}^{25}$ capturing characteristics of the children and their mothers. Following \citet{louizos2017causal}, we de-randomize the treatment assignment to introduce confounding. In our experiment, we observe only five covariates and treat the remaining 20 as hidden confounders. Fig.~\ref{fig:ribbon-idhp} confirms that our bounds tightly contain the true causal effect $\mathbb{E}[Y \mid \mathrm{do}(A=1),X=x]$ across the full range of estimated propensity scores $\widehat{e}_1(x)$ for $x \in \mathcal{X}$.
+
+
+

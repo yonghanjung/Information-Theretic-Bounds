@@ -67,6 +67,38 @@ print(df[["lower", "upper"]].head())
 PY
 ```
 
+## Install (productization v1)
+
+```bash
+pip install -e .
+```
+
+Python import (new wrapper):
+
+```python
+import itbound
+```
+
+## CLI
+
+Run bounds from config:
+
+```bash
+itbound run --config docs/cli-config.example.yaml
+```
+
+Run a quick synthetic example:
+
+```bash
+itbound example --out itbound_example.csv
+```
+
+Reproduce arXiv plots (dry run):
+
+```bash
+itbound reproduce --dry-run
+```
+
 ## End-to-end example
 
 ```bash

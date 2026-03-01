@@ -1,0 +1,57 @@
+\section{Simulation Details}
+\label{app:simulations}
+
+This section provides the technical specifications for the synthetic and semi-synthetic experiments presented in Section~\ref{sec:experiments}.
+
+\subsection{Synthetic Data Generating Process}
+\label{app:sim:synthetic}
+
+We consider a nonlinear structural causal model (SCM) where the observational data $(X, A, Y)$ is generated as follows. The features $X \in \mathbb{R}^d$ are sampled from a uniform distribution: $X_j \sim \text{Uniform}(-2, 2)$ for $j=1, \dots, d$. A latent confounder $U$ is sampled from a standard normal distribution, $U \sim \mathcal{N}(0, 1)$.
+
+The treatment assignment $A$ follows a Bernoulli distribution with a propensity score dependent on both $X$ and $U$. Specifically, we define the logits $L$ as:
+\begin{equation}
+    L(X, U) = X^\top w + 0.8 U + 0.5 \sin(X_0) - 0.25 X_0^2,
+\end{equation}
+where $w \in \mathbb{R}^d$ is a fixed weight vector sampled from $\mathcal{N}(0, 0.6^2)$. The treatment is assigned as $A \sim \text{Bernoulli}(e(X, U))$, with
+\begin{equation}
+    e(X, U) = 0.05 + 0.9 \cdot \text{sigmoid}(L(X, U)),
+\end{equation}
+which ensures overlap by constraining the propensity score to $[0.05, 0.95]$.
+
+The outcome $Y$ is generated as:
+\begin{equation}
+    Y = \mu(X) + \tau(X, e(X, U)) A + 0.7 U + \epsilon,
+\end{equation}
+where $\epsilon$ follows a Student's $t$-distribution with 3 degrees of freedom ($\epsilon \sim t_3(0, 1)$) to introduce heavy-tailed noise. The functions $\mu(X)$ and $\tau(X, p)$ are defined to capture complex nonlinearities and heterogeneity:
+\begin{align}
+    \mu(X) &= 0.5 + 0.8 \tanh(X_0) + 0.25 X_1^2 - 0.15 \sin(X_2), \\
+    \tau(X, p) &= 0.7 + 0.2 \sin(X_0) + 0.1 X_0 + 0.8(p - 0.5),
+\end{align}
+where $p$ is the treatment assignment probability. This SCM introduces both selection bias via $U$ and heterogeneous treatment effects that depend on the propensity score.
+
+\subsection{Neural Network Architecture and Training}
+\label{app:sim:nn}
+
+For estimating the dual functions and the nuisance components (outcome models and propensity scores), we use Multi-Layer Perceptrons (MLPs) and XGBoost.
+
+\paragraph{Architecture for Dual Functions} 
+The dual functions $h$ are parameterized by an MLP with two hidden layers of 64 units each, using ReLU activations. We apply a clipping operation to the output of the dual network such that $h(X) \in [-20, 20]$ to ensure numerical stability during optimization. No dropout is used.
+
+\paragraph{Optimization and Hyperparameters}
+The dual networks are trained using the Adam optimizer with a learning rate of $5 \times 10^{-4}$ and weight decay of $1 \times 10^{-4}$. We employ 2-fold cross-fitting to avoid overfitting and ensure the validity of the debiased estimator. For each fold, we train the dual network for 256 epochs. Early stopping with a patience of 10 epochs (monitored on a $20\%$ validation split of the training fold) is used to prevent overtraining.
+
+\paragraph{Nuisance Models}
+Propensity scores and outcome means are estimated using XGBoost with the following hyperparameters:
+\begin{itemize}
+    \item \textbf{Number of estimators}: 300 for propensity, 400 for outcome.
+    \item \textbf{Maximum depth}: 10.
+    \item \textbf{Learning rate}: 0.005.
+    \item \textbf{Subsample / Colsample}: 0.8.
+\end{itemize}
+
+\subsection{IHDP Benchmark Details}
+\label{app:sim:ihdp}
+
+The IHDP benchmark is a semi-synthetic dataset based on a real-world randomized trial from the Infant Health and Development Program. We use the version where selection bias is introduced by removing a non-random subset of the treated group. 
+
+In our experiments, we treat 5 of the 25 covariates as observed and the remaining 20 as hidden confounders to simulate a scenario with unmeasured confounding. The evaluation is performed on a fixed set of units to compare the estimated bounds against the ground truth interventional effects provided by the benchmark. Training is conducted for 200 epochs for the IHDP-specific experiments.

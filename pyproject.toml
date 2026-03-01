@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "itbound"
+version = "0.1.0"
+description = "Data-driven information-theoretic causal bounds under unmeasured confounding."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+  { name = "Yonghan Jung" },
+  { name = "Jiwoong Kang" }
+]
+keywords = ["causal-inference", "partial-identification", "bounds", "f-divergence"]
+dependencies = [
+  "numpy",
+  "pandas",
+  "torch",
+  "scikit-learn",
+  "pyyaml",
+]
+
+[project.optional-dependencies]
+experiments = [
+  "matplotlib",
+  "scipy",
+  "statsmodels",
+]
+
+[project.scripts]
+itbound = "itbound.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["fbound", "fbound.*", "itbound", "itbound.*"]

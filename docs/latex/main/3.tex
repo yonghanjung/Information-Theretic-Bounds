@@ -1,0 +1,159 @@
+\section{Divergence Bounds between Observational and Interventional Distributions}\label{sec:3}
+
+We now derive a data-driven upper bound on the $f$-divergence between observational and interventional distributions. Our main result is the following: 
+\begin{theorem}[\textbf{f-Divergence Bound}]\label{thm:f-divergence}
+    \normalfont
+    For any $a \in \mathcal{A}$ and $x \in \mathcal{X}$ such that $P(a \mid x) > 0$, 
+    \begin{align}
+        D_{f}( P_{a,x} \| Q_{a,x}) \leq B_f(e_a(x)),
+    \end{align}
+    where 
+    \begin{align}
+        B_f(e_a(x)) \triangleq e_a(x)f\left(\frac{1}{e_a(x)} \right) + (1-e_a(x))f(0)
+    \end{align}
+\end{theorem}
+Theorem~\ref{thm:f-divergence} establishes that the $f$-divergence $D_f(P_{a,x} \| Q_{a,x})$ is upper bounded by $B_f(e_a(x))$, a function of the propensity score that is directly computable from observational data. Notably, $B_f(e_a(x)) \to 0$ as $e_a(x) \to 1$, since $f$ is continuous (by convexity) and satisfies $f(1) = 0$. Thus, higher propensity scores yield tighter divergence bounds. 
+
+We specialize Thm.~\ref{thm:f-divergence} to standard divergences:
+{
+\renewcommand{\thecorollary}{T1.1}
+\begin{corollary}\label{cor:f-divergence}
+    \normalfont
+    For any $a \in \mathcal{A}$ and $x \in \mathcal{X}$ such that $P(a \mid x) > 0$, 
+    \begin{itemize}[leftmargin=*,itemsep=0pt]
+        \item \textbf{KL}: $f(t) \triangleq t \log t$ (with $f(0) = 0$), 
+        \begin{align}
+            D_{\mathrm{KL}}(P_{a,x} \| Q_{a,x}) \leq -\log e_a(x).   
+        \end{align}
+        \item \textbf{Hellinger}: $f(t) \triangleq \tfrac{1}{2}(\sqrt{t}-1)^2 $ (with $f(0) = 1/2$), 
+        \begin{align}
+            D_{\mathrm{H}}(P_{a,x} \| Q_{a,x}) \leq 1- \sqrt{e_a(x)}.
+        \end{align}
+        \item \textbf{$\chi^2$-divergence}: $f(t) \triangleq \tfrac{1}{2}(t-1)^2 $ (with $f(0) = 1/2$), 
+        \begin{align}
+            D_{\chi^2}(P_{a,x} \| Q_{a,x}) \leq \frac{1-e_a(x)}{2e_a(x)}.
+        \end{align}
+        \item \textbf{Total variation}: $f(t) \triangleq \frac{1}{2}|t-1| $ (with $f(0) = \frac{1}{2}$), 
+        \begin{align}
+            D_{\mathrm{TV}}(P_{a,x} \| Q_{a,x}) \leq 1-e_a(x).
+        \end{align}
+        \item \textbf{Jensen-Shannon}: $f(t) \triangleq f_{\mathrm{JS}}(t) \triangleq  \frac{1}{2}\left(t\log t - (t+1)\log\!\Big(\tfrac{t+1}{2}\Big)\right)$ (with $f_{\mathrm{JS}}(0)=\frac{1}{2}\log 2$)  
+        \begin{align}
+            D_{\mathrm{JS}}(P_{a,x} \| Q_{a,x}) \leq B_{f_{\mathrm{JS}}}(e_a(x)) = \frac{1}{2}\log \left( \frac{4 e_a(x)^{e_a(x)}}{(1+e_a(x))^{1+e_a(x)}} \right).
+        \end{align}
+    \end{itemize}
+\end{corollary}
+}
+Bounds extend to stochastic policies as follows:
+{
+\renewcommand{\thecorollary}{T1.2}
+\begin{corollary}\label{coro:soft}
+    \normalfont
+    For any stochastic policy $\pi(a \mid x)$, 
+    \begin{align}
+        D_{f}( P_{\pi} \|  Q_{\pi} ) \triangleq \mathbb{E}_{X}\left[\sum_{a \in \mathcal{A} }\pi(a \mid X) D_{f}( P_{a,X} \|  Q_{a,X} )\right]   \leq \mathbb{E}_{X}\left[ \sum_{a \in \mathcal{A}} \pi(a \mid X)B_f(e_a(X)) \right]. \nonumber
+    \end{align}
+    Choosing $\pi(a \mid x) = e_a(x)$ yields the global divergence bound: 
+    \begin{align}
+        D_f(P_{A,X} \,\|\, Q_{A,X})= \mathbb{E}_{X}\!\left[\sum_{a\in\mathcal{A}} e_a(X)\, D_f\!\big(P_{a,X}\,\|\,Q_{a,X}\big)\right] \;\le\; \mathbb{E}_{X}\!\left[\sum_{a\in\mathcal{A}} e_a(X)\, B_f\!\big(e_a(X)\big)\right].\nonumber
+    \end{align}
+\end{corollary}
+}
+We derive bounds on the maximum mean discrepancy (MMD; \citealt{gretton2012kernel}), and the integral probability metric (IPM; \citealt{muller1997integral}). 
+{
+\renewcommand{\thecorollary}{T1.3}
+\begin{corollary}[\textbf{IPM and MMD Bounds}]\label{cor:mean-mmd-ipm}
+    \normalfont
+    Let $\Phi \triangleq \{\varphi: \mathcal{Y} \mapsto [0,1]\}$ be a class of measurable functions. Let $D_{\mathrm{IPM},\mathcal{F}}(P\|Q)$ be the IPM over a function class $\mathcal{F} \triangleq \big\{ f:\ \|f\|_{\infty} < C \big\}$. Let $D_{\mathrm{MMD},\mathtt{k}}(P\|Q)$ be the MMD associated with an RKHS with a kernel $\mathtt{k}$ such that $\mathtt{k}(\cdot,\cdot)<K$.  Then, 
+    \begin{align*}
+        \textbf{(IPM)} \;&\; D_{\mathrm{IPM},\mathcal{F}_C}\big(P_{a,x}\,\|\,Q_{a,x}\big) \leq 2C\,\min\big\{1-e_a(x),\, \sqrt{-\tfrac{1}{2}\log e_a(x)} \big\}, \\ 
+        \textbf{(MMD)} \;&\;  D_{\mathrm{MMD},\mathtt{k}}\big(P_{a,x}\,\|\,Q_{a,x}\big) \leq 2\sqrt{K}\,\min\big\{1-e_a(x),\, \sqrt{-\tfrac{1}{2}\log e_a(x)} \big\}.
+    \end{align*}
+\end{corollary}
+}
+
+All results above extend to the marginal case (without covariates) by setting $X=\emptyset$ and replacing $e_a(x)$ with the marginal propensity score $e_a \triangleq \Pr(A=a)$. This yields bounds on the divergence between the marginal interventional law $Q_a \triangleq P(Y \mid \mathrm{do}(A=a))$ and the marginal observational law $P_a \triangleq P(Y \mid A=a)$. 
+
+
+\subsection{Specialization for Exponential Family}\label{subsec:omit3-exponential-family}
+Here, we derive a closed-form $f$-divergence when $P_{a,x},\; Q_{a,x}$ are within the exponential family (e.g., Bernoulli, Gaussian, Poisson, exponential, etc.) to exemplify the mechanism of Thm.~\ref{thm:f-divergence}.
+\begin{corollary}[\textbf{Exponential Family}]
+    \normalfont
+    Suppose $P_{a,x}$ and $Q_{a,x}$ are distributions from a common exponential family:
+    \begin{align}
+        P_{a,x}(y) &\triangleq  \exp\big(\theta_p^\top T(y) - A(\theta_p)\big)h(y), \\ 
+        Q_{a,x}(y) &\triangleq  \exp\big(\theta_q^\top T(y) - A(\theta_q)\big)h(y), 
+    \end{align}
+    where $\theta_p, \theta_q$ are  natural parameters, $T(y)$ is the sufficient statistics, $A(\theta)$ is the log-partition function (log normalizer), and $h(y)$ is the base measure density. Define $\Delta \triangleq \theta_p - \theta_q$ and $\Delta_A \triangleq A(\theta_p) - A(\theta_q)$. 
+    \begin{align}
+        D_{f}(P_{a,x}\|Q_{a,x})=
+        \mathbb{E}_{Q_{a,x}}\left[
+        f\left(
+        \exp\big(\Delta^{\intercal} T(Y) - \Delta_A\big)
+        \right)
+        \right].
+    \end{align}
+\end{corollary}
+\paragraph{Bernoulli Distribution}
+Suppose $Y\in\{0,1\}$ and both $P_{a,x}$ and $Q_{a,x}$ are Bernoulli distributions with success probabilities $p$ and $q$, respectively.
+The Bernoulli distribution belongs to the exponential family with sufficient statistic $T(y)=y$ and natural parameter $\theta=\log\frac{p}{1-p}$.
+
+The Radon--Nikodym derivative is given by
+\begin{align}
+    \frac{dP_{a,x}}{dQ_{a,x}}(y) = \exp\left( y \log \frac{p(1-q)}{q(1-p)} + \log \frac{1-p}{1-q} \right).
+\end{align}
+
+Consequently, the $f$-divergence admits the representation
+\begin{align}
+    D_f(P_{a,x}\|Q_{a,x}) = \mathbb{E}_{Q_{a,x}}\!\left[ f\left( \exp\left( Y \log \frac{p(1-q)}{q(1-p)} + \log \frac{1-p}{1-q} \right) \right) \right].
+\end{align}
+
+\paragraph{Gaussian Distribution}
+Suppose $Y\in\mathbb{R}^d$ and both $P_{a,x}$ and $Q_{a,x}$ are Gaussian distributions with means $\mu_p$, $\mu_q$ and covariance matrices $\Sigma_p$ and $\Sigma_q$, respectively.
+In this case, the Gaussian distribution forms an exponential family with sufficient statistic $T(y)=(y, yy^\top)$.
+
+The Radon--Nikodym derivative is given by
+\begin{align} \label{eq:RN-gaussian}
+    \frac{dP_{a,x}}{dQ_{a,x}}(y) = \frac{|\Sigma_q|^{1/2}}{|\Sigma_p|^{1/2}} \exp\Bigg( -\frac12 (y-\mu_p)^\top \Sigma_p^{-1}(y-\mu_p) + \frac12 (y-\mu_q)^\top \Sigma_q^{-1}(y-\mu_q) \Bigg).
+\end{align}
+
+Accordingly, using \eqref{eq:RN-gaussian}, the $f$-divergence can be written as
+\begin{align}
+    D_f(P_{a,x}\|Q_{a,x}) = \mathbb{E}_{Q_{a,x}}\!\left[ f\!\left( \frac{dP_{a,x}}{dQ_{a,x}}(Y) \right) \right].
+\end{align}
+
+
+\paragraph{Poisson Distribution}
+
+Suppose $Y\in\{0,1,2,\dots\}$ and both $P_{a,x}$ and $Q_{a,x}$ are Poisson distributions with rate parameters $\lambda_p$ and $\lambda_q$, respectively.
+The Poisson distribution belongs to the exponential family with sufficient statistic $T(y)=y$ and natural parameter $\theta=\log\lambda$.
+
+The Radon--Nikodym derivative takes the form
+\begin{align}
+    \frac{dP_{a,x}}{dQ_{a,x}}(y) = \exp\left( y\log\frac{\lambda_p}{\lambda_q} - (\lambda_p-\lambda_q) \right).
+\end{align}
+
+The corresponding $f$-divergence is therefore
+\begin{align}
+    D_f(P_{a,x}\|Q_{a,x}) = \mathbb{E}_{Q_{a,x}}\left[ f\left( \exp\left( Y\log\frac{\lambda_p}{\lambda_q} - (\lambda_p-\lambda_q) \right) \right) \right].
+\end{align}
+
+\paragraph{Exponential Distribution}
+
+Suppose $Y\ge0$ and both $P_{a,x}$ and $Q_{a,x}$ follow exponential distributions with rate parameters $\lambda_p$ and $\lambda_q$, respectively.
+The exponential distribution is an exponential family with sufficient statistic $T(y)=y$ and natural parameter $\theta=-\lambda$.
+
+For $y\ge0$, the Radon--Nikodym derivative is given by
+\begin{align}
+    \frac{dP_{a,x}}{dQ_{a,x}}(y) = \frac{\lambda_p}{\lambda_q} \exp\left( -(\lambda_p-\lambda_q)y \right).
+\end{align}
+
+Accordingly, the $f$-divergence can be expressed as
+\begin{align}
+    D_f(P_{a,x}\|Q_{a,x}) = \mathbb{E}_{Q_{a,x}}\left[ f\left( \frac{\lambda_p}{\lambda_q} \exp\left( -(\lambda_p-\lambda_q)Y \right) \right) \right].
+\end{align}
+% Across all examples, the Radon--Nikodym derivative reduces to an exponential function of the sufficient statistic. This highlights how the $f$-divergence in Theorem~\ref{thm:f-divergence} depends solely on transformations of sufficient statistics within the exponential-family framework.
+
+
+% Without loss of generality, the divergence bond throughout this section 
+

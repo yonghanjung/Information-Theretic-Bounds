@@ -1,0 +1,219 @@
+\section{Debiased Semiparametric Estimation of Causal Bounds}\label{sec:5}
+Solving the dual problem in Eq.~\eqref{eq:dual} pointwise for each $(a,x)$ is computationally intractable, as it requires estimating the conditional expectation $\mathbb{E}_{P_{a,x}}[g^{\ast}(\cdot)]$ separately for each pair of covariate $X=x$ and treatment $A=a$ at every optimization iteration. We circumvent this by amortizing the optimization as follows: we view $\lambda(a,x)$ and $u(a,x)$ as functional parameters to be learned globally. Parameterizing $\lambda(a,x) \triangleq \exp(h(a,x))$ to enforce positivity, the dual problem transforms into:
+\begin{proposition}
+    \normalfont 
+    Let $\eta_f(a,x) \triangleq B_f(e_a(x))$. Then, 
+    \begin{align}\label{eq:dual2}
+        \theta_{\mathrm{up}}(a,x) = \inf_{h(a,x) \in \mathbb{R} \atop u(a,x) \in \mathbb{R}} \mathbb{E}_{P_{a,x}}\Big[ \exp({h(A,X)})\big\{\eta_f(A,X) + g^{\ast}\big( \tfrac{\varphi(Y) - u(A,X)}{\exp({h(A,X)})}\big) \big\}  + u(A,X)  \Big].
+    \end{align}
+\end{proposition}
+
+To operationalize this optimization, we define a loss function and corresponding risk function for the functional parameters $h$ and $u$:
+\begin{definition}[\textbf{Risk Function for Causal Bound}]\label{def:risk}
+    \normalfont
+    Let $V = (X,A,Y)$. Let $h_{\beta}, u_{\gamma}: \mathcal{A} \times \mathcal{X} \mapsto \mathbb{R}$ be maps parametrized by $\beta \in \mathbb{R}^{p_1}$ and $\gamma \in \mathbb{R}^{p_2}$. 
+    The risk function for causal bounds is 
+    \begin{align}\label{eq:risk}
+        \mathcal{R}(\beta,\gamma; e) \triangleq \mathbb{E}_{P}[\ell(V; (\beta, \gamma), e )],
+    \end{align}
+    where $e \triangleq e_A(X)$ and $\eta_f \triangleq \eta_f(A,X) \triangleq B_f(e_A(X))$, and 
+    \begin{align}\label{eq:loss}
+        \ell(V; (\beta, \gamma), e ) \triangleq \exp(h_{\beta}(A,X))\Big\{\eta_f(A,X) + g^{\ast}\Big( \tfrac{\varphi(Y) - u_{\gamma}(A,X)}{\exp(h_{\beta}(A,X)}\Big) \Big\}  + u_{\gamma}(A,X).
+    \end{align}
+\end{definition}
+The following proposition shows that this risk minimization is equivalent to solving the pointwise dual problem:
+\begin{proposition}[\textbf{Justification of Risk Function}]\label{prop:justification}
+    \normalfont
+    Define, for each $(a,x)$, the following loss
+    \begin{align}
+        \ell(h, u; y,a,x) \triangleq \exp(h(a,x))\Big\{\eta_f(a,x) + g^{\ast}\big( \tfrac{\varphi(y) - u(a,x)}{\exp(h(a,x))}\big) \Big\}  + u(a,x). 
+    \end{align}
+    Let $\mathcal{R}(h,u) \triangleq \mathbb{E}_{P}[\ell(h, u; Y,A,X)]$ be a risk function. Assume $\mathcal{R}(h,u) < \infty$ for all $h,u \in \mathcal{F}$, where $\mathcal{F}$ is a function class rich enough that for any $(h_1,u_1), (h_2,u_2) \in \mathcal{F}$ and $\forall B \subset \mathcal{A} \times \mathcal{X}$, $(h',u') \triangleq (h_1,u_1)\boldsymbol{1}_{B} + (h_2,u_2)\boldsymbol{1}_{B^c}$ also lies in $\mathcal{F}$. Then, for any fixed $(h^{\star}, u^{\star}) \in \mathcal{F}$, the followings are equivalent:
+    \begin{enumerate}[leftmargin=*]
+        \item $(h^{\star}, u^{\star})$ minimizes $\mathcal{R}$ over $\mathcal{F}$.
+        \item $(h^{\star}, u^{\star})$ minimizes $\mathbb{E}_{P_{a,x}}[\ell(h,u;Y,a,x)]$ for $P_{A,X}$-almost every $(a,x)$. 
+    \end{enumerate}
+\end{proposition}
+Proposition~\ref{prop:justification} establishes that solving the pointwise dual problem in Eq.~\eqref{eq:dual2} is equivalent to finding the global minimizer $(h^{\star}, u^{\star})$ of the risk function in Def.~\ref{def:risk}. This amortization substantially improves tractability: instead of solving a separate optimization for each $(a,x)$, we learn functional parameters that generalize across the covariate space.
+
+Since the risk function in Eq.~\eqref{eq:risk} depends on the unknown propensity score $e$, we must estimate it from data. However, estimating $e$ introduces errors that can propagate into the bound estimates. To mitigate this, we construct a debiased risk function that achieves first-order insensitivity (Neyman-orthogonality) to perturbations in $e$:
+\begin{definition}[\textbf{Debiased Risk Function}]\label{def:debiased-risk}
+    \normalfont
+    Let $\eta'_f(A,X)$ be the first-order derivative of $\eta_f(A,X)$ w.r.t. $e$. The debiased risk function is 
+    \begin{align}\label{eq:debiased-risk}
+        \mathcal{R}^{\mathrm{db}}(\beta, \gamma; e) \triangleq \mathbb{E}[\ell^{\mathrm{db}}(V; (\beta, \gamma), e)],
+    \end{align}
+    where 
+    \begin{align}
+        \ell^{\mathrm{db}}(V; (\beta, \gamma), e) &\triangleq  \underbrace{ \exp(h_{\beta}(A,X))\Big\{\eta_{f}(A,X) + g^{\ast}\big( \tfrac{\varphi(Y) - u_{\gamma}(A,X)}{\exp(h_{\beta}(A,X))}\big) \Big\}  + u_{\gamma}(A,X) }_{\text{Eq.~\eqref{eq:loss}}} \\ 
+        &+ \sum_{a\in\mathcal{A}} e_a(X)\exp(h_{\beta}(a,X)) \eta'_{f}(a,X)\,\big(\boldsymbol{1}(A=a) - e_a(X)\big) \label{eq:debiasedness}
+    \end{align}
+\end{definition}
+Here, Eq.~\eqref{eq:debiasedness} is an error correction term, which makes $\ell^{\mathrm{db}}(V; (\beta, \gamma), e)$ invariant to small first-order perturbations in $e$ (i.e., \textit{Neyman-orthogonal} \citep{chernozhukov2018double}):
+\begin{lemma}[\textbf{Orthogonality}]\label{lemma:orthogonality}
+    \normalfont
+    For any direction functions $\{s_a(\cdot)\}_{a \in \mathcal{A}}$ and any perturbation path $e_{t,a} \triangleq e_a + t s_a$ with sufficiently small $|t|$, $\tfrac{\partial }{\partial t}\mathcal{R}^{\mathrm{db}}(\beta,\gamma;e_t)\big\vert_{t=0} = 0$ for all $(\beta,\gamma)$. 
+\end{lemma}
+We now present our estimation procedure based on cross-fitting:
+\begin{definition}[\textbf{Debiased Causal Bound Estimators}]\label{def:cross-fit}
+    \normalfont
+    Fix a functional $\varphi$ and an $f$-divergence. Let $\ell^{\mathrm{db}}$ and $\mathcal{R}^{\mathrm{db}}$ be as in Def.~\ref{def:debiased-risk}. The debiased estimator of the upper causal bound $\theta_{u}(a,x)$ for any $(a,x) \in \mathcal{A} \times \mathcal{X}$ is constructed as follows:
+    \begin{enumerate}[leftmargin=*]
+        \item Randomly split the dataset $\mathcal{D}$ (with size $n$) into $K$ disjoint folds  $\mathcal{D}_1,\cdots,\mathcal{D}_K$. 
+        \item For each $k$ fold, learn $\widehat{e}^{k}_a$ using $\mathcal{D}_{-k} \triangleq \mathcal{D} \setminus \mathcal{D}_{k}$ for all $a \in \mathcal{A}$.
+        \item For each fold $k$, solve $\widehat{\vartheta}_k \triangleq (\hat \beta_k,\hat \gamma_k) \in \arg\min_{\beta, \gamma} \sum_{i \mid V_i \in \mathcal{D}_k} \ell^{\mathrm{db}}(V_i; (\beta,\gamma),\widehat{e}^k)$. 
+        \item For each fold $k$, evaluate 
+        \begin{align}
+            & \widehat h_k(a,x) \triangleq h_{\widehat\beta_k}(a,x),\qquad \widehat u_k(a,x) \triangleq u_{\widehat\gamma_k}(a,x),\\ 
+            &\widehat\lambda_k(a,x) \triangleq \exp\{\widehat h_k(a,x)\}, \qquad  \widehat\eta^{\,k}_f(a,x) \triangleq B_f\big(\widehat e^{\,k}_a(x)).
+        \end{align}
+        \item For each fold $k$ and each $i \in \mathcal{D}_k$, evaluate $Z^{k}_i \triangleq g^{\ast}\big(\tfrac{\varphi(Y_i) - \widehat u_k(A_i,X_i)}{\widehat\lambda_k(A_i,X_i)}\big)$, and learn a regressor $\widehat{m}_{k} $ by regressing $Z^{k}_i$ onto $(A,X)$ using $\mathcal{D}_k$. 
+        \item Evaluate $\widehat{\theta}^{(k)}_{\mathrm{up}}(a,x) \triangleq \widehat\lambda_k(a,x)\big(
+        \widehat\eta^{\,k}_f(a,x) + \widehat m_k(a,x) \big) + \widehat u_k(a,x)$ and return $\widehat{\theta}_{\mathrm{up}}(a,x)  \triangleq (1/K)\sum_{k=1}^{K}\widehat{\theta}^{(k)}_{\mathrm{up}}(a,x) $.
+    \end{enumerate}
+\end{definition}
+
+We now analyze the error of the proposed debiased estimator under following set of assumptions: 
+\begin{assumption}[\textbf{Regularity-1}]\label{assumption:regularity-condition}
+    \normalfont
+    Let $e \triangleq \{e_a(\cdot): a \in \mathcal{A}\}$ be the true propensity score, $\vartheta \triangleq (\beta,\gamma)$ and $\vartheta_0 \triangleq (\beta_0,\gamma_0) \in \arg\min_{\beta,\gamma} \mathcal{R}^{\mathrm{db}}(\beta,\gamma; e)$. 
+    \begin{enumerate}[leftmargin=*]
+        \item \textbf{Positivity:} $e_a(x) \in [c,1-c]$ for some constant $ 0< c  < 1/2$ for all $a,x \in \mathcal{A} \times \mathcal{X}$. 
+        \item \textbf{f-divergence regularity:} $f$ is convex and twice continuously differentiable; and the induced radius $B_f(e_a(x))$ is twice continuously differentiable on $[c,1-c]$, with bounded first and second derivative; i.e., $\sup_{e \in [c,1-c]} |B_f(e)| + |B'_f(e)| + |B''_{f}(e)| < \infty $. 
+        \item \textbf{Loss regularity:} For each fixed $e \in [c,1-c]$, the map $\vartheta \mapsto \ell^{\mathrm{db}}(V;\vartheta,e)$ is twice continuously differentiable, with 
+        \begin{align*}
+            \sup_{\vartheta,e} \|\ell^{\mathrm{db}}(V;\vartheta,e)\|^2_2 < \infty, \;\;\; \sup_{\vartheta,e} \|\nabla_\theta \ell^{\mathrm{db}}(V;\vartheta,e)\|^2_2 < \infty, \;\;\; \sup_{\theta,e}\|\nabla^2_{\vartheta\vartheta}\ell^{\mathrm{db}}(V;\vartheta,e)\|^2_2 < \infty.
+        \end{align*}
+        \item \textbf{Higher-order smoothness:} Let $H(\vartheta; e) \triangleq \nabla^{2}_{\vartheta\vartheta}R^{\mathrm{db}}(\vartheta; e)$. There exists a neighborhood $\varTheta_0$ of $\vartheta$ containing $\vartheta_0$ and constants $0 < \kappa \leq \kappa_2 < \infty$ such that 
+        \begin{align}
+            \kappa_1 \mathbf{I} \;\preceq\; H(\vartheta; e) \;\preceq\; \kappa_2 \mathbf{I} \quad\text{for all }\vartheta\in\varTheta_0.
+        \end{align}
+        \item \textbf{Uniform LLN:} For each fold $k$, define the empirical risk w.r.t. $\ell^{\mathrm{db}}$ with the training fold is $\widehat{R}^{\mathrm{db}}_k(\vartheta, \widehat{e}^k)$. Then, we have a uniform law-of-large-number:
+        \begin{align}
+            \sup_{\vartheta} \big| \widehat R_k^{\mathrm{db}}(\vartheta; \widehat e^{\,k}) - R^{\mathrm{db}}(\vartheta; \widehat e^{\,k}) \big| = O_p(n^{-1/2}),
+        \end{align}
+    \end{enumerate}
+\end{assumption}
+
+\begin{assumption}[\textbf{Regularity-2}]\label{assumption:regularity-condition-2}
+    \normalfont
+    For $\vartheta \triangleq (\beta, \gamma)$, let $Z_{\vartheta} \triangleq g^{\ast}\big( \tfrac{\varphi(Y) - u_{\gamma}(A,X)\}}{ \exp(h_\beta(A,X))}\big)$ and $m_{\vartheta}(a,x) \triangleq \mathbb{E}[Z_{\vartheta} \mid A=a,X=x]$. Let $\widehat{m}_k$ be the estimate for $m_{\vartheta}$ using the $k$-fold data.
+    \begin{enumerate}[leftmargin=*]
+        \item \textbf{Bounded nuisances:} $h_{\beta_0}, u_{\gamma_0}, h_{\hat{\beta}_k}, u_{\hat{\gamma}_k}$ are bounded by some constant $M$. 
+        \item \textbf{Lipschitz parameterization:} The map $(\beta,\gamma) \mapsto (h_{\beta}(a,x), u_{\gamma}(a,x)) $ is Lipschitz in $\vartheta = (\beta,\gamma)$ uniformly over all $(a,x)$ with constant $L_{\vartheta}$; i.e., 
+        \begin{align}
+            \sup_{a,x}\big(|h_{\beta}(a,x)-h_{\beta'}(a,x)| + |u_{\gamma}(a,x)-u_{\gamma'}(a,x)| \big) \le L_\vartheta\|\vartheta-\vartheta'\|.
+        \end{align}
+        \item \textbf{Smoothness of $g^{\ast}$:} The convex conjugate $g^{\ast}$ is continuously differentiable with bounded derivative; i.e., $\sup_{t \in \mathcal{T}}|(g^{\ast})'(t)| < \infty$ where $\mathcal{T}$ is a range where $g^{\ast}(t)$ is well-defined. 
+        \item \textbf{Assumption on regression:} $\|\widehat m_k - m_{\widehat\vartheta_k}\|_2 = O_p(s_n)$, where  $s_n$ is some sequence $s_n \rightarrow 0$; There exists a constant $L_m$ s.t. $\|m_{\vartheta} - m_{\vartheta'}\|_2 \leq L_m\|\vartheta-\vartheta'\|$. 
+        \item \textbf{Correct model choice}: Let $\overline{\theta}^{\star}_{\varphi,0}(a,x) \triangleq \mathbb{E}[\ell(V; (\beta_0,\gamma_0),e) \mid A=a,X=x]$. Then $\overline{\theta}^{\star}_{\varphi,0}(a,x) \triangleq \mathbb{E}[\ell(V; (\beta_0,\gamma_0),e) \mid A=a,X=x] = \overline{\theta}_{\varphi}(a,x)$ for all $(a,x)$. 
+    \end{enumerate}
+\end{assumption}
+
+We now formalize the convergence rate of the proposed debiased estimator:
+\begin{theorem}[\textbf{Error Analysis}]\label{thm:error-analysis}
+    \normalfont
+    Under Assumption~\ref{assumption:regularity-condition}, fix a fold $k$. Let $e$ be the true propensity score, and $\vartheta_0 \triangleq (\beta_0,\gamma_0) \in \arg\min_{\vartheta} \mathcal{R}^{\mathrm{db}}(\vartheta; e)$ for $\vartheta \triangleq (\beta,\gamma)$. Let $\widehat{\vartheta}_k \triangleq (\widehat{\beta}_k, \widehat{\gamma}_k)$ be the minimizer from Step 3 in Def.~\ref{def:cross-fit} with $\widehat{e}^k$. Define $r_n \triangleq O_p(\| \widehat{e}^k - e \|_2) $. Then, 
+    \begin{align}\label{eq:thm:error-analysis-1}
+        \|\widehat\vartheta_k - \vartheta_0\|^2_{2} = O_p\big(n^{-1/2} + r_n^2\big).
+    \end{align}
+    Furthermore, let $Z_{\vartheta} \triangleq g^{\ast}\big( \tfrac{\varphi(Y) - u_{\gamma}(A,X)}{ \exp(h_\beta(A,X))}\big)$ and $m_{\vartheta}(a,x) \triangleq \mathbb{E}[Z_{\vartheta} \mid A=a,X=x]$. Define $s_n \triangleq O_p(\|\widehat{m}_k - m_{\widehat{\vartheta}_k} \|_2)$ where $\widehat{m}_k$ is from Step 5 in Def.~\ref{def:cross-fit}. Let $\widehat{\theta}^{(k)}_{\mathrm{up}}$ be the estimated upper causal bound for the fold $k$. Under additional Assumption~\ref{assumption:regularity-condition-2},
+    \begin{align}\label{eq:thm:error-analysis-2}
+        \big\| \widehat{\theta}^{(k)}_{\mathrm{up}} - \theta_{\mathrm{up}} \big\|_2^2 = O_p\big( n^{-1/2} + r_n^2 + s_n^2 \big).
+    \end{align}
+\end{theorem}
+Thm.~\ref{thm:error-analysis} demonstrates the sample efficiency of our debiased estimator. Even when the nuisance components (the propensity score and the pseudo-outcome regression) converge slowly (e.g., at rate $n^{-1/4}$), both the dual parameters $\widehat{\vartheta}_k$ and the upper-bound estimator $\widehat{\theta}_{\mathrm{up}}^{(k)}$ achieve the faster rate (e.g., at rate $n^{-1/2}$). Specifically, the sample-efficiency gain is of order $O_p(r^2_n)$ rather than $O_p(r_n)$ that would result from using the non-debiased risk function (Eq.~\eqref{eq:risk}). This improvement stems from the orthogonal construction of the debiased risk, which eliminates first-order sensitivity to propensity score errors (Lemma~\ref{lemma:orthogonality}). Consequently, nuisance components can be estimated using flexible machine learning methods while the estimator retains faster convergence rates.
+
+\subsection{Ensemble Bound Aggregation}\label{sec:5.1}
+Different $f$-divergences encode distinct notions of distributional discrepancy, and no single divergence uniformly dominates others in tightness across all data distributions. Consequently, we estimate bounds using a collection $\mathcal{F}$ of $f$-generators (e.g., $\mathcal{F} = \{f_{\mathrm{KL}}, f_{\mathrm{TV}}, f_{\chi^2}, \cdots \}$), yielding a family of upper bound estimates $\widehat{\boldsymbol{\theta}}_{\mathrm{up}} \triangleq \{\widehat{\theta}_{\mathrm{up},f}: f \in \mathcal{F}\}$ where $\widehat{\theta}_{\mathrm{up},f}$ is an upper-bound estimate for a fixed $f \in \mathcal{F}$. Let $\widehat{\boldsymbol{\theta}}_{\mathrm{lo}}$ be defined similarly. To construct the tightest valid interval, we aggregate these bounds while accounting for potential finite-sample violations due to estimation error and numerical instability. 
+
+Our aggregation strategy addresses this challenge via order statistics:
+\begin{definition}[\textbf{$k$-th order statistics aggregator}]\label{def:kth}
+\normalfont
+    Let $\widehat{\boldsymbol{\theta}}_{\mathrm{lo}}, \widehat{\boldsymbol{\theta}}_{\mathrm{up}}$ 
+    denote candidate lower and upper bounds, respectively, with  $n_f \triangleq \lvert \widehat{\boldsymbol{\theta}}_{\mathrm{lo}} \rvert  = \lvert \widehat{\boldsymbol{\theta}}_{\mathrm{up}} \rvert$. 
+    For $k \in \{1,\dots,n_f\}$, the \emph{$k$-th order-statistics aggregator} ($k$-agg) is defined as the pair $(\widehat{\theta}_{\mathrm{lo}}^{k}, \widehat{\theta}_{\mathrm{up}}^{k})$, where $\widehat{\theta}_{\mathrm{lo}}^{k}$ is the $k$-th largest element of  $\widehat{\boldsymbol{\theta}}_{\mathrm{lo}}$ and $\widehat{\theta}_{\mathrm{up}}^{k}$ is the $k$-th smallest element of $\widehat{\boldsymbol{\theta}}_{\mathrm{up}}$.
+\end{definition}
+
+The following lemma formalizes the validity condition for the $k$-th order aggregator:
+
+\begin{lemma}[\textbf{Valid Coverage under Partial Correctness}]\label{lemma:valid-coverage}
+    \normalfont
+    For a fixed $(a,x)$, 
+    \begin{itemize}[leftmargin=*]
+        \item $\widehat{\theta}^{k}_{\mathrm{lo}}(a,x) \le \theta(a,x)$ iff at least $(n_f - k + 1)$ elements of $\widehat{\boldsymbol{\theta}}_{\mathrm{lo}}$ are smaller or equal to $\theta(a,x)$. 
+        \item $\widehat{\theta}^{k}_{\mathrm{up}}(a,x) \ge \theta(a,x)$ iff at least $(n_f - k + 1)$ elements of $\widehat{\boldsymbol{\theta}}_{\mathrm{up}}$ are greater or equal to $\theta(a,x)$. 
+    \end{itemize}
+\end{lemma}
+Lemma~\ref{lemma:valid-coverage} guarantees that the $k$-agg produces valid bounds as long as at least $(n_f - k + 1)$ divergences yield correct estimates. This robustness property is critical: even if a minority of divergences fail (due to finite-sample violations or numerical issues), the aggregator automatically discards outliers by selecting the $k$-th order statistic. In practice, the $k$-agg is implemented by initializing $k = 1$ (selecting the tightest bounds) and iteratively incrementing $k \leftarrow k+1 $ until $\widehat{\theta}^{k}_\mathrm{lo} \leq \widehat{\theta}^{k}_{\mathrm{up}}$ is satisfied.  
+
+
+\subsection{Debiased Estimation for Average Causal Effects}
+When covariates are absent ($X = \emptyset$), the estimation procedure simplifies substantially. The marginal propensity score $e_a \triangleq \Pr(A=a)$ can be estimated at rate $o_P(n^{-1/2})$ via sample proportions, eliminating the need for the debiasing correction in Eq.~\eqref{eq:debiasedness}. We now specialize our framework to this covariate-free setting.
+\begin{definition}[\textbf{Risk Function (Marginal Case)}]\label{def:risk-emptyX}
+    \normalfont
+    Let $h \triangleq \{h_a \in \mathbb{R}^{+}: a \in \mathcal{A}\}$ and $u \triangleq \{u_a \in \mathbb{R}^{+}: a \in \mathcal{A}\}$. Let $V \triangleq (A,Y)$ and $\eta^a_f \triangleq B_f(e_a)$. A risk function for causal bound when $X=\emptyset$ is 
+    \begin{align}\label{eq:risk-ate}
+        \mathcal{R}(h,u;e) \triangleq \mathbb{E}_{P}[\ell(V;(h,u),\eta_f)],
+    \end{align}
+    where 
+    \begin{align}\label{eq:loss-ate}
+        \ell(V; (h,u), e ) \triangleq \exp({h_A})\big\{\eta^a_f + g^{\star}\big( \tfrac{\varphi(Y) - u_{A}}{\exp({h_A})} \big) \big\} + u_{A}. 
+    \end{align}
+\end{definition}
+The estimator for the marginal case directly minimizes the risk in Def.~\ref{def:risk-emptyX} without debiasing: 
+\begin{definition}[\textbf{Bound Estimator (Marginal Case)}]\label{def:bound-average}
+    \normalfont
+    Fix a functional $\varphi$ and an $f$-divergence. Let $\ell$ and $\mathcal{R}$ be as in Def.~\ref{def:risk-emptyX}. Let the observed sample be i.i.d. $\{V_i \triangleq (A_i, Y_i)\}_{i=1}^{n}$. Define $n_a \triangleq \sum_{i=1}^{n}\boldsymbol{1}(A_i = a)$. The estimator of the upper causal bound $\overline{\theta}_{\varphi} (a)$ for any $a \in \mathcal{A}$ is constructed as follows:
+    \begin{enumerate}[leftmargin=*]
+        \item Estimate the marginal propensity $\widehat{e}_a \triangleq n_a /n $.
+        \item Solve $\widehat{\vartheta} \triangleq (\widehat{h},\widehat{u}) \in \arg\min_{h,u}\sum_{i=1}^{n}\ell(V_i; (h,u), \widehat{e})$. 
+        \item Evaluate $\widehat{\lambda}_a \triangleq \exp(\widehat{h}_a)$. 
+        \item Define the pseudo-outcome $\widehat Z_i \equiv g^{\ast}\!\Big(\tfrac{\varphi(Y_i)-\widehat {u}_{A_i}}{\widehat\lambda_{A_i}}\Big)$ and evaluate $\widehat{m}_a \triangleq (1/n_a)\sum_{i:A_i = a}\widehat{Z}_i$. 
+        \item Return $\widehat\theta_{\varphi,f}(a)
+\equiv \widehat\lambda_a\Big(\widehat\eta_{f,a}+\widehat m_a\Big)+\widehat u_a$, for $a \in \mathcal{A}$. 
+    \end{enumerate}
+\end{definition}
+
+We now analyze the error of the proposed debiased estimator under following set of assumptions: 
+\begin{assumption}[\textbf{Regularity (Marginal Case)}]\label{assumption:regularity-condition-3}
+    \normalfont
+    Let $e \triangleq \{e_a: a \in \mathcal{A}\}$ where $e_a \triangleq \Pr(A=a)$, $\vartheta \triangleq (\beta,\gamma)$ and $\vartheta_0 \in \arg\min_{\vartheta} \mathcal{R}(\vartheta; e)$ where $\vartheta \triangleq (h,u) \triangleq  \{(h_a,u_a): a \in \mathcal{A}\}$. Let $Z_{\vartheta} \triangleq g^{\ast}\big( \tfrac{\varphi(Y) - u_A}{\exp(h_A)}\big)$. Let $m_{\vartheta,a} \triangleq \mathbb{E}_{P_a}[Z_{\vartheta}]$. 
+    \begin{enumerate}[leftmargin=*]
+        \item \textbf{Positivity:} $e_a \in [c,1-c]$ for some constant $ 0< c  < 1/2$ for all $a \in \mathcal{A} $. 
+        \item \textbf{f-divergence regularity:} $f$ is convex and twice continuously differentiable; and the induced radius $B_f$ is twice continuously differentiable on $[c,1-c]$ with bounded derivatives; i.e., $\sup_{e \in [c,1-c]} |B_f(e)| + |B'_f(e)| + |B''_{f}(e)| < \infty $. 
+        \item \textbf{Loss regularity:} For each fixed $e \in [c,1-c]$, the map $\vartheta \mapsto \ell(V;\vartheta,e)$ is twice continuously differentiable, with 
+        \begin{align*}
+            \sup_{\vartheta,e} \|\ell(V;\vartheta,e)\|^2_2 < \infty, \;\;\; \sup_{\vartheta,e} \|\nabla_\theta \ell(V;\vartheta,e)\|^2_2 < \infty, \;\;\; \sup_{\theta,e}\|\nabla^2_{\vartheta\vartheta}\ell(V;\vartheta,e)\|^2_2 < \infty.
+        \end{align*}
+        \item \textbf{Higher-order smoothness:} Let $H(\vartheta; e) \triangleq \nabla^{2}_{\vartheta\vartheta}R(\vartheta; e)$. There exists a neighborhood $\varTheta_0$ of $\vartheta$ containing $\vartheta_0$ and constants $0 < \kappa \leq \kappa_2 < \infty$ such that 
+        \begin{align}
+            \kappa_1 \mathbf{I} \;\preceq\; H(\vartheta; e) \;\preceq\; \kappa_2 \mathbf{I} \quad\text{for all }\vartheta\in\varTheta_0.
+        \end{align}
+        \item \textbf{Uniform LLN:} Define the empirical risk w.r.t. $\ell$ with the training fold is $\widehat{R}(\vartheta, \widehat{e})$. Then, we have a uniform law-of-large-number:
+        \begin{align}
+            \sup_{\vartheta} \big| \widehat R(\vartheta; \widehat e) - R(\vartheta; \widehat e) \big| = O_p(n^{-1/2}).
+        \end{align}
+        \item \textbf{Bounded parameters:} $h_a, u_a$ are bounded by some constant $M$. 
+        \item \textbf{Smoothness of $g^{\ast}$:} The convex conjugate $g^{\ast}$ is continuously differentiable with bounded derivative; i.e., $\sup_{t \in \mathcal{T}}| (g^{\ast})'(t)| < \infty$ where $\mathcal{T}$ is a range where $g^{\ast}(t)$ is well-defined. 
+    \end{enumerate}
+\end{assumption}
+
+The following theorem establishes the convergence rate for the marginal case:
+\begin{theorem}[\textbf{Error Analysis (Marginal Case)}]\label{thm:error-ate}
+\normalfont
+Assume Assumption~\ref{assumption:regularity-condition-3}. Let $e_0\triangleq\{e_{0,a}:a\in\mathcal A\}$
+with $e_{0,a}\equiv\Pr(A=a)$ and let $\widehat e_a\equiv n_a/n$. Let
+$\vartheta_0\in\arg\min_{\vartheta\in\Theta} R(\vartheta;e_0)$ and
+$\widehat\vartheta\in\arg\min_{\vartheta\in\Theta}\widehat R_n(\vartheta;\widehat e)$.
+Let $\overline\theta_\varphi$ and $\widehat\theta_\varphi$ be the population target and the estimator
+defined in Def.~\ref{def:bound-average} (marginal case).
+Then
+\begin{align}
+\|\widehat\vartheta-\vartheta_0\|_2^2 = O_p(n^{-1/2}),
+\qquad
+\|\widehat\theta_\varphi-\overline\theta_\varphi\|_2^2 = O_p(n^{-1/2}).
+\end{align}
+\end{theorem}
+
+Thm.~\ref{thm:error-ate} shows that in the marginal case, both the dual parameters and the bound estimator achieve a \emph{squared} error rate of $O_p(n^{-1/2})$ (implying a parameter convergence rate of $O_p(n^{-1/4})$) without requiring debiasing. This is because the marginal propensity score $\widehat{e}_a = n_a/n$ converges at rate $O_p(n^{-1/2})$, which is fast enough that first-order bias terms vanish asymptotically. This contrasts with the conditional case (Thm.~\ref{thm:error-analysis}), where debiasing is essential to handle slower convergence rates of nonparametric nuisance estimators.

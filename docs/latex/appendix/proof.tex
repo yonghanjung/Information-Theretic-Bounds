@@ -1,0 +1,775 @@
+\section{Proofs}\label{app:proof}
+\subsection*{Proof of Thm.~\ref{thm:f-divergence}}
+
+We first declare some useful results: 
+\begin{lemma}[\textbf{f-divergence with Conditional Measure}]\label{lemma:f-divergence-conditional}
+    \normalfont
+    Let $P$ on $(\Omega, \mathcal{F})$ be an arbitrary probability measure. Let $E \in \mathcal{F}$ be a fixed event such that $P(E) = p \in (0,1)$. Let $P_E(\cdot) \triangleq P(\cdot \mid E)$. Then, 
+    \begin{align}
+        D_{f}(P_E \| P) = pf(\tfrac{1}{p}) + (1-p)f(0)
+    \end{align}
+\end{lemma}
+\begin{proof}
+Define the conditional-on-an-event measure $P_E$ by
+\begin{align}
+P_E(B) \coloneqq P(B\mid E)=\frac{P(B\cap E)}{P(E)},\qquad \forall B\in\mathcal{F},
+\end{align}
+where $P(E)=p\in(0,1)$. Then $P_E\ll P$ since $P(B)=0\Rightarrow P(B\cap E)=0\Rightarrow P_E(B)=0$.
+Hence, by the Radon--Nikodým theorem, there exists a measurable function
+$g=\frac{dP_E}{dP}$ (unique $P$-a.e.) such that
+\begin{align}
+P_E(B)=\int_B g(\omega)\,P(d\omega),\qquad \forall B\in\mathcal{F}.
+\end{align}
+A valid version is $g(\omega)=\frac{1}{p}\,\Ind_E(\omega)$ since, for any $B\in\mathcal{F}$,
+\begin{align}
+\int_B \frac{1}{p}\Ind_E(\omega)\,P(d\omega)
+=\frac{1}{p}P(B\cap E)=\frac{P(B\cap E)}{P(E)}=P_E(B).
+\end{align}
+Therefore,
+\begin{align}
+D_f(P_E\|P)
+&=\int_\Omega f\!\left(\frac{dP_E}{dP}(\omega)\right)P(d\omega) \\ 
+&=\int_E f\!\left(\frac{1}{p}\right)P(d\omega)+\int_{E^c} f(0)\,P(d\omega) \\
+&=pf\!\left(\frac{1}{p}\right)+(1-p)f(0).
+\end{align}
+\end{proof}
+
+\begin{lemma}[\textbf{Data Processing Inequality} \citep{csiszar1967fdivergenceDPI}]\label{lemma:DPI}
+    \normalfont
+    Let $P_X$ and $Q_X$ denote probability measures on $(\mathcal{X}, \mathcal{F}_X)$. Let $P_{Y \mid X}$ be a Markov kernel from $(\mathcal{X}, \mathcal{F}_X)$ to $(\mathcal{Y}, \mathcal{F}_Y)$. Let $P_Y, Q_Y$ be the transformation of $P_X,Q_X$, respectively, when pushed through $P_{Y\mid X}$; i.e., $P_Y(B) = \int_{\mathcal{X}}P_{Y \mid X}(B \mid x)dP_X(x)$, and $Q_Y$ is defined similarly. Then, for any $f$-divergence, we have  
+    \begin{align}
+        D_f(P_Y \| Q_Y) \leq D_f(P_X \| Q_X).
+    \end{align}
+\end{lemma}
+
+
+For any fixed $X=x$, define the event $E\coloneqq\{A=a\}$ under the measure $P_{U,A\mid X=x}$, so that
+$P(E\mid x)=P(A=a\mid X=x)=e_a(x)$.
+Let
+\begin{align}
+P_E(\cdot\mid x)\coloneqq P_{U,A\mid X=x}(\,\cdot\,\mid E)
+= P_{U,A\mid X=x,A=a}.
+\end{align}
+By Lemma~\ref{lemma:f-divergence-conditional},
+\begin{align}
+D_f\!\left(P_{U,A\mid X=x,A=a}\,\big\|\,P_{U,A\mid X=x}\right)
+= e_a(x)f\!\left(\frac{1}{e_a(x)}\right)+(1-e_a(x))f(0)
+\equiv B_f(e_a(x)).
+\end{align}
+
+Define the (Markov) transition kernel $K_{a,x}$ from $(\mathcal{U}\times\mathcal{A},\mathcal{F}_{U,A})$
+to $(\mathcal{Y},\mathcal{F}_Y)$ by, for any $B\in\mathcal{F}_Y$,
+\begin{align}
+K_{a,x}(B\mid u,a') \coloneqq P(Y\in B\mid U=u, A=a, X=x),
+\end{align}
+(note $K_{a,x}$ is constant in $a'$).
+
+Pushing $P_{U,A\mid X=x}$ through $K_{a,x}$ yields
+\begin{align}
+\int K_{a,x}(B\mid u,a')\,P_{U,A\mid X=x}(du\,da')
+= \int P(Y\in B\mid u,a,x)\,P_{U,A\mid X=x}(du\,da')
+= P(Y\in B\mid \mathrm{do}(A=a),X=x).
+\end{align}
+Similarly, pushing $P_{U,A\mid X=x,A=a}$ through $K_{a,x}$ yields
+\begin{align}
+\int K_{a,x}(B\mid u,a')\,P_{U,A\mid X=x,A=a}(du\,da')
+= \int P(Y\in B\mid u,a,x)\,P_{U\mid X=x,A=a}(du)
+= P(Y\in B\mid A=a,X=x).
+\end{align}
+By the data processing inequality (Lemma~\ref{lemma:DPI}),
+\begin{align}
+D_f\!\left(P_{Y\mid A=a,X=x}\,\big\|\,P_{Y\mid \mathrm{do}(A=a),X=x}\right)
+\le
+D_f\!\left(P_{U,A\mid X=x,A=a}\,\big\|\,P_{U,A\mid X=x}\right)
+= B_f(e_a(x)).
+\end{align}
+\hfill $\blacksquare$. 
+
+
+
+
+
+
+
+\subsection*{Proof of Cor.~\ref{cor:f-divergence}}
+
+\paragraph{KL.} With $f(t) = t\log t$ with $f(0) = 0$, we have 
+\begin{align}
+    B(e_a(x), f) = -e_a(x)\frac{1}{e_a(x)}\log e_a(x) = -\log e_a(x). 
+\end{align}
+Therefore, 
+\begin{align}
+    D_{\mathrm{KL}}(P(Y \mid a,x) \| Q(Y \mid a,x)) \leq -\log e_a(x). 
+\end{align}
+
+
+
+
+\paragraph{Hellinger.} With $f(t) = \tfrac{1}{2}(\sqrt{t}-1)^2 $ with $f(0) = 1/2$, we have 
+\begin{align}
+    B(e_a(x), f) &= e_a(x)f\big(\tfrac{1}{e_a(x)}\big) + (1-e_a(x))f(0)  \\ 
+                &= \frac{1}{2}e_a(x) \Big(\sqrt{\tfrac{1}{e_a(x)}} - 1\Big)^2 + \frac{1}{2}(1-e_a(x)) \\ 
+                &= 1 - \sqrt{e_a(x)}.
+\end{align}
+
+To tighten, we use the following lemma: 
+\begin{lemma}[\textbf{Hellinger divergence vs. KL divergence}]\label{lemma:hellinger-KL}
+    \normalfont
+    For any $P,Q$ such that $P \ll Q$, 
+    \begin{align}
+        D_{\mathrm{H}}(P \| Q) \leq \frac{1}{2}D_{\mathrm{KL}}(P \| Q). 
+    \end{align}
+\end{lemma}
+\begin{proof}
+    We start with 
+    \begin{align}
+        D_{\mathrm{H}}(P \| Q)  \triangleq \frac{1}{2}\int (\sqrt{p}(x) - \sqrt{q}(x))^2dx = 1-\int \sqrt{p(x)q(x)}dx.
+    \end{align}
+    Define $\mathtt{BC}(P,Q) \triangleq \int \sqrt{p(x)q(x)}dx$. Then, $D_{\mathrm{H}}(P \| Q)  = 1-\mathtt{BC}(P,Q)$. Define $D_{\mathrm{B}}(P \| Q) \triangleq -\log \mathtt{BC}(P,Q)$, which is known as Bhattacharyya distance. 
+
+    Define $r(X) \triangleq \frac{q(x)}{p(x)}$. Then,
+    \begin{align}
+        \mathtt{BC}(P,Q) &= \int \sqrt{p(x) q(x)} dx =  \int \sqrt{\tfrac{q(x)}{p(x)}} p(x)dx = \mathbb{E}_{P}\Big[\sqrt{r(X)}\Big]. 
+    \end{align}
+    By Jensen's inequality, we have 
+    \begin{align}
+        \log \mathtt{BC}(P,Q)  = \log \mathbb{E}_{P}\Big[\sqrt{r(X)}\Big]  \geq  \mathbb{E}_{P}\Big[\log \sqrt{r(X)}\Big] = \frac{1}{2}\mathbb{E}_{P}[\log r(X)].
+    \end{align}
+    Also, 
+    \begin{align}
+        \mathbb{E}_{P}[\log r(X)] = \int p(x) \log \frac{q(x)}{p(x)}dx = -D_{\mathrm{KL}}(P,Q).
+    \end{align}
+    Combining, 
+    \begin{align}
+        -\frac{1}{2}D_{\mathrm{KL}}(P \| Q) \leq \log \mathtt{BC}(P,Q) \;\;\Leftrightarrow\;\; 1-\exp\Big(-\frac{1}{2}D_{\mathrm{KL}}(P \| Q)\Big) \geq 1-\mathtt{BC}(P,Q).
+    \end{align}
+    Finally, 
+    \begin{align}
+        D_{\mathrm{H}}(P \| Q)  = 1-\mathtt{BC}(P,Q) \leq 1-\exp\Big(-\frac{1}{2}D_{\mathrm{KL}}(P \| Q)\Big) \leq \frac{1}{2}D_{\mathrm{KL}}(P \| Q),
+    \end{align}
+    where the last inequality holds since $1-e^{-u} \leq u$ for any $u \geq 0$.
+\end{proof}
+As a result, we can derive 
+\begin{align}
+    D_{\mathrm{H}}(P(Y \mid a,x) \| Q(Y \mid a,x)) \leq -\frac{1}{2}\log e_a(x). 
+\end{align}
+Finally, for $e_a(x) \in (0,1)$, the following holds: 
+\begin{align}
+    1-\sqrt{e_a(x)} \leq -\frac{1}{2}\log e_a(x). 
+\end{align}
+
+\paragraph{$\chi^2$-divergence.}
+Set $f(t) \triangleq \tfrac{1}{2}(t-1)^2$. Then, $B_f(e_a)  = \tfrac{1-e_a(x)}{2e_a(x)}$.
+
+\paragraph{Total variation.}
+First, $B_{f_\mathrm{TV}}(e) = 1-e$.
+
+Second, by Pinsker's inequality and the above inequality, 
+\begin{align}
+    D_{\mathrm{TV}}(P \| Q) \leq \sqrt{\frac{1}{2}D_{\mathrm{KL}}(P \| Q)} \leq \sqrt{-\frac{1}{2}\log e_a(x)}. 
+\end{align}
+By Bretagnolle–Huber bound \citep{bretagnolle1979estimation} and the above inequality, 
+\begin{align}
+    D_{\mathrm{TV}}(P \| Q) \leq \sqrt{ 1-\exp(-D_{\mathrm{KL}}(P \| Q)) } \leq \sqrt{1-e_a(x)}.
+\end{align}
+
+Finally, $\min\left( 1-e_a(x), \sqrt{1-e_a(x)}, \sqrt{-\frac{1}{2}\log e_a(x)}\right) = 1-e_a(x)$ for all $e_a(x) \in (0,1)$.  
+
+\paragraph{Jensen-Shannon.}
+With $f_{\mathrm{JS}}(t) \triangleq \frac{1}{2}\big(t\log t - (t+1)\log(\frac{t+1}{2})\big)$ and $f_{\mathrm{JS}}(0) = \frac{1}{2}\log 2$, we have:
+\begin{align}
+    B_{f_{\mathrm{JS}}}(e_a(x)) &= e_a(x)f_{\mathrm{JS}}\Big(\frac{1}{e_a(x)}\Big) + (1-e_a(x))f_{\mathrm{JS}}(0) \\
+    &= \frac{e_a(x)}{2} \left[ \frac{1}{e_a(x)}\log\Big(\frac{1}{e_a(x)}\Big) - \Big(\frac{1}{e_a(x)}+1\Big)\log\left(\frac{1+e_a(x)}{2e_a(x)}\right) \right] \nonumber \\ 
+    &\quad + \frac{1-e_a(x)}{2}\log 2 \\
+    &= \frac{1}{2} \left[ -\log e_a(x) - (1+e_a(x))\log\left(\frac{1+e_a(x)}{2e_a(x)}\right) + (1-e_a(x))\log 2 \right] \\
+    &= \frac{1}{2} \left[ -\log e_a(x) - (1+e_a(x))\big[\log(1+e_a(x)) - \log e_a(x) - \log 2\big] + \log 2 - e_a(x)\log 2 \right] \\
+    &= \frac{1}{2} \Big[ -\log e_a(x) - (1+e_a(x))\log(1+e_a(x)) + \log e_a(x) \nonumber \\ 
+    &\quad \qquad + e_a(x)\log e_a(x) + 2\log 2 + e_a(x)\log 2 - e_a(x)\log 2 \Big] \\
+    &= \frac{1}{2} \left[ e_a(x)\log e_a(x) - (1+e_a(x))\log(1+e_a(x)) + 2\log 2 \right] \\
+    &= \frac{1}{2} \log \left( \frac{4 e_a(x)^{e_a(x)}}{(1+e_a(x))^{1+e_a(x)}} \right).
+\end{align}
+
+\hfill $\blacksquare$
+
+
+\subsection*{Proof of Cor.~\ref{cor:mean-mmd-ipm}}
+
+By definition, for any class of functions $\mathcal{F}$, the Integral Probability Metric (IPM) satisfies:
+\begin{align}
+    D_{\mathrm{IPM},\mathcal{F}}(P \| Q) = \sup_{f \in \mathcal{F}} \left| \mathbb{E}_{P}[f(Y)] - \mathbb{E}_{Q}[f(Y)] \right|.
+\end{align}
+If $f(Y) \in [a, b]$ for all $y \in \mathcal{Y}$, then for any probability measures $P, Q$:
+\begin{align}
+    \left| \mathbb{E}_{P}[f(Y)] - \mathbb{E}_{Q}[f(Y)] \right| \leq (b-a) D_{\mathrm{TV}}(P, Q).
+\end{align}
+For $\mathcal{F}_C \triangleq \{ f: \|f\|_{\infty} < C \}$, we have $f(y) \in (-C, C)$, so the range is $2C$. Consequently, 
+\begin{align}
+    D_{\mathrm{IPM},\mathcal{F}_C}(P_{a,x} \| Q_{a,x}) \leq 2C \cdot D_{\mathrm{TV}}(P_{a,x} \| Q_{a,x}).
+\end{align}
+From Corollary~\ref{cor:f-divergence}, we have $D_{\mathrm{TV}}(P_{a,x} \| Q_{a,x}) \leq 1 - e_a(x)$. Furthermore, by Pinsker's inequality and the KL bound from Corollary~\ref{cor:f-divergence}:
+\begin{align}
+    D_{\mathrm{TV}}(P_{a,x} \| Q_{a,x}) \leq \sqrt{\frac{1}{2} D_{\mathrm{KL}}(P_{a,x} \| Q_{a,x})} \leq \sqrt{-\frac{1}{2} \log e_a(x)}.
+\end{align}
+Combining these yields the result for IPM.
+
+For MMD, let $\mathcal{H}_k$ be an RKHS with kernel $\mathtt{k}$ such that $\mathtt{k}(y, y) \le K$ for all $y$. For any $h \in \mathcal{H}_k$ with $\|h\|_{\mathcal{H}_k} \le 1$, we have $|h(y)| = |\langle h, \mathtt{k}_y \rangle| \le \|h\|_{\mathcal{H}_k} \sqrt{\mathtt{k}(y, y)} \le \sqrt{K}$. Thus, $h(y) \in [-\sqrt{K}, \sqrt{K}]$, and the range is $2\sqrt{K}$. Following similar logic:
+\begin{align}
+    D_{\mathrm{MMD},\mathtt{k}}(P_{a,x} \| Q_{a,x}) \leq 2\sqrt{K} \cdot D_{\mathrm{TV}}(P_{a,x} \| Q_{a,x}).
+\end{align}
+Using the TV bounds derived above, we obtain the MMD bound. \hfill $\blacksquare$
+
+\subsection*{Proof of Prop.~\ref{prop:lower-upper}}
+We will prove the following statement: For any arbitrary function $f$ over some space $\mathcal{X}$, the following holds: $\inf_{x \in \mathcal{X}} f(x) \;=\; - \sup_{x \in \mathcal{X}} \big(-f(x)\big)$. 
+\begin{align}
+    \inf_{x \in \mathcal{X}} f(x) \;=\; - \sup_{x \in \mathcal{X}} \big(-f(x)\big).
+\end{align}
+For any $x \in \mathcal{X}$, 
+    \begin{align}
+        -f(x) \leq -\inf_{x'} f(x'), \;\; \forall x \in \mathcal{X} \implies \inf_{x \in \mathcal{X}} f(x)  \leq -\sup_{x \in \mathcal{X}}(-f(x)). 
+    \end{align}
+    Also, by the definition of infimum, for any $\varepsilon > 0$, there exists $x_{\epsilon}$ such that 
+    \begin{align}
+        f(x_\varepsilon) \le \inf_{x \in \mathcal{X}} f(x) + \varepsilon.
+    \end{align}
+    Then, 
+    \begin{align}
+        -f(x_\varepsilon) \ge -\inf_x f(x) - \varepsilon \implies \sup_{x \in \mathcal{X}} (-f(x)) \ge -\inf_{x \in \mathcal{X}} f(x) - \varepsilon.
+    \end{align}
+    By taking $\epsilon \downarrow 0$, we have $\sup_{x \in \mathcal{X}} (-f(x)) \ge -\inf_{x\in\mathcal{X}} f(x)$. The proof is done by combining these two inequalities.  \hfill $\blacksquare$
+
+
+\subsection*{Proof of Thm.~\ref{thm:representation-bound}}
+
+Fix $(a,x)$ and write $P_{a,x}$ and $Q_{a,x}$ for the observational and interventional laws
+on $(\mathcal{Y},\mathcal{F})$. By Assumption~\ref{assumption} (mutual absolute continuity),
+the Radon--Nikodym derivative
+\begin{align}
+s(y) \;\coloneqq\; \frac{dQ_{a,x}}{dP_{a,x}}(y)
+\end{align}
+exists and satisfies $s(Y)>0$ $P_{a,x}$-a.s. For any measurable $\phi$ with
+$\mathbb{E}_{Q_{a,x}}[|\phi(Y)|]<\infty$,
+\begin{align}
+\mathbb{E}_{Q_{a,x}}[\phi(Y)]
+= \int \phi(y)\,Q_{a,x}(dy)
+= \int \phi(y)\,s(y)\,P_{a,x}(dy)
+= \mathbb{E}_{P_{a,x}}[s(Y)\phi(Y)].
+\end{align}
+Moreover, $\mathbb{E}_{P_{a,x}}[s(Y)]=\int dQ_{a,x}=1$. Define $g(s)\coloneqq s f(1/s)$
+for $s>0$. Then
+\begin{align}
+\mathbb{E}_{P_{a,x}}[g(s(Y))]
+= \int s(y) f(1/s(y))\,P_{a,x}(dy)
+= \int f\!\left(\frac{dP_{a,x}}{dQ_{a,x}}(y)\right)\,Q_{a,x}(dy)
+= D_f(P_{a,x}\|Q_{a,x}).
+\end{align}
+Hence the constraint $D_f(P_{a,x}\|Q_{a,x})\le \eta_f(a,x)$ is equivalent to
+$\mathbb{E}_{P_{a,x}}[g(s(Y))]\le \eta_f(a,x)$, and the upper bound admits the primal form
+\begin{align}
+\theta_{\mathrm{up}}(a,x)
+= \sup_{s>0}\Big\{ \mathbb{E}_{P_{a,x}}[s(Y)\phi(Y)] :
+\mathbb{E}_{P_{a,x}}[s(Y)]=1,\;
+\mathbb{E}_{P_{a,x}}[g(s(Y))]\le \eta_f(a,x)\Big\}.
+\end{align}
+
+This is a convex optimization problem (equivalently, minimize $-\mathbb{E}_{P_{a,x}}[s\phi]$)
+with an affine equality and a convex inequality constraint. Slater's condition holds because
+$s(\cdot)\equiv 1$ is feasible and satisfies
+$\mathbb{E}_{P_{a,x}}[g(1)]=f(1)=0<\eta_f(a,x)$ (for $\eta_f(a,x)>0$). Therefore, strong
+duality applies and the optimal value equals the dual optimal value.
+
+Introduce Lagrange multipliers $u\in\mathbb{R}$ for $\mathbb{E}_{P_{a,x}}[s]=1$ and
+$\lambda\ge 0$ for $\mathbb{E}_{P_{a,x}}[g(s)]\le \eta_f(a,x)$. The Lagrangian is
+\begin{align}
+\mathcal{L}(s,\lambda,u)
+= \mathbb{E}_{P_{a,x}}[s(Y)\phi(Y)]
++u\bigl(1-\mathbb{E}_{P_{a,x}}[s(Y)]\bigr)
++\lambda\bigl(\eta_f(a,x)-\mathbb{E}_{P_{a,x}}[g(s(Y))]\bigr),
+\end{align}
+i.e.
+\begin{align}
+\mathcal{L}(s,\lambda,u)
+= u + \lambda \eta_f(a,x)
++ \mathbb{E}_{P_{a,x}}\!\bigl[s(Y)(\phi(Y)-u) - \lambda g(s(Y))\bigr].
+\end{align}
+Thus
+\begin{align}
+\theta_{\mathrm{up}}(a,x)
+= \inf_{\lambda\ge 0,\;u\in\mathbb{R}} \sup_{s>0} \mathcal{L}(s,\lambda,u).
+\end{align}
+
+For $\lambda>0$, define $t(Y)\coloneqq (\phi(Y)-u)/\lambda$. Using separability of the
+integrand in $s(\cdot)$ and the standard interchange theorem for integral functionals
+(equivalently, the conjugate-of-integral identity), we have
+\begin{align}
+\sup_{s>0}\mathbb{E}_{P_{a,x}}\!\bigl[s(Y)t(Y)-g(s(Y))\bigr]
+= \mathbb{E}_{P_{a,x}}\!\Big[\sup_{s>0}\{s\,t(Y)-g(s)\}\Big]
+= \mathbb{E}_{P_{a,x}}\!\bigl[g^*(t(Y))\bigr],
+\end{align}
+where $g^*(t)\coloneqq \sup_{s>0}\{st-g(s)\}$ is the convex conjugate of $g$.
+Consequently,
+\begin{align}
+\sup_{s>0}\mathcal{L}(s,\lambda,u)
+= u + \lambda \eta_f(a,x) + \lambda\,\mathbb{E}_{P_{a,x}}
+\!\left[g^*\!\left(\frac{\phi(Y)-u}{\lambda}\right)\right].
+\end{align}
+Minimizing over $(\lambda,u)$ yields the stated dual representation:
+\begin{align}
+\theta_{\mathrm{up}}(a,x)
+= \inf_{\lambda>0,\;u\in\mathbb{R}}
+\left\{\lambda \eta_f(a,x) + u + \lambda\,\mathbb{E}_{P_{a,x}}
+\!\left[g^*\!\left(\frac{\phi(Y)-u}{\lambda}\right)\right]\right\}.
+\end{align}
+\hfill $\blacksquare$
+
+
+\subsection*{Proof of Prop.~\ref{prop:convex-conjugate-unified}}
+    Substitute $r = 1/s$. Then, $st-g(s)=st-s f(1/s)=\frac{t-f(r)}{r}$. Taking $\sup_{s > 0}$ is the same as taking $\sup_{r > 0}$. Therefore, $g^{\ast}(t) = \sup_{r > 0} \frac{t-f(r)}{r}$.
+
+    For the optimality condition, define
+    \begin{align}
+        H_t(r) \coloneqq \frac{t - f(r)}{r}, \qquad r>0.
+    \end{align}
+    Assume the supremum is attained at some $r^\ast>0$, and set
+    \begin{align}
+        v \coloneqq g^\ast(t) = H_t(r^\ast) = \frac{t - f(r^\ast)}{r^\ast}.
+    \end{align}
+    Then for every $r>0$,
+    \begin{align}
+        \frac{t - f(r)}{r} \le v
+        \quad\Longleftrightarrow\quad
+        f(r) \ge t - v r.
+    \end{align}
+    At $r=r^\ast$ we have equality: $f(r^\ast)=t-vr^\ast$. Hence for all $r>0$,
+    \begin{align}
+        f(r) \ge f(r^\ast) - v(r-r^\ast) = f(r^\ast) + a(r-r^\ast),
+    \end{align}
+    where $a\coloneqq -v$. By the supporting-hyperplane characterization of the convex subdifferential, this implies $a\in\partial f(r^\ast)$. Finally, $f(r^\ast)=t-vr^\ast$ gives
+    \begin{align}
+        t = f(r^\ast) - r^\ast a,
+        \qquad
+        g^\ast(t)=v=-a.
+    \end{align}
+    If $f$ is differentiable at $r^{\ast}$, then $\partial f(r^{\ast}) = \{f'(r^{\ast})\}$ and the conclusion follows. 
+
+    \hfill $\blacksquare$
+
+
+\subsection*{Proof of Coro.~\ref{cor:convex-conjugate}}
+\paragraph{KL.} $f_{\mathrm{KL}}(r)= r\log r$. Then, 
+\begin{align}
+    g_{\mathrm{KL}}(s)=s f_{\mathrm{KL}}(1/s)=s\cdot \frac1s\log(1/s)= -\log s.
+\end{align}
+Now, compute $g^{\ast}_{\mathrm{KL}}(t)=\sup_{s >0}\{st+\log s\}$. Let $\psi(s)=st+\log s$. Then, $\psi'(s)=t+1/s$. If $t < 0$, the stationary point is $s^{\ast} = -1/t > 0$, giving $g^*_{\mathrm{KL}}(t)=\psi(s^*)=(-1/t)t+\log(-1/t)=-1-\log(-t)$. If $t \geq 0$, then $st+\log s\to\infty$ as $s \rightarrow \infty$, so $g^*_{\mathrm{KL}}(t)=+\infty$. 
+
+\paragraph{Hellinger.} $f_H(r)=\tfrac12(\sqrt r-1)^2=\tfrac12(r-2\sqrt r+1)$. Then, 
+\begin{align}
+    g_H(s)=s f_H(1/s) =\frac{1}{2}\,s\Big(\frac{1}{s}-\frac{2}{\sqrt s}+1\Big)
+=\frac{1}{2}(1-2\sqrt{s}+s).
+\end{align}
+Note $g_H^*(t)=\sup_{s >0}\Big\{st-\tfrac12(1-2\sqrt s+s)\Big\}$. Let $u \triangleq \sqrt{s} > 0$ so $s = u^2$. The objective becomes $F(u)=t u^2-\tfrac12(1-2u+u^2)
+=\Big(t-\tfrac12\Big)u^2+u-\tfrac12$. If $t < 1/2$, $F$ is concave quadratic in $u$. Since $F'(u) = 2(t-1/2)u + 1$, $u^{\ast} = \frac{1}{1-2t}$. Plugging in, 
+\begin{align}
+    g_H^*(t)=F(u^*)
+=\Big(t-\tfrac12\Big)\frac{1}{(1-2t)^2}+\frac{1}{1-2t}-\frac12
+=\frac{t}{1-2t}.
+\end{align}
+If $t \geq 1/2$, then $F(u) \rightarrow \infty$ as $u \rightarrow \infty$, so $g^{\ast}_{\mathrm{H}}(t) = +\infty$.
+
+
+\paragraph{$\chi^2$.} $g_{\chi^2}(s)=s f_{\chi^2}(1/s) =\frac12\,s\Big(\frac1s-1\Big)^2 =\frac{(1-s)^2}{2s}$. Also, $g^*_{\chi^2}(t)=\sup_{s > 0}\Big\{st-\frac{(1-s)^2}{2s}\Big\}$, where $\frac{(1-s)^2}{2s}=\frac12\Big(\frac1s-2+s\Big)$. Then, the objective is 
+\begin{align}
+    st-\frac12\Big(\frac1s-2+s\Big) =1+s\Big(t-\tfrac12\Big)-\frac{1}{2s}.
+\end{align}
+Differentiate w.r.t. $s$: 
+\begin{align}
+    \frac{d}{ds}\Big(1+s(t-\tfrac12)-\frac{1}{2s}\Big) =(t-\tfrac12)+\frac{1}{2s^2}.
+\end{align}
+Plugging in (using $1/s^*=\sqrt{1-2t}$): 
+\begin{align}
+    g^*_{\chi^2}(t) =1+s^*(t-\tfrac12)-\frac{1}{2s^*} =1-\frac{\sqrt{1-2t}}{2}-\frac{\sqrt{1-2t}}{2} =1-\sqrt{1-2t}.
+\end{align}
+At $t = 1/2$, this becomes $1$. If $t > 1/2$, the term $s(t-\tfrac12)$ drives the supremum to $+\infty$ as $s \rightarrow \infty$. 
+
+\paragraph{TV.} $g_{\mathrm{TV}}(s)=s f_{\mathrm{TV}}(1/s) =\frac12\,s\Big|\frac1s-1\Big| =\frac12|1-s|$. Also, $g_{\mathrm{TV}}^*(t)=\sup_{s > 0}\Big\{st-\tfrac12|1-s|\Big\}$. Split this into two regions, where $s \geq 1$ and $0 < s \leq 1$. 
+
+When $s \geq 1$, $|1-s| = s-1$. So, 
+\begin{align}
+    st-\tfrac12(s-1)=s\Big(t-\tfrac12\Big)+\tfrac12.
+\end{align}
+If $t > 1/2$: this goes to $+\infty$ as $s \rightarrow \infty$. If $t \leq 1/2$, the maximum over $s \geq 1$ occurs at the smallest $s$; i.e., $s=1$, giving value $t$. 
+
+When $0 < s \leq 1$, $|1-s| = 1-s$, so 
+\begin{align}
+    st-\tfrac12(1-s)=s\Big(t+\tfrac12\Big)-\tfrac12.
+\end{align}
+If $t < -1/2$, then its maximum is $-1/2$. If $t \geq -1/2$, then it's maximized at $s=1$, giving value $t$. As a result, 
+\begin{align}
+    g_{\mathrm{TV}}^*(t)=
+\begin{cases}
+-\tfrac12, &\text{ if } t\le -\tfrac12,\\
+t, &\text{ if } -\tfrac12 < t \leq \tfrac12,\\
++\infty, &\text{ if } t> \tfrac12.
+\end{cases}
+\end{align}
+
+\hfill $\blacksquare$
+
+
+
+\paragraph{Jensen-Shannon.}
+$g_{\mathrm{JS}}(s)=\frac12\Big(s\log s-(1+s)\log(1+s)+(1+s)\log 2\Big)$. To compute $g_{\mathrm{JS}}^\ast(t)=\sup_{s > 0}\{st-g_{\mathrm{JS}}(s)\}$, let $F(s) = st - g_{\mathrm{JS}}(s)$. 
+
+We have 
+\begin{align}
+    g'_{\mathrm{JS}}(s)=\frac12\Big(\log s-\log(1+s)+\log2\Big) =\frac12\log\Big(\frac{2s}{1+s}\Big).
+\end{align}
+Set $F'(s)=0$, which means $t = g'_{\mathrm{JS}}(s)$; i.e., 
+\begin{align}
+    2t=\log\Big(\frac{2s}{1+s}\Big)
+\quad\Longleftrightarrow\quad
+e^{2t}=\frac{2s}{1+s}.
+\end{align}
+Solving this for $s$ gives
+\begin{align}
+    e^{2t}(1+s)=2s
+\;\Rightarrow\;
+s^*=\frac{e^{2t}}{2-e^{2t}}.
+\end{align}
+This requires $2-e^{2t} > 0$, i.e., $t < \frac{1}{2}\log 2$. If $t \geq \frac{1}{2}\log 2$, the objective grows like $s(t-\frac{1}{2}\log 2)$ for large $s$, hence the supremum is $+\infty$. 
+
+Now evaluate the objective at $s^{\ast}$. Let $z \triangleq e^{2t}$ so that $s^{\ast} = z/(2-z)$ and $1+s^{\ast} = 2/(2-z)$. Then, 
+\begin{align}
+    \log s^*=\log z-\log(2-z),\qquad \log(1+s^*)=\log2-\log(2-z).
+\end{align}
+Plug into $g_{\mathrm{JS}}(s)$: 
+\begin{align}
+    g_{\mathrm{JS}}(s^*)
+=\frac12\Big(s^*\log s^*-(1+s^*)\log(1+s^*)+(1+s^*)\log2\Big)
+=\frac12\Big(s^*\log z+\log(2-z)\Big).
+\end{align}
+Since $\log z = 2t$, this is $g_{\mathrm{JS}}(s^*)=t s^*+\frac12\log(2-e^{2t})$. Therefore, 
+\begin{align}
+    g_{\mathrm{JS}}^*(t)
+= s^* t - g_{\mathrm{JS}}(s^*)
+= -\frac12\log(2-e^{2t}),
+\qquad \text{for } t<\tfrac12\log2,
+\end{align}
+and $g_{\mathrm{JS}}^*(t)=+\infty$ otherwise. \hfill $\blacksquare$
+
+
+
+
+
+\subsection*{Proof of Prop.~\ref{prop:justification}}
+
+($(1) \implies (2)$). For each fixed $(a,x)$, define
+\begin{align}
+    \Delta(a,x) \triangleq \ell(h^{\star}, u^{\star}; a,x) - \operatorname*{ess\,inf}_{h,u \in \mathcal{F}}\ell(h,u; a,x).
+\end{align}
+Assume, for contradiction, that $(2)$ fails; i.e., $P_{A,X}(B) > 0$ for $B \triangleq \{(a,x): \Delta(a,x) > 0\}$. By the definition of the essential infimum and the decomposability of $\mathcal{F}$, there exists a measurable pair $(\tilde{h},\tilde{u}) \in \mathcal{F}$ such that $\ell(\tilde{h},\tilde{u}; a,x) < \ell(h^{\star}, u^{\star}; a,x)$ on a set of positive measure $B' \subseteq B$. 
+
+Define $h'(a,x) \triangleq \tilde{h}(a,x)\boldsymbol{1}((a,x) \in B') + h^{\star}(a,x)\boldsymbol{1}((a,x) \not\in B') $ and define $u'(a,x)$ similarly. By the decomposability assumption, $(h',u') \in \mathcal{F}$. Then, 
+\begin{align}
+    \mathcal{R}(h^{\star},u^{\star}) &= \mathbb{E}[\ell(h^{\star},u^{\star},A,X)\boldsymbol{1}((A,X) \not \in B')] + \mathbb{E}[\ell(h^{\star},u^{\star},A,X)\boldsymbol{1}((A,X) \in B')] \\ 
+    &> \mathbb{E}[\ell(h^{\star},u^{\star},A,X)\boldsymbol{1}((A,X) \not \in B')] + \mathbb{E}[\ell(\tilde{h},\tilde{u},A,X)\boldsymbol{1}((A,X) \in B')] \\ 
+    &= \mathcal{R}(h', u').
+\end{align}
+This contradicts the optimality of $(h^{\star}, u^{\star})$ in (1). Therefore, $P_{A,X}(B) = 0$; i.e., $(h^{\star}, u^{\star})$ is a minimizer of $\ell(h, u; a,x)$ for $P_{A,X}$-almost every $(a,x)$. 
+
+
+($(2) \implies (1)$). Since $\ell(h^{\star}, u^{\star}; a,x) \le \ell(h,u;a,x)$ for all $(h,u) \in \mathcal{F}$ and for $P_{A,X}$-almost every $(a,x)$, integrating yields $\mathcal{R}(h^{\star}, u^{\star}) \le \mathcal{R}(h,u)$ for all $(h,u) \in \mathcal{F}$. \hfill $\blacksquare$
+
+
+
+
+
+\subsection*{Proof of Lemma~\ref{lemma:orthogonality}}
+Define 
+\begin{align}
+    e_a &\triangleq \Pr(A=a \mid X) \\ 
+    \lambda_{a} &\triangleq \exp(h_{\beta}(a,X)) \\ 
+    B_a(e) &\triangleq B_f(e_a(X)) \\ 
+    u_a &\triangleq u(a,X) \\ 
+    g^{\ast}_a &\triangleq g^{\ast}\left( \frac{\varphi(Y) - u(A,X)}{\lambda_A(X)} \right).
+\end{align}
+Then, 
+\begin{align}
+    \ell(V;(\beta,\gamma),e) \triangleq \lambda_A(B_A + g^{\ast}_A) + u_A(X). 
+\end{align}
+Define 
+\begin{align}
+    L_1(e) &\triangleq  \lambda_A(B_A + g^{\ast}_A) + u_A(X). 
+\end{align}
+The correction term is 
+\begin{align}
+    L_2(e) &\triangleq \sum_{a} e_a \lambda_a B'_a \{\boldsymbol{1}(A=a) - e_a\}. 
+\end{align}
+Then, $\mathcal{R}^{\mathrm{db}}(e) \triangleq \mathbb{E}[L_1(e) + L_2(e)]$. Then,
+\begin{align}
+    \frac{\partial}{\partial t}\mathbb{E}[L_1(e_t)]\bigg\vert_{t=0} &= \frac{\partial}{\partial t}\mathbb{E}[L_1(e_A + ts_A)]\bigg\vert_{t=0} \\ 
+    &= \mathbb{E}\left[\lambda_A B'(e_A) s_A \right]. 
+\end{align}
+Also, 
+\begin{align}
+    L_2(e) &\triangleq \sum_{a} \underbrace{e_a \lambda_a B'_a}_{U_a(e_a)} \underbrace{\{\boldsymbol{1}(A=a) - e_a\}}_{V_a(e_a)}. 
+\end{align}
+Then, 
+\begin{align}
+    \frac{\partial}{\partial t}\mathbb{E}[L_2(e_t)]\bigg\vert_{t=0} &= \mathbb{E}\left[\sum_{a \in \mathcal{A}} \left( \frac{\partial U_a}{\partial t}V_a + \frac{\partial V_a}{\partial t}U_a \right)  \right], 
+\end{align}
+where 
+\begin{align}
+    \mathbb{E}\left[ \sum_{a \in \mathcal{A}}U'_a(e)V_a(e_a) \right] &= \mathbb{E}_{X}\left[ \sum_{a \in \mathcal{A}}U'_a(e) \mathbb{E}_{A \mid X}[\boldsymbol{1}(A=a) - e_a] \right]  = 0,
+\end{align}
+and 
+\begin{align}
+    \mathbb{E}\left[ \sum_{a \in \mathcal{A}}U_a(e)V'_a(e_a) \right] &= - \mathbb{E}\left[ \sum_{a \in \mathcal{A}}U_a(e)s_a \right] = - \mathbb{E}_{X}\left[ \sum_{a \in \mathcal{A}}e_a\lambda_a B'_a s_a \right]. 
+\end{align}
+Then, 
+\begin{align}
+    \frac{\partial R^{\mathrm{db}}}{\partial t} &= \mathbb{E}[\lambda_A B'(e_A)s_A] - \mathbb{E}_{X}\left[ \sum_{a \in \mathcal{A}}e_a\lambda_a B'_a s_a \right] \\ 
+    &= \mathbb{E}_X\left[\sum_{a \in \mathcal{A}}e_a\lambda_a B'_a s_a\right] - \mathbb{E}_{X}\left[ \sum_{a \in \mathcal{A}}e_a\lambda_a B'_a s_a \right] \\ 
+    &= 0. 
+\end{align}
+\hfill $\blacksquare$
+
+
+
+
+
+
+\subsection*{Proof of Theorem~\ref{thm:error-analysis}}
+
+\begin{lemma}[\textbf{Higher-order smoothness} $\Rightarrow$ \textbf{Local quadratic expansion inequality}]\label{lemma:equivalent}
+    \normalfont 
+    Higher-order smoothness in Assumption~\ref{assumption:regularity-condition} implies the local quadratic expansion inequality: 
+    \begin{align}\label{eq:local-quadratic}
+        \frac{\kappa_1}{2}\|\vartheta-\vartheta_0\|^2  \;\le\; \mathcal R^{\mathrm{db}}(\vartheta;e_0)-\mathcal R^{\mathrm{db}}(\vartheta_0;e_0) \;\le\; \frac{\kappa_2}{2}\|\vartheta-\vartheta_0\|^2, \text{ for } \vartheta \in \varTheta_0.
+    \end{align}
+\end{lemma}
+\begin{proof}[\textbf{Proof of Lemma~\ref{lemma:equivalent}}]
+    Let $r(t) \triangleq \mathcal{R}(\vartheta_t; e_0)$, where $\vartheta_t \triangleq \vartheta_0 + t(\vartheta - \vartheta_0)$ for $t \in [0,1]$. By Taylor's theorem with integral remainder,
+    \begin{align}
+        r(1) = r(0) + r'(0) + \int_{0}^{1}(1-t) r''(t) dt.
+    \end{align}
+    Since $\vartheta_0$ is a local minimizer, $r'(0) = (\vartheta- \vartheta_0)^{\intercal}\nabla_{\vartheta}\mathcal{R}(\vartheta_0; e_0) = 0$. The second derivative is
+    \begin{align}
+        r''(t) = (\vartheta- \vartheta_0)^{\intercal} H(\vartheta_t; e_0) (\vartheta- \vartheta_0).
+    \end{align}
+    Under the Higher-order smoothness assumption ($\kappa_1 I \preceq H(\vartheta; e_0) \preceq \kappa_2 I$ for $\vartheta \in \varTheta_0$), and assuming convexity of $\varTheta_0$ so that the path lies in $\varTheta_0$, we have
+    \begin{align}
+       \frac{\kappa_1}{2} \|\vartheta - \vartheta_0 \|^2_2 \leq \int_{0}^{1}(1-t) (\vartheta - \vartheta_0)^{\intercal} H(\vartheta_t; e_0) (\vartheta- \vartheta_0) dt \leq \frac{\kappa_2}{2} \|\vartheta - \vartheta_0 \|^2_2.
+    \end{align}
+\end{proof}
+
+\subsubsection*{Proof of Eq.~\eqref{eq:thm:error-analysis-1}}
+
+For brevity, we write $R(\vartheta; e') \triangleq R^{\mathrm{db}}(\vartheta; e')$ for any $\vartheta$ and $e'$. Let $\widehat{R}_{k}$ denote the empirical risk of $R$ using the $k$'th fold dataset. 
+
+We decompose the population excess risk using a telescoping sum:
+\begin{align}
+    R(\widehat{\vartheta}_k; e_0) - R(\vartheta_0; e_0)  &= \underbrace{ R(\widehat{\vartheta}_k; e_0) - R(\widehat{\vartheta}_k; \widehat{e}^{k}) }_{(A)} 
+            \;+\; \underbrace{ R(\widehat{\vartheta}_k; \widehat{e}^{k}) - \widehat{R}_k (\widehat{\vartheta}_k; \widehat{e}^{k}) }_{(B)} \\
+            &\quad + \underbrace{ \widehat{R}_k (\widehat{\vartheta}_k; \widehat{e}^{k}) - \widehat{R}_k (\vartheta_0; \widehat{e}^{k}) }_{\leq 0} 
+            \;+\; \underbrace{ \widehat{R}_k (\vartheta_0; \widehat{e}^{k}) - R(\vartheta_0; \widehat{e}^k) }_{(C)}\\ 
+            &\quad + \underbrace{ R(\vartheta_0; \widehat{e}^k) - R(\vartheta_0; e_0) }_{(D)}.
+\end{align}
+The term $\leq 0$ is due to the optimality of $\widehat{\vartheta}_k$ for the empirical risk objective. We will show that 
+\begin{enumerate}
+    \item $(B) + (C) = O_p(n^{-1/2})$ by the uniform LLN in Assumption~\ref{assumption:regularity-condition}. 
+    \item $(A) + (D) = O_p(r^2_n)$ by the orthogonality and smoothness in Assumption~\ref{assumption:regularity-condition}. 
+\end{enumerate}
+As a result, 
+\begin{align}
+    R(\widehat{\vartheta}_k; e_0) - R(\vartheta_0; e_0)  &= O_p(n^{-1/2}) + O_p(r^2_n).
+\end{align}
+
+\paragraph{Bounds for $(B) + (C)$.}
+Terms $(B) + (C)$ are bounded by Uniform LLN as follows: 
+\begin{align}
+    (B) + (C)  \le 2\sup_{\vartheta}\big|R(\vartheta;\widehat e^k) - \widehat R_k(\vartheta;\widehat e^k)\big| = O_p(n^{-1/2}).
+\end{align}
+
+
+\paragraph{Bounds for $(A) + (D)$.}
+Assume that the risk functional $e \mapsto R(\vartheta; e)$ is twice Fréchet differentiable with bounded second derivatives on the positivity region. Fix a $\vartheta$. Consider a parametric submodel $t \mapsto e^t \triangleq e_0 + t(\widehat{e}^k - e_0)$. Let $\delta e_0 \triangleq \widehat{e}^k - e_0$.
+
+By Taylor's theorem, there exists $e^{\dagger}$ between $e_0$ and $\hat{e}^{k}$ such that:
+\begin{align}
+    R(\vartheta; \widehat{e}^k) = R(\vartheta; e_0) + \nabla_{e}R(\vartheta; e_0)[\delta e_0] + \frac{1}{2}\nabla_{ee}R(\vartheta; e^{\dagger})[\delta e_0, \delta e_0].
+\end{align}
+Rearranging for term (D) where $\vartheta = \vartheta_0$:
+\begin{align}
+    (D) = R(\vartheta_0; \widehat{e}^k) - R(\vartheta_0; e_0) = \nabla_{e}R(\vartheta_0; e_0)[\delta e_0] + \frac{1}{2}\nabla_{ee}R(\vartheta_0; e^{\dagger})[\delta e_0, \delta e_0].
+\end{align}
+By Lemma~\ref{lemma:orthogonality} (Orthogonality), $\nabla_{e}R(\vartheta_0; e_0)[\delta e_0] = 0$. Using the boundedness of $\nabla_{ee}R$ (Assumption~\ref{assumption:regularity-condition}), we have $(D) = O_P(\| \widehat{e}^k - e_0 \|^2_2) = O_P(r^2_n)$.
+
+For term (A) where $\vartheta = \widehat{\vartheta}_k$:
+\begin{align}
+    (A) = R(\widehat{\vartheta}_k; e_0) - R(\widehat{\vartheta}_k; \widehat{e}^{k}) = -\nabla_{e}R(\widehat{\vartheta}_k; e_0)[\delta e_0] + O_P(r_n^2).
+\end{align}
+Crucially, Lemma~\ref{lemma:orthogonality} states that orthogonality holds for \emph{all} $\vartheta$ (not just $\vartheta_0$). Therefore, $\nabla_{e}R(\widehat{\vartheta}_k; e_0)[\delta e_0] = 0$ directly. This implies that the first-order error term vanishes exactly, and we are left only with the second-order remainder:
+\begin{align}
+    (A)  = O_P(r^2_n).
+\end{align}
+Combining yields:
+\begin{align}
+    (A) + (D) = O_P(r^2_n). 
+\end{align}
+
+\paragraph{Bound Derivation.}
+Combining all terms:
+\begin{align}
+    R(\widehat{\vartheta}_k; e_0) - R(\vartheta_0; e_0) = O_p(n^{-1/2}) + O_P(r^2_n). 
+\end{align}
+Assuming consistency (so $\widehat{\vartheta}_k \in \varTheta_0$ w.h.p), we apply Lemma~\ref{lemma:equivalent}:
+\begin{align}
+    \frac{\kappa_1}{2}\|\widehat{\vartheta}_k - \vartheta_0 \|^2 \leq  R(\widehat{\vartheta}_k; e_0) - R(\vartheta_0; e_0).
+\end{align}
+Solving the quadratic inequality for $\|\widehat{\vartheta}_k - \vartheta_0 \|$ establishes:
+\begin{align}
+    \|\widehat{\vartheta}_k - \vartheta_0 \|^2 = O_p(n^{-1/2} + r^2_n).
+\end{align}
+
+
+\subsubsection*{Proof of Eq.~\eqref{eq:thm:error-analysis-2}}
+
+For brevity, we just write 
+\begin{align}
+    \theta_k \triangleq \widehat{\theta}^{(k)}_{\varphi}, \quad \lambda_k \triangleq \widehat{\lambda}_k, \quad \eta_k \triangleq \widehat{\eta}^k_f, \quad m_k \triangleq \widehat{m}_k, \quad u_k \triangleq \widehat{u}_k. 
+\end{align}
+All the true parameters are indexed as $0$. For each $(a,x)$, 
+\begin{align}
+    \theta_k(a,x) - \overline{\theta}_{\varphi}(a,x) &= \underbrace{ (\lambda_k - \lambda_0) (\eta_0 + m_0) }_{(I)} 
+                \;+\; \underbrace{ (\lambda_k - \lambda_0) (\eta_k - \eta_0) }_{(II)} \\ 
+                &\quad + \underbrace{ \lambda_0(\eta_k - \eta_0) }_{(III)} 
+                \;+\; \underbrace{ \lambda_k(m_k - m_0)  }_{(IV)}
+                \;+\; \underbrace{ (u_k - u_0) }_{(V)}.
+\end{align}
+
+We bound the squared $L_2$ norm of each term. By Lipschitz parametrization (Assumption~\ref{assumption:regularity-condition-2}):
+\begin{align}
+    \| (V) \|^2_2 = O_P(\| \widehat{\vartheta}_k - \vartheta_0 \|^2_2).
+\end{align}
+
+For $(I)$, using the boundedness of nuiances (Assumption~\ref{assumption:regularity-condition-2}, $|\eta_0+m_0| \le C$):
+\begin{align}
+    \| (I) \|^2_2 \leq C^2 \| \lambda_k - \lambda_0\|^2_2 \leq C' \| \widehat{\vartheta}_k - \vartheta_0 \|^2_2 = O_P(\| \widehat{\vartheta}_k - \vartheta_0 \|^2_2).
+\end{align}
+
+For $(III)$, using $|\lambda_0| \le e^{M}$ and Lipschitz continuity of $\eta$ (via $B_f$) with respect to $e$:
+\begin{align}
+    \|\text{(III)}\|^2_2 \le e^{2M} \|\eta_k - \eta_0\|_2^2 = O_P(r^2_n).
+\end{align}
+
+For $(II)$, we use the supremum bound on $\lambda$: $\|\lambda_k - \lambda_0\|_\infty \le 2e^M$. Then:
+\begin{align}
+    \|\text{(II)}\|_2^2 \le \|\lambda_k-\lambda_0\|_\infty^2 \|\eta_k-\eta_0\|_2^2 \le 4e^{2M} r_n^2 = O_P(r_n^2). 
+\end{align}
+
+Finally, consider $(IV)$. Define $m_{\widehat{\varphi}}(a,x) \triangleq \mathbb{E}[Z^k_i \mid A=a,X=x]$. 
+Decompose $m_k - m_0 = (m_k - m_{\widehat{\vartheta}}) + (m_{\widehat{\vartheta}} - m_0)$.
+By Assumption~\ref{assumption:regularity-condition-2}, $\|m_k - m_{\widehat{\vartheta}}\|_2  = O_P(s_n)$. By Lipschitz, $\|m_{\widehat{\vartheta}} - m_0\|_2 \leq L_m \|\widehat{\vartheta} - \vartheta_0 \|$.
+Therefore, 
+\begin{align}
+    \|(IV) \|^2_2 \leq e^{2M}(\|m_k - m_{\widehat{\vartheta}}\|_2 + \|m_{\widehat{\vartheta}} - m_0\|_2)^2 = O_P(s^2_n) + O_P(\| \widehat{\vartheta}_k - \vartheta_0 \|^2).
+\end{align}
+
+Combining all terms shows that 
+\begin{align}
+    \| \theta_k - \overline{\theta}_{\varphi} \|^2_2 = O_P(n^{-1/2} + r^2_n + s^2_n).
+\end{align}
+
+
+
+\subsection*{Proof of Lemma~\ref{lemma:valid-coverage}}
+
+Let the sorted elements of $\widehat{\boldsymbol{\theta}}_{\mathrm{up}}$ be denoted by $u_{(1)} \le u_{(2)} \le \dots \le u_{(n_f)}$. By Definition~\ref{def:kth}, $\widehat{\theta}^{k}_{\mathrm{up}} = u_{(k)}$. The inequality $u_{(k)} \ge \theta$ holds if and only if at least $n_f - k + 1$ elements satisfy $u_i \ge \theta$ (since this is equivalent to having at most $k-1$ elements strictly less than $\theta$).
+
+Similarly, let the sorted elements of $\widehat{\boldsymbol{\theta}}_{\mathrm{lo}}$ be $l_{(1)} \le \dots \le l_{(n_f)}$. By definition, $\widehat{\theta}^{k}_{\mathrm{lo}}$ is the $k$-th largest element, which corresponds to $l_{(n_f - k + 1)}$. The inequality $l_{(n_f - k + 1)} \le \theta$ holds if and only if at least $n_f - k + 1$ elements satisfy $l_i \le \theta$ (since this is equivalent to having at most $k-1$ elements strictly greater than $\theta$). \hfill $\blacksquare$
+
+
+\subsection*{Proof of Thm.~\ref{thm:error-ate}}
+Write $\widehat R\equiv \widehat R_n$. Decompose the population excess risk:
+\begin{align*}
+0 \le R(\widehat\vartheta; e_0) - R(\vartheta_0; e_0)
+&= \underbrace{R(\widehat\vartheta;e_0)-R(\widehat\vartheta;\widehat e)}_{(A)}
+ +\underbrace{R(\widehat\vartheta;\widehat e)-\widehat R(\widehat\vartheta;\widehat e)}_{(B)} \\
+&\quad+\underbrace{\widehat R(\widehat\vartheta;\widehat e)-\widehat R(\vartheta_0;\widehat e)}_{\le 0}
+ +\underbrace{\widehat R(\vartheta_0;\widehat e)-R(\vartheta_0;\widehat e)}_{(C)}
+ +\underbrace{R(\vartheta_0;\widehat e)-R(\vartheta_0;e_0)}_{(D)} .
+\end{align*}
+
+By the uniform LLN in Assumption~\ref{assumption:regularity-condition-3},
+\[
+(B)+(C) \le 2\sup_{\vartheta\in\Theta}\big|\widehat R(\vartheta;\widehat e)-R(\vartheta;\widehat e)\big|
+= O_p(n^{-1/2}).
+\]
+By Lipschitz continuity of $R(\vartheta;\cdot)$ in $e$ uniformly over $\vartheta\in\Theta$,
+\[
+|(A)|+|(D)|
+\le 2L_R\|\widehat e-e_0\|_1
+= O_p(n^{-1/2}),
+\]
+since $\widehat e_a=n_a/n$ implies $\|\widehat e-e_0\|_1=O_p(n^{-1/2})$ under positivity.
+
+Hence
+\[
+0 \le R(\widehat\vartheta;e_0)-R(\vartheta_0;e_0)=O_p(n^{-1/2}).
+\]
+Let $\Theta_0$ be the neighborhood from the quadratic growth condition (Lemma~\ref{lemma:equivalent}).
+Since $R(\vartheta;e_0)-R(\vartheta_0;e_0)$ is bounded away from $0$ on $\Theta\setminus\Theta_0$,
+the above display implies $\Pr(\widehat\vartheta\in\Theta_0)\to 1$. Therefore, on this event,
+\[
+\frac{\kappa_1}{2}\|\widehat\vartheta-\vartheta_0\|_2^2
+\le R(\widehat\vartheta;e_0)-R(\vartheta_0;e_0)
+= O_p(n^{-1/2}),
+\]
+so $\|\widehat\vartheta-\vartheta_0\|_2^2=O_p(n^{-1/2})$.
+
+Next, write (as in Def.~\ref{def:bound-average}, marginal case)
+\[
+\widehat\theta_\varphi(a)=\widehat\lambda_a\big(\widehat\eta_a+\widehat m_a\big)+\widehat u_a,
+\qquad
+\overline\theta_\varphi(a)=\lambda_{0,a}\big(\eta_{0,a}+m_{0,a}\big)+u_{0,a},
+\]
+where $\lambda_a=\exp(h_a)$, $\eta_a=B_f(e_a)$,
+$Z_\vartheta \equiv g^\ast\!\big((\varphi(Y)-u_A)/\lambda_A\big)$,
+$m_{\vartheta,a}=\mathbb E[Z_\vartheta\mid A=a]$, and $\widehat m_a=n_a^{-1}\sum_{i:A_i=a} Z_{\widehat\vartheta,i}$.
+Decompose, for each $a$,
+\begin{align*}
+\widehat\theta_\varphi(a)-\overline\theta_\varphi(a)
+&= (\widehat\lambda_a-\lambda_{0,a})(\eta_{0,a}+m_{0,a})
++(\widehat\lambda_a-\lambda_{0,a})(\widehat\eta_a-\eta_{0,a})
++\lambda_{0,a}(\widehat\eta_a-\eta_{0,a}) \\
+&\quad+\widehat\lambda_a(\widehat m_a-m_{0,a})
++(\widehat u_a-u_{0,a})
+\;\;=:(I)+(II)+(III)+(IV)+(V).
+\end{align*}
+
+By boundedness of $h$ and smoothness of $\exp(\cdot)$ on bounded sets,
+$\|\widehat\lambda-\lambda_0\|_2 \lesssim \|\widehat h-h_0\|_2\le\|\widehat\vartheta-\vartheta_0\|_2$,
+and $\|\widehat u-u_0\|_2\le\|\widehat\vartheta-\vartheta_0\|_2$.
+Thus $\|(I)\|_2^2+\|(V)\|_2^2 = O_p(\|\widehat\vartheta-\vartheta_0\|_2^2)=O_p(n^{-1/2})$.
+
+Also, $\|\widehat\eta-\eta_0\|_2 \lesssim \|\widehat e-e_0\|_1 = O_p(n^{-1/2})$ (bounded $B_f'$),
+so $\|(III)\|_2^2=O_p(n^{-1})$.
+Moreover, $\|(II)\|_2 \le \|\widehat\lambda-\lambda_0\|_2\|\widehat\eta-\eta_0\|_\infty
+= O_p(n^{-1/4})\cdot O_p(n^{-1/2})=O_p(n^{-3/4})$, hence $\|(II)\|_2^2=O_p(n^{-3/2})$.
+
+For $(IV)$, decompose
+\[
+\widehat m_a-m_{0,a}
+= \underbrace{\frac{1}{n_a}\sum_{i:A_i=a}\big(Z_{\widehat\vartheta,i}-Z_{\vartheta_0,i}\big)}_{(a)}
++\underbrace{\left\{\frac{1}{n_a}\sum_{i:A_i=a}Z_{\vartheta_0,i}-\mathbb E[Z_{\vartheta_0}\mid A=a]\right\}}_{(b)}
++\underbrace{\big(m_{\vartheta_0,a}-m_{\widehat\vartheta,a}\big)}_{(c)}.
+\]
+By bounded derivative of $g^\ast$ and bounded parameters, $Z_\vartheta$ is Lipschitz in $\vartheta$,
+so $(a)=O_p(\|\widehat\vartheta-\vartheta_0\|_2)=O_p(n^{-1/4})$ and $(c)=O_p(\|\widehat\vartheta-\vartheta_0\|_2)=O_p(n^{-1/4})$.
+By positivity $n_a\asymp n$ and CLT, $(b)=O_p(n^{-1/2})$.
+Hence $\|\widehat m-m_0\|_2=O_p(n^{-1/4})$. Since $\widehat\lambda$ is bounded,
+$\|(IV)\|_2^2=O_p(n^{-1/2})$.
+
+Collecting terms, the dominant squared contributions are $O_p(n^{-1/2})$ from $(I)$, $(IV)$, and $(V)$,
+so $\|\widehat\theta_\varphi-\overline\theta_\varphi\|_2^2=O_p(n^{-1/2})$.
+\hfill$\blacksquare$

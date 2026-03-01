@@ -1,0 +1,214 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Math notation 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%% Graphs 
+% \newcommand{\CI}{\mathrel{\perp\mspace{-10mu}\perp}}
+% \newcommand{\olineo}{\circ\mspace{-7mu}-\mspace{-7mu}\circ}
+% \newcommand{\orightarrow}{\circ\!\!\rightarrow}
+% \newcommand{\oleftarrow}{\leftarrow\!\!\circ}
+% \newcommand{\sleftarrow}{\leftarrow\mspace{-7.5mu}*}
+% \newcommand{\srightarrow}{*\mspace{-7.5mu}\rightarrow}
+% \newcommand{\slineo}{*\mspace{-6mu}-\mspace{-6mu}\circ}
+% \newcommand{\olines}{\circ\mspace{-6mu}-\mspace{-6mu}*}
+% \newcommand{\slines}{*\mspace{-6mu}-\mspace{-6mu}*}
+% \newcommand{\directedpath}{--\mspace{-5mu}\rightarrow}
+% \newcommand{\divergentpath}{\leftarrow \mspace{-5mu} * \mspace{-5mu}\rightarrow}    
+% \newcommand{\G}{\mathcal{G}}
+% \newcommand{\Gin}[1]{\mathcal{G}_{\overline{#1}}}
+% \newcommand{\Gout}[1]{\mathcal{G}_{\underline{#1}}}
+% \newcommand{\Gio}[2]{\mathcal{G}_{\overline{#1}\underline{#2}}}
+
+
+% %%% Notations 
+% \newcommand{\omf}[2]{\overline{#1}^{#2}}
+% \newcommand{\mf}[1]{\mathbf{#1}}
+% \newcommand{\pre}[2]{\text{pre}_{#1}(#2)}
+% \newcommand{\prev}[1]{\text{pre}(#1)}
+% \newcommand{\ogeq}[2]{\mf{#1}^{\geq #2}}
+% \newcommand{\oleq}[1]{\mf{#1}^{i \leq}}
+% \newcommand{\lr}[1]{\left(#1\right)}
+% \newcommand{\lrp}[1]{\left\{#1\right\}}
+% \newcommand{\lrb}[1]{\left[#1\right]}
+% \newcommand{\doo}[1]{\operatorname{do}(#1)}
+
+% %%% Math  
+% \newcommand{\domain}[1]{\mathfrak{D}_{#1}}
+% \newcommand{\support}[1]{\mathfrak{S}_{#1}}
+% \newcommand{\cupdot}{\mathbin{\mathaccent\cdot\cup}}
+% \newcommand{\inner}[2]{\left\langle #1, #2 \right\rangle}
+% \newcommand{\notimplies}{\mathrel{{\ooalign{\hidewidth$\not\phantom{=}$\hidewidth\cr$\implies$}}}}
+% \newcommand{\abs}[1]{\left\vert #1 \right\vert}
+% \newcommand{\norm}[1]{\left\lVert#1\right\rVert}
+% \newcommand{\I}[2]{\mathbb{I}_{#1}(#2)}
+% \newcommand{\deriv}[1]{\frac{\partial}{\partial #1}}
+% \newcommand{\deriveval}[2]{(\partial / \partial #1)\vert_{#2}}
+% \newcommand{\integral}[3]{\int_{#1} #2 \;d[#3]}
+
+% %%% Estimator  
+% \newcommand{\mean}[1]{\mathbb{E}[#1]}
+% \newcommand{\meani}[2]{\mathbb{E}_{#1}[#2]}
+% \newcommand{\variance}[1]{\mathbb{V}[#1]}
+% \newcommand{\variancei}[2]{\mathbb{V}_{#1}[#2]}
+% \newcommand{\bigmean}[1]{\mathbb{E}\left[#1\right]}
+% \newcommand{\bigmeani}[2]{\mathbb{E}_{#1}\left[#2\right]}
+% \newcommand{\bigvariance}[1]{\mathbb{V}\left[#1\right]}
+% \newcommand{\bigvariancei}[2]{\mathbb{V}_{#1}\left[#2\right]}
+% \newcommand{\ith}[2]{#1_{(#2)}}
+\newcommand{\Ind}{\boldsymbol{1}}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Setting 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\let\oldnl\nl% Store \nl in \oldnl
+\newcommand{\nonl}{\renewcommand{\nl}{\let\nl\oldnl}}% Remove line number for one line
+\definecolor{opaquegray}{RGB}{192, 192, 192}
+\definecolor{afblue}{RGB}{0,0,102}
+\definecolor{mypink}{RGB}{255,51,153}
+
+\newtheorem{definition}{Definition}
+\newtheorem{theorem}{Theorem}
+\newtheorem{assumption}{Assumption}
+\newtheorem{example}{Example}
+\newtheorem{lemma}{Lemma}
+\newtheorem{conjecture}{Conjecture}
+\newtheorem{proposition}{Proposition}
+\newtheorem{corollary}{Corollary}
+\newtheorem{preliminary}{Preliminary}
+\newtheorem{remark}{Remark}
+\newtheorem{axiom}{Axiom}
+\newtheorem{principle}{Principle}
+\newtheorem{task}{Task}
+
+
+% Example for Definition
+\tcolorboxenvironment{definition}{
+  colback=gray!5!white,
+  colframe=black,
+  % colback=blue!5!white,
+  % colframe=blue!80!black,
+  fonttitle=\bfseries,
+  boxrule=0.5pt, % Adjust this value for thinner or thicker boundary
+  breakable,
+  % sharp corners,
+}
+
+\tcolorboxenvironment{theorem}{
+  colback=gray!5!white,
+  colframe=black,
+  % colback=blue!5!white,
+  % colframe=blue!80!black,
+  fonttitle=\bfseries,
+  boxrule=0.5pt, % Adjust this value for thinner or thicker boundary
+  breakable,
+  % sharp corners,
+}
+
+\tcolorboxenvironment{corollary}{
+  colback=gray!5!white,
+  colframe=black,
+  % colback=blue!5!white,
+  % colframe=blue!80!black,
+  fonttitle=\bfseries,
+  boxrule=0.5pt, % Adjust this value for thinner or thicker boundary
+  breakable,
+  % sharp corners,
+}
+
+\tcolorboxenvironment{lemma}{
+  colback=gray!5!white,
+  colframe=black,
+  % colback=blue!5!white,
+  % colframe=blue!80!black,
+  fonttitle=\bfseries,
+  boxrule=0.5pt, % Adjust this value for thinner or thicker boundary
+  breakable,
+  % sharp corners,
+}
+
+\tcolorboxenvironment{proposition}{
+  colback=gray!5!white,
+  colframe=black,
+  % colback=blue!5!white,
+  % colframe=blue!80!black,
+  fonttitle=\bfseries,
+  boxrule=0.5pt, % Adjust this value for thinner or thicker boundary
+  breakable,
+  % sharp corners,
+}
+
+\tcolorboxenvironment{proof}{
+  colback=white,
+  colframe=black,
+  % colback=blue!5!white,
+  % colframe=blue!80!black,
+  fonttitle=\bfseries,
+  boxrule=0.5pt, % Adjust this value for thinner or thicker boundary
+  breakable,
+  % sharp corners,
+}
+
+\tcolorboxenvironment{example}{
+  colback=white,
+  colframe=black,
+  % colback=blue!5!white,
+  % colframe=blue!80!black,
+  fonttitle=\bfseries,
+  boxrule=0.5pt, % Adjust this value for thinner or thicker boundary
+  breakable,
+  % sharp corners,
+}
+
+\tcolorboxenvironment{remark}{
+  colback=gray!5!white,
+  colframe=black,
+  % colback=blue!5!white,
+  % colframe=blue!80!black,
+  fonttitle=\bfseries,
+  boxrule=0.5pt, % Adjust this value for thinner or thicker boundary
+  breakable,
+  % sharp corners,
+}
+
+\tcolorboxenvironment{assumption}{
+  colback=white,
+  colframe=black,
+  % colback=blue!5!white,
+  % colframe=blue!80!black,
+  fonttitle=\bfseries,
+  boxrule=0.5pt, % Adjust this value for thinner or thicker boundary
+  breakable,
+  % sharp corners,
+}
+
+% % Example for Theorem
+% \tcolorboxenvironment{theorem}{
+%   colback=red!5!white,
+%   colframe=red!80!black,
+%   fonttitle=\bfseries,
+%   boxrule=0.5pt, % Adjust this value for thinner or thicker boundary
+%   % sharp corners,
+%   breakable,
+% }
+
+% % Example for Lemma
+% \tcolorboxenvironment{lemma}{
+%   colback=orange!5!white,
+%   colframe=orange!80!black,
+%   fonttitle=\bfseries,
+%   boxrule=0.5pt,
+%   % sharp corners,
+%   breakable,
+% }
+
+% % Example for Example (demonstration)
+% \tcolorboxenvironment{example}{
+%   colback=green!5!white,
+%   colframe=green!80!black,
+%   fonttitle=\bfseries,
+%   boxrule=0.5pt,
+%   % sharp corners,
+%   breakable,
+% }

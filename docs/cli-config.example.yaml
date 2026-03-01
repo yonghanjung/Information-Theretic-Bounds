@@ -1,0 +1,42 @@
+data:
+  synthetic:
+    n: 200
+    d: 3
+    seed: 123
+    structural_type: linear
+
+divergence: KL
+phi: identity
+propensity_model: logistic
+m_model: linear
+
+dual_net_config:
+  hidden_sizes: [16, 16]
+  activation: relu
+  dropout: 0.0
+  h_clip: 10.0
+  device: cpu
+
+fit_config:
+  n_folds: 2
+  num_epochs: 3
+  batch_size: 32
+  lr: 0.005
+  weight_decay: 0.0
+  max_grad_norm: 5.0
+  eps_propensity: 0.001
+  deterministic_torch: true
+  train_m_on_fold: true
+  propensity_config:
+    C: 1.0
+    max_iter: 200
+    penalty: l2
+    solver: lbfgs
+    n_jobs: 1
+  m_config:
+    alpha: 1.0
+  verbose: false
+  log_every: 1
+
+seed: 123
+output_path: itbound_bounds.csv

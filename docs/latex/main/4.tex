@@ -1,0 +1,118 @@
+
+\section{A Distributionally Robust Formulation of Causal Bounds} \label{sec:4}
+In this section, we leverage the upper bounds on statistical divergence derived in Section~\ref{sec:3} to construct bounds on the target causal effect $\theta(a,x) \triangleq \mathbb{E}_{Q_{a,x}}[\varphi(Y)]$, where $\varphi(Y)$ is an arbitrary measurable function with finite first and second moments. This framework encompasses diverse causal quantities: setting $\varphi(Y) \triangleq \boldsymbol{1}(Y \leq t)$ yields the cumulative distribution function $Q_{a,x}(Y \leq t)$, while choosing $\varphi(Y) \triangleq \ell(Y;\theta)$ (a loss function for $\theta$) yields the risk function over $Q_{a,x}$. Crucially, we impose no restrictions requiring $\varphi$ to be discrete or bounded.
+
+Using the divergence bound $D_f(P_{a,x} \| Q_{a,x}) \leq B_f(e_a(x))$ from Thm.~\ref{thm:f-divergence}, we define the f-divergence-based \textit{ambiguity set}, which is a collection of distributions over $Y$ within the $B_f(e_a(x))$ radius around the observational law $P_{a,x}$: 
+\begin{align}\label{eq:ambiguity-set}
+\textbf{(Ambiguity set)}\;\;
+\mathcal Q_f(a,x; P_{a,x}) \triangleq 
+\left\{
+\begin{aligned}
+Q_{a,x}\in\mathcal P_{a,x}(\mathcal Y)
+\;\; :\;\;
+& D_f\!\left(P_{a,x}\,\|\, Q_{a,x}\right) \le B_f(e_a(x)), \\
+& P_{a,x} \ll Q_{a,x}
+\end{aligned}
+\right\},
+\end{align}
+where $\mathcal{P}_{a,x}(Y)$ is a collection of probability laws given $A=a$ and $X=x$. The target causal effect $\mathbb{E}_{Q_{a,x}}[\varphi(Y)]$ is bounded by expectations over the extremal distributions in this ambiguity set:
+\begin{align}\label{eq:initial-optimization}
+    \textbf{(Bounds)}\quad \underbrace{ \theta_{\mathrm{lo}}(a,x) }_{\inf_{Q \in \mathcal Q_f(a,x)} \mathbb{E}_{Q}[\varphi(Y)]} \leq \underbrace{\theta(a,x)}_{\mathbb{E}_{Q_{a,x}}[\varphi(Y)]} \leq \underbrace{ \theta_{\mathrm{up}}(a,x) }_{ \sup_{Q \in \mathcal Q_f(a,x)} \mathbb{E}_{Q}[\varphi(Y)] }
+\end{align}
+The lower and upper bounds are symmetric: by Proposition~\ref{prop:lower-upper} below, the lower bound can be obtained from the upper bound by negating the function $\varphi$. Therefore, we focus on deriving the upper bound $\theta_{\mathrm{up}}(a,x)$ without loss of generality. 
+\begin{proposition}[\textbf{Lower bound as a subproblem of upper bound}]\label{prop:lower-upper}
+    \normalfont
+    Let 
+    \begin{align}
+        \theta_{\mathrm{lo}}(a,x; \varphi) \triangleq \inf_{Q \in \mathcal Q_f(a,x)} \mathbb{E}_{Q}[\varphi(Y)], \qquad \theta_{\mathrm{up}}(a,x;\varphi) \triangleq \sup_{Q \in \mathcal Q_f(a,x)} \mathbb{E}_{Q}[\varphi(Y)].
+    \end{align}
+    Then, 
+    \begin{align}
+        \theta_{\mathrm{lo}}(a,x; \varphi) = -  \theta_{\mathrm{up}}(a,x;-\varphi).
+    \end{align}
+\end{proposition}
+
+By Proposition~\ref{prop:lower-upper}, it suffices to compute $\theta_{\mathrm{up}}(a,x)$. However, computing $\theta_{\mathrm{up}}(a,x)$ directly from Eq.~\eqref{eq:initial-optimization} is intractable, as it requires optimizing over the infinite-dimensional space of all probability measures in $\mathcal{Q}_f(a,x)$. To overcome this computational barrier, we reformulate the problem using convex duality:
+\begin{theorem}[\textbf{Primal and Dual Formulations}]\label{thm:representation-bound}
+    \normalfont
+    Let $s(Y) \triangleq \tfrac{dQ_{a,x}}{dP_{a,x}}(Y)$ denote the likelihood ratio, $g_s(Y) \triangleq s(Y)\cdot f(1/s(Y))$, and $\eta_f(a,x) \triangleq B_f(e_a(x))$. The upper bound $\theta_{\mathrm{up}}(a,x)$ admits the following equivalent representations: 
+    \begin{align}
+        \theta_{\mathrm{up}}(a,x) & = \sup_{s > 0}\Big\{ \mathbb{E}_{P_{a,x}}[s(Y) \varphi(Y)]\; \text{ s.t. } \mathbb{E}_{P_{a,x}}[s(Y)] = 1, \;  \mathbb{E}_{P_{a,x}}\big[g_s(Y)] \leq \eta_f(a,x)   \Big\} \label{eq:primal} \\ 
+                &= \inf_{\lambda > 0, u \in \mathbb{R}}\big\{ \lambda \eta_f(a,x)  + u +  \lambda\mathbb{E}_{P_{a,x}}\Big[ g^{\ast}\big(\tfrac{\varphi(Y) - u}{\lambda}\big)\Big] \big\}, \label{eq:dual}
+    \end{align}
+    where $g^\ast(t) \triangleq \sup_{s > 0}\{s\,t - g(s) \}$ is the convex conjugate (also known as the Legendre–Fenchel conjugate or c-transform) of $g$.
+\end{theorem}
+The following proposition provides a general recipe for computing the convex conjugate $g^{\ast}$:
+
+\begin{proposition}[\textbf{Convex Conjugate} $g^{\ast}$]\label{prop:convex-conjugate-unified}
+    \normalfont
+    Let $f:(0,\infty)\to (-\infty,\infty]$ be proper, convex, and lower semi-continuous function. Define for $s > 0$, 
+    \begin{align}
+        g(s) \triangleq s f(1/s), \quad g^{\ast}(t) \triangleq \sup_{s>0}\{st - g(s)\}. 
+    \end{align}
+    Let $r \triangleq 1/s$. Then, 
+    \begin{align}
+        g^{\ast}(t) \triangleq \sup_{r > 0} \frac{t-f(r)}{r}.
+    \end{align}
+    Moreover, if the supremum is attained at some $r^{\ast} > 0$, then there exists a subgradient $a \in \partial f(r^{\ast})$ such that 
+    \begin{align}
+        t = f(r^{\ast}) - r^{\ast}a, \quad \text{ and } \quad g^{\ast}(t) = -a. 
+    \end{align}
+    If $f$ is differentiable at $r^{\ast}$, then $a = f'(r^{\ast})$ and hence $g^{\ast}(t) = -f'(r^{\ast})$. 
+\end{proposition}
+
+Proposition~\ref{prop:convex-conjugate-unified} provides a constructive method for evaluating the convex conjugate $g^{\ast}$. By introducing the change of variable $r = 1/s$, we transform the optimization problem into a simpler form. The result states that the value of the conjugate function $g^\ast(t)$ is determined by the derivative (or subgradient) of the original divergence function $f$ at the optimal point $r^\ast$.
+
+We apply Prop.~\ref{prop:convex-conjugate-unified} to standard f-divergences:
+{
+\renewcommand{\thecorollary}{P1}
+\begin{corollary}\label{cor:convex-conjugate}
+    \normalfont
+    Let $g(s) \triangleq sf(1/s)$ for $s > 0$. Then, 
+    \begin{itemize}[leftmargin=*]
+        \item \textbf{KL}: $g_{\mathrm{KL}}(s) = -\log s$, and 
+        \begin{align}
+            g^{\ast}_{\mathrm{KL}}(t) = 
+            \begin{cases}
+                 -1-\log(-t) & \text{ if } t < 0; \\ 
+                 +\infty &\text{ if } t \geq 0.
+            \end{cases}
+        \end{align}
+        \item \textbf{Hellinger}: $g_{\mathrm{H}}(s) = \frac{1}{2}(1-2\sqrt{s} + s)$, and 
+        \begin{align}
+            g^{\ast}_{\mathrm{H}}(t) = 
+            \begin{cases}
+                 \frac{t}{1-2t} & \text{ if } t < 1/2; \\ 
+                 +\infty &\text{ if } t \geq 1/2.
+            \end{cases}
+        \end{align}
+        \item \textbf{Chi-square}: $g_{\chi^2}(s) = \frac{(1-s)^2}{2s}$, and  
+        \begin{align}
+            g^{\ast}_{\chi^2}(t)  = 
+            \begin{cases}
+                 1-\sqrt{1-2t} & \text{ if } t \leq 1/2; \\ 
+                 +\infty &\text{ if } t > 1/2.
+            \end{cases}
+        \end{align}
+        \item \textbf{TV}: $g_{\mathrm{TV}}(s) = \frac{1}{2}|1-s|$, and 
+        \begin{align}
+            g^{\ast}_{\mathrm{TV}}(t)  = 
+            \begin{cases}
+                 -\frac{1}{2}, & \text{ if } t \leq -\frac{1}{2}, \\
+                 t, & \text{ if } -\frac{1}{2} < t \leq \frac{1}{2}, \\
+                 +\infty, &\text{ if } t > \frac{1}{2}. 
+            \end{cases}
+        \end{align}
+        \item \textbf{Jensen-Shannon}: $g_{\mathrm{JS}}(s) = \frac{1}{2}\left(s\log s - (1+s) \log(1+s) + (1+s)\log 2\right)$, and 
+        \begin{align}
+            g^{\ast}_{\mathrm{JS}}(t)  = 
+            \begin{cases}
+                 -\frac{1}{2}\log \left( 2 - \exp(2t) \right), & \text{ if } t < \frac{1}{2}\log 2, \\
+                 +\infty, &\text{ if } t \geq \frac{1}{2}\log 2. 
+            \end{cases}
+        \end{align}
+    \end{itemize}
+\end{corollary}
+}
+
+All results above extend to the marginal case (without covariates) by setting $X=\emptyset$ and replacing $e_a(x)$ with the marginal propensity score $e_a \triangleq \Pr(A=a)$. This yields bounds on the marginal causal effect $\mathbb{E}_{Q_a}[Y] \triangleq \mathbb{E}[Y \mid \mathrm{do}(A=a)]$, where $Q_a \triangleq P(Y \mid \mathrm{do}(A=a))$. 

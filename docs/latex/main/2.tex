@@ -1,0 +1,83 @@
+\section{Problem Setup \& Preliminaries}
+Consider a treatment $A \in \{0, 1\}$, a covariates vector $X \in \mathcal{X} \subseteq \mathbb{R}^{d_x}$, and an outcome $Y \in \mathcal{Y} \subseteq \mathbb{R}^{d_y}$. We consider the structural causal model (SCM) framework \citep{pearl:2k} as the data-generating process (DGP) for $(X, A, Y)$:
+\begin{align}\label{def:scm}
+    U \leftarrow f_U(\epsilon_U), \;\; X \leftarrow f_X(U, \epsilon_X), \;\;A \leftarrow f_A(X, U, \epsilon_A), \;\;Y \leftarrow f_Y(X, A, U, \epsilon_Y),
+\end{align}
+where $U$ represents unmeasured confounding, $f_{(\cdot)}$ are unknown structural functions, and $(\epsilon_U, \epsilon_X, \epsilon_A, \epsilon_Y)$ are mutually independent exogenous noise variables. The causal diagram induced by this SCM is depicted in Fig.~\ref{fig:dgp}. 
+
+The operation $\mathrm{do}(A=a)$ denotes an intervention that replaces $f_A$ with a constant $a \in \{0,1\}$, while keeping the other structural equations invariant. For each $(a, x) \in \{0, 1\} \times \mathcal{X}$, we define the following conditional probability laws on $\mathcal{Y}$:
+\begin{itemize}[leftmargin=*,labelsep=0.5em]
+    \item \textbf{Observational Law}: $P_{a, x} \equiv P(Y \mid A=a, X=x)$, which is identifiable from data.
+    \item \textbf{Interventional Law}: $Q_{a, x} \equiv P(Y \mid \mathrm{do}(A=a), X=x)$, our target of interest.
+\end{itemize}
+Under unmeasured confounding (i.e., when $f_A$ and $f_Y$ share $U$ as a common hidden parent), the interventional law $Q_{a, x}$ is unidentifiable from the observational law $P_{a, x}$. Consequently, any causal functional $\theta = \mathbb{E}_{Q_{a,x}}[\varphi(Y)]$ for some user-specified $\varphi$ (e.g., the identity for ATE/CATE) is also unidentifiable.
+
+\paragraph{f-Divergence.}
+To characterize the ``distance'' between the identifiable $P_{a,x}$ and the unidentifiable $Q_{a,x}$, we use $f$-divergences \citep{ali1966general,csiszar1967fdivergenceDPI}.
+\begin{definition}[\textbf{f-Divergence}]\label{def:f-div}
+    \normalfont
+    Let $P$ and $Q$ be probability measures on $(\mathcal{Y}, \mathcal{F})$ such that $P \ll Q$. For a convex function $f:[0, \infty) \rightarrow \mathbb{R}$ with $f(1)=0$, the $f$-divergence of $P$ from $Q$ is 
+    \begin{align}
+        D_f(P \| Q) \triangleq \int_{\mathcal{Y}} f\left(\frac{dP}{dQ}\right) dQ.
+    \end{align}
+\end{definition}
+Common specializations of $f$-divergence are as follows. Let $p$ and $q$ be the Radon–Nikodym derivatives of $P$ and $Q$ with respect to a common dominating measure $\mu$ (e.g., Lebesgue or counting measure).
+\begin{itemize}[leftmargin=*,itemsep=0pt]
+    \item \textbf{Kullback-Leibler (KL).} $f(t) \triangleq t \log t$ with $f(0) = 0$. Then, 
+    \begin{align}
+        D_{\mathrm{KL}}(P \| Q) = \int_{\mathcal{Y}} \log \left(\frac{dP}{dQ}\right) dP = \int_{\mathcal{Y}} p(y) \log \left( \frac{p(y)}{q(y)} \right) d\mu(y).
+    \end{align}
+    \item \textbf{Hellinger distance.} $f(t) \triangleq \frac{1}{2}(\sqrt{t}-1)^2$ with $f(0) = 1/2$. 
+    \begin{align}
+        D_{\mathrm{H}}(P \| Q) = \frac{1}{2}\int_{\mathcal{Y}} \left(\sqrt{\frac{dP}{dQ}} - 1 \right)^2 dQ = 1-\int_{\mathcal{Y}}\sqrt{p(y)q(y)} d\mu(y).
+    \end{align}
+    \item \textbf{$\chi^2$-divergence.} $f(t) \triangleq \frac{1}{2}(t-1)^2$ with $f(0) = 1/2$. 
+    \begin{align}
+        D_{\chi^2}(P \| Q) = \frac{1}{2}\int_{\mathcal{Y}} \left(\frac{dP}{dQ} - 1 \right)^2 dQ = \frac{1}{2}\int_{\mathcal{Y}} \frac{(p(y) - q(y))^2}{q(y)} d\mu(y).
+    \end{align}
+    \item \textbf{Total variation (TV).} $f(t) \triangleq \frac{1}{2}|t-1|$ with $f(0) = 1/2$. 
+    \begin{align}
+        D_{\mathrm{TV}}(P \| Q) = \frac{1}{2}\int_{\mathcal{Y}} |p(y) - q(y)| d\mu(y) = \sup_{B \in \mathcal{F}} |P(B) - Q(B)|.
+    \end{align}
+    \item \textbf{Jensen-Shannon.} $f(t) \triangleq \frac12 (t\log t - (t+1)\log(\frac{t+1}{2}))$ with $f(0) = \frac{1}{2}\log 2$. Let $M \triangleq \frac{P+Q}{2}$. 
+    \begin{align}
+        D_{\mathrm{JS}}(P \| Q) = \frac{1}{2}D_{\mathrm{KL}}(P \| M) + \frac{1}{2}D_{\mathrm{KL}}(Q \| M).
+    \end{align}
+\end{itemize}
+
+
+\paragraph{Integral Probability Metrics (IPMs) \& Maximum Mean Discrepancy (MMD).}
+Beyond the $f$-divergence, the integral probability metric (IPM; \citealt{muller1997integral}) and maximum mean discrepancy (MMD; \citealt{gretton2012kernel}) are commonly used. Let $\Phi \triangleq \{\varphi: \mathcal{Y} \mapsto [0,1]\}$  be a class of measurable functions. Then, each measure is defined as follows. 
+\begin{definition}[\textbf{Integral Probability Metric (IPM)} \citep{muller1997integral}]
+\label{def:ipm}
+\normalfont
+Let $P$ and $Q$ be probability measures on a measurable space $(\mathcal{Y}, \mathcal{F})$. Let $\Phi$ be a class of measurable real-valued functions on $\mathcal{Y}$. The integral probability metric (IPM) is 
+\begin{align}
+    D_{\mathrm{IPM},\Phi}(P \| Q) \triangleq  \sup_{\varphi \in \Phi} \left| \mathbb{E}_{P}[\varphi(Y)] - \mathbb{E}_{Q}[\varphi(Y)] \right|.
+\end{align}
+\end{definition}
+\begin{definition}[\textbf{Maximum Mean Discrepancy (MMD)} \citep{gretton2012kernel}]
+\label{def:mmd}
+\normalfont
+Let $\mathcal{H}_k$ be a reproducing kernel Hilbert space (RKHS) associated with a positive-definite kernel $k:\mathcal{Y}\times\mathcal{Y}\to\mathbb{R}$. The maximum mean discrepancy (MMD) is 
+\begin{align}
+    D_{\mathrm{MMD},k}(P \| Q) \triangleq  \sup_{\|h\|_{\mathcal{H}_k} \le 1} \left| \mathbb{E}_{P}[h(Y)] - \mathbb{E}_{Q}[h(Y)] \right|.
+\end{align}
+\end{definition}
+
+When the function class $\Phi$ is sufficiently rich (e.g., all bounded continuous functions), the IPM fully characterizes distributional differences. Similarly, when the kernel $k$ is characteristic, the MMD fully characterizes distributional differences. In both cases, $D_{\mathrm{IPM},\Phi}(P \| Q)=0$ (or $D_{\mathrm{MMD},k}(P \| Q)=0$) if and only if $P=Q$.
+These quantities can be viewed as special cases of distributional discrepancies defined through restricted function classes, and serve as limiting or simplified alternatives to the $f$-divergence–based bounds considered in the main text.
+
+
+
+\paragraph{Problem Statement.} 
+Under the assumed DGP in Fig.~\ref{fig:dgp} and Eq.~\eqref{def:scm}, the interventional law $Q_{a,x}$ and a target causal effect in the form of $\mathbb{E}_{Q_{a,x}}[\varphi(Y)]$ (where $\varphi$ is a user-specified and potentially continuous and unbounded function) are generally not identifiable from the observational law $P_{a,x}$ due to unmeasured confounding. To address this, (1) we derive the upper limit of the $f$-divergence of the observational law $P_{a,x}$ from the interventional law $Q_{a,x}$; i.e., $D_{f}(P_{a,x} \| Q_{a,x})$; (2) we translate the upper limit of the $f$-divergence into the sharp interval for causal effects. Throughout the paper, we assume the following:
+\begin{assumption}\label{assumption}
+    \normalfont
+    For all $a,x \in \mathcal{A} \times \mathcal{X}$, 
+    \begin{enumerate}[leftmargin=*, itemsep=0pt]
+        \item \textbf{Positivity}: $e_a(x) \triangleq \Pr(A=a \mid X=x) \in [c,1-c]$ for some constant $ 0< c  < 1/2$.
+        \item \textbf{Mutual absolute continuity}: $P_{a,x} \ll Q_{a, x}$ and $Q_{a, x} \ll P_{a, x}$.
+        \item \textbf{Regularity of f}: For the generator function $f$ in the f-divergence, $f(0) < \infty$.   
+    \end{enumerate}
+\end{assumption}

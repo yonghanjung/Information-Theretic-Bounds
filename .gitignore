@@ -29,5 +29,21 @@ env/
 *.png
 *.pkl
 
+# LaTeX build artifacts (keep sources/figures tracked)
+docs/latex/**/*.aux
+docs/latex/**/*.bbl
+docs/latex/**/*.blg
+docs/latex/**/*.fdb_latexmk
+docs/latex/**/*.fls
+docs/latex/**/*.log
+docs/latex/**/*.out
+docs/latex/**/*.synctex.gz
+docs/latex/**/*.toc
+docs/latex/**/*.pdf
+
+# Allow LaTeX figure PNGs
+!docs/latex/figures/
+!docs/latex/figures/*.png
+
 # Archived code (keep locally, ignore in Git)
 archive/
