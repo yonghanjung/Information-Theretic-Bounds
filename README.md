@@ -1,4 +1,4 @@
-# Data-Driven Information-Theoretic Causal Bounds under Unmeasured Confounding
+# Information-Theoretic Causal Bounds under Unmeasured Confounding
 
 This repo implements the method in "Data-Driven Information-Theoretic Causal Bounds under Unmeasured Confounding (Jung & Kang, 2026)." It provides data-driven lower and upper bounds on causal estimands under unmeasured confounding without bounded outcomes, sensitivity parameters, instruments/proxies, or full SCM specification.
 
@@ -104,7 +104,7 @@ flowchart LR
 
 ## Example Plot
 
-![Ribbon plot example](docs/latex/figures/ribbon_plot.png)
+![Ribbon plot example (propensity)](docs/latex/figures/ribbon_propensity.png)
 
 ## Config schema (CLI)
 
