@@ -74,6 +74,38 @@ Notes:
 - If you installed the package, run `itbound reproduce` from the repo root so the data files are found.
 - Install extras first: `pip install .[experiments]`.
 
+## Good Example (End-to-End)
+
+Install, run a quick example, and verify the output columns:
+
+```bash
+pip install .
+itbound example --out /tmp/itbound_example.csv
+
+python - <<'PY'
+import pandas as pd
+df = pd.read_csv("/tmp/itbound_example.csv")
+print(df.columns.tolist())
+PY
+```
+
+Expected columns include `lower` and `upper`.
+
+## Example Diagram
+
+```mermaid
+flowchart LR
+    A[Config YAML/JSON] --> B[Data Loader]
+    B --> C[Bound Estimator]
+    C --> D[Bounds CSV]
+    B --> E[Diagnostics]
+    C --> E
+```
+
+## Example Plot
+
+![Ribbon plot example](docs/latex/figures/ribbon_plot.png)
+
 ## Config schema (CLI)
 
 The config must be YAML or JSON and include:
