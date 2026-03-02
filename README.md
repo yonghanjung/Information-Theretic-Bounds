@@ -9,36 +9,94 @@ Target estimands (paper notation):
 θ(a)    = E_{Q_a}[φ(Y)]
 ```
 
-## Install (step-by-step)
+## Install (step-by-step, very detailed)
 
-The command `pip install .` installs the package from the **current directory** (this repo) into your active Python environment.
+Below is a **copy-paste friendly** guide. The key idea is that `pip install .` installs the package from the **current directory** (this repo) into your **currently active Python environment**.
 
-Recommended (clean virtual environment):
+### 0) Open a terminal and go to the repo root
+
+You must run these commands **in the repository root** (the folder containing `pyproject.toml`).
+
+```bash
+cd /Users/yonghanjung/Dropbox/Personal/Research/Code/fBound
+```
+
+Check you are in the right place:
+
+```bash
+ls pyproject.toml
+```
+
+If it prints the file path, you are in the correct directory.
+
+### 1) Create and activate a clean virtual environment (recommended)
+
+This keeps dependencies isolated to this project.
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
+```
+
+Activate it:
+
+```bash
+source .venv/bin/activate  # macOS/Linux
+```
+
+On Windows (PowerShell):
+
+```powershell
+.venv\\Scripts\\Activate.ps1
+```
+
+On Windows (cmd.exe):
+
+```bat
+.venv\\Scripts\\activate.bat
+```
+
+After activation, your shell prompt usually shows `(.venv)`.
+
+### 2) Upgrade pip inside the venv
+
+```bash
 python -m pip install --upgrade pip
+```
+
+### 3) Install this package from the repo directory
+
+This installs **itbound** into the active environment.
+
+```bash
 python -m pip install .
 ```
 
-Development install (editable, reflects code changes immediately):
+What this means:
+- `.` means “the current folder.”\n- So `pip install .` tells pip to read `pyproject.toml` here and install the package.
+
+### 4) (Optional) Development install (editable)
+
+Use this if you want local code changes to be reflected immediately without reinstalling.
 
 ```bash
 python -m pip install -e .
 ```
 
-Optional extras for figure reproduction:
+### 5) (Optional) Extras for figure reproduction
+
+If you want to run the `reproduce` command and create figures:
 
 ```bash
 python -m pip install '.[experiments]'
 ```
 
-Quick sanity check:
+### 6) Quick sanity check
 
 ```bash
 python -m itbound --help
 ```
+
+If you see the CLI help output, the installation worked.
 
 ## Python API
 
@@ -114,6 +172,8 @@ flowchart LR
 ```
 
 ## Example Plot
+
+![Bound width example (all divergences)](docs/latex/figures/width-alldivergences.png)
 
 ![IHDP ribbon example](docs/latex/figures/ribbon_ihdp.png)
 
