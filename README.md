@@ -11,14 +11,23 @@ Target estimands (paper notation):
 
 ## Install (step-by-step, very detailed)
 
-Below is a **copy-paste friendly** guide. The key idea is that `pip install .` installs the package from the **current directory** (this repo) into your **currently active Python environment**.
+Below is a public, copy‑paste friendly guide. The key idea is that `pip install .` installs the package from the **current directory** (this repo) into your **currently active Python environment**.
 
 ### 0) Open a terminal and go to the repo root
 
 You must run these commands **in the repository root** (the folder containing `pyproject.toml`).
 
+If you haven’t cloned the repo yet:
+
 ```bash
-cd /Users/yonghanjung/Dropbox/Personal/Research/Code/fBound
+git clone https://github.com/yonghanjung/Information-Theretic-Bounds.git
+cd Information-Theretic-Bounds
+```
+
+If you already have the repo locally, just `cd` into it:
+
+```bash
+cd <your-local-repo-path>
 ```
 
 Check you are in the right place:
@@ -27,7 +36,7 @@ Check you are in the right place:
 ls pyproject.toml
 ```
 
-If it prints the file path, you are in the correct directory.
+If it prints `pyproject.toml`, you are in the correct directory.
 
 ### 1) Create and activate a clean virtual environment (recommended)
 
@@ -72,7 +81,8 @@ python -m pip install .
 ```
 
 What this means:
-- `.` means “the current folder.”\n- So `pip install .` tells pip to read `pyproject.toml` here and install the package.
+- `.` means “the current folder.”
+- So `pip install .` tells pip to read `pyproject.toml` here and install the package.
 
 ### 4) (Optional) Development install (editable)
 
@@ -194,6 +204,8 @@ Optional:
 - `output_path` (default: `itbound_bounds.csv`)
 
 See `docs/cli-config.example.yaml` for a complete example.
+
+For a full field-by-field explanation, see `docs/config.md`.
 
 ## Toy CSV example
 
