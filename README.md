@@ -1,6 +1,6 @@
 # Information-Theoretic Causal Bounds under Unmeasured Confounding
 
-This repo implements the method in "Data-Driven Information-Theoretic Causal Bounds under Unmeasured Confounding (Jung & Kang, 2026)." It provides data-driven lower and upper bounds on causal estimands under unmeasured confounding without bounded outcomes, sensitivity parameters, instruments/proxies, or full SCM specification.
+This repo implements the method in "Information-Theoretic Causal Bounds under Unmeasured Confounding (Jung & Kang, 2026)." It provides lower and upper bounds on causal estimands under unmeasured confounding without bounded outcomes, sensitivity parameters, instruments/proxies, or full SCM specification.
 
 Target estimands (paper notation):
 
@@ -9,24 +9,35 @@ Target estimands (paper notation):
 θ(a)    = E_{Q_a}[φ(Y)]
 ```
 
-## Install
+## Install (step-by-step)
 
-From the repo root:
+The command `pip install .` installs the package from the **current directory** (this repo) into your active Python environment.
+
+Recommended (clean virtual environment):
 
 ```bash
-pip install .
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
+python -m pip install --upgrade pip
+python -m pip install .
 ```
 
-For development installs:
+Development install (editable, reflects code changes immediately):
 
 ```bash
-pip install -e .
+python -m pip install -e .
 ```
 
 Optional extras for figure reproduction:
 
 ```bash
-pip install .[experiments]
+python -m pip install '.[experiments]'
+```
+
+Quick sanity check:
+
+```bash
+python -m itbound --help
 ```
 
 ## Python API
@@ -104,7 +115,7 @@ flowchart LR
 
 ## Example Plot
 
-![Ribbon plot example (propensity)](docs/latex/figures/ribbon_propensity.png)
+![IHDP ribbon example](docs/latex/figures/ribbon_ihdp.png)
 
 ## Config schema (CLI)
 
@@ -201,7 +212,7 @@ For any action `a` and covariates `x` with `P(a|x) > 0`:
 D_f(P_{a,x} || Q_{a,x}) <= B_f(e_a(x)),  B_f(e) = e f(1/e) + (1-e) f(0)
 ```
 
-This upper bound depends only on the propensity score, making the divergence radius fully data-driven.
+This upper bound depends only on the propensity score, making the divergence radius fully propensity-score-based.
 
 Specializations used in the code:
 - `KL`: `D_KL(P||Q) <= -log e`
