@@ -108,12 +108,51 @@ python -m itbound --help
 
 If you see the CLI help output, the installation worked.
 
+## 10-Minute Quickstart (Opt-in Wrapper)
+
+`quick` is an opt-in wrapper around `itbound.fit(...)`; default math remains paper-equivalent (`mode=paper-default`).
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install .
+python -m itbound example --out /tmp/itbound_example.csv
+python -m itbound quick --data /tmp/itbound_example.csv --treatment a --outcome y --covariates x1,x2 --outdir /tmp/itbound_quick
+```
+
+What the outputs mean:
+- `lower`/`upper`: robust causal bound endpoints, not a single identified point estimate.
+- `width = upper - lower`: interval uncertainty under the allowed confounding set.
+- `valid_interval`: whether each row has a finite valid interval after domain/validity checks.
+
+Artifact location:
+- All quick outputs are written under `--outdir` (for example `/tmp/itbound_quick`).
+- Expected files: `summary.txt`, `results.json`, `claims.json`, `claims.md`, `plots/`, optional `report.html`.
+- Details: [`docs/quickstart.md`](docs/quickstart.md), [`docs/artifact_contract.md`](docs/artifact_contract.md), schema [`docs/results_schema_v0.md`](docs/results_schema_v0.md).
+
 ## Python API
 
 New wrapper (recommended):
 
 ```python
 import itbound
+```
+
+Standard-library function:
+
+```python
+from itbound.standard import run_standard_bounds
+
+result = run_standard_bounds(
+    csv_path="/tmp/itbound_toy.csv",
+    outcome_col="y",
+    treatment_col="a",
+    covariate_cols=["x1", "x2"],
+    divergences=["KL", "JS", "Hellinger", "TV", "Chi2"],
+    aggregation_mode="paper_adaptive_k",
+    outdir="/tmp/itbound_standard",
+    write_html=True,
+)
 ```
 
 Legacy import (still supported):
@@ -152,6 +191,62 @@ Notes:
 - `reproduce` expects the final-arxiv JSON summaries under `experiments/final-arxiv`.
 - If you installed the package, run `itbound reproduce` from the repo root so the data files are found.
 - Install extras first: `pip install .[experiments]`.
+
+### Standard-library run (CSV -> bounds + claims JSON + plots + optional HTML)
+
+```bash
+itbound standard \
+  --csv /tmp/itbound_toy.csv \
+  --y-col y \
+  --a-col a \
+  --x-cols x1,x2 \
+  --outdir /tmp/itbound_standard \
+  --divergences KL,JS,Hellinger,TV,Chi2 \
+  --aggregation-mode paper_adaptive_k \
+  --html
+```
+
+Artifacts written to `--outdir`:
+- `bounds.csv`
+- `summary.json` (claims + diagnostics + run config)
+- plot PNGs when `matplotlib` is available
+- `report.html` when `--html` is enabled
+
+If `matplotlib` is missing, plotting is skipped with a warning and other artifacts are still produced.
+
+### Artifact Contract Run (schema-versioned `results.json`)
+
+```bash
+itbound artifacts \
+  --csv /tmp/itbound_toy.csv \
+  --y-col y \
+  --a-col a \
+  --x-cols x1,x2 \
+  --outdir /tmp/itbound_artifacts \
+  --divergences KL
+```
+
+This opt-in command writes a fixed folder contract:
+- `summary.txt`
+- `results.json` (schema versioned; see `docs/results_schema_v0.md`)
+- `claims.json`
+- `claims.md`
+- `plots/`
+- `report.html` (optional with `--html`)
+
+### Quick Wrapper Run (`itbound.fit` via CLI)
+
+```bash
+itbound quick \
+  --data /tmp/itbound_toy.csv \
+  --treatment a \
+  --outcome y \
+  --covariates x1,x2 \
+  --outdir /tmp/itbound_quick
+```
+
+`quick` is an opt-in wrapper around `itbound.fit(...)` with default `mode=paper-default`,
+and writes the same artifact contract (`summary.txt`, `results.json`, `claims.json`, `claims.md`, `plots/`).
 
 ## Good Example (End-to-End)
 

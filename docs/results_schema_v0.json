@@ -1,0 +1,106 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/yonghanjung/Information-Theretic-Bounds/docs/results_schema_v0.json",
+  "title": "itbound results schema v0",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "provenance",
+    "bounds",
+    "diagnostics"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "results_schema_v0"
+    },
+    "provenance": {
+      "type": "object",
+      "required": [
+        "package_version",
+        "git_commit",
+        "git_commit_reason",
+        "timestamp",
+        "random_seed",
+        "assumptions",
+        "data_hash",
+        "data_hash_reason",
+        "command_line"
+      ],
+      "properties": {
+        "package_version": { "type": "string" },
+        "git_commit": { "type": ["string", "null"] },
+        "git_commit_reason": { "type": ["string", "null"] },
+        "timestamp": { "type": "string" },
+        "random_seed": { "type": "integer" },
+        "assumptions": { "type": ["string", "object"] },
+        "data_hash": { "type": ["string", "null"] },
+        "data_hash_reason": { "type": ["string", "null"] },
+        "command_line": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "bounds": {
+      "type": "object",
+      "required": [
+        "n_rows",
+        "n_valid_intervals",
+        "lower",
+        "upper",
+        "width"
+      ],
+      "properties": {
+        "n_rows": { "type": "integer" },
+        "n_valid_intervals": { "type": "integer" },
+        "lower": { "$ref": "#/definitions/statSummary" },
+        "upper": { "$ref": "#/definitions/statSummary" },
+        "width": { "$ref": "#/definitions/statSummary" }
+      },
+      "additionalProperties": true
+    },
+    "diagnostics": {
+      "type": "object",
+      "properties": {
+        "interval_validity": {
+          "type": "object"
+        },
+        "nan_propagation": {
+          "type": "object"
+        },
+        "invalid_domain": {
+          "type": "object"
+        },
+        "aggregation": {
+          "type": "object"
+        },
+        "missingness": {
+          "type": "object"
+        },
+        "overlap": {
+          "type": "object"
+        },
+        "warnings": {
+          "type": "array"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "definitions": {
+    "numOrNull": {
+      "type": ["number", "null"]
+    },
+    "statSummary": {
+      "type": "object",
+      "required": ["min", "max", "mean", "median"],
+      "properties": {
+        "min": { "$ref": "#/definitions/numOrNull" },
+        "max": { "$ref": "#/definitions/numOrNull" },
+        "mean": { "$ref": "#/definitions/numOrNull" },
+        "median": { "$ref": "#/definitions/numOrNull" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

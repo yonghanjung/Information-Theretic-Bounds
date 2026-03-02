@@ -6,9 +6,15 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+import pandas as pd
+
 from fbound.estimators.causal_bound import compute_causal_bounds
 
+from .api import fit as fit_dataframe
 from .config import ConfigError, build_phi, default_example_config, load_config, resolve_data
+from .artifacts import build_provenance, build_result_payload, write_artifact_contract
+from .standard import DEFAULT_DIVERGENCES, run_standard_bounds
+from . import __version__
 
 def _find_repo_root(start: Path) -> Path:
     for candidate in [start] + list(start.parents):
@@ -128,6 +134,81 @@ def build_parser() -> argparse.ArgumentParser:
     repro_p.add_argument("--only", default="")
     repro_p.add_argument("--dry-run", action="store_true")
 
+    std_p = sub.add_parser("standard", help="Standard library run from CSV columns")
+    std_p.add_argument("--csv", required=True, type=str, help="Input CSV path")
+    std_p.add_argument("--y-col", required=True, type=str, help="Outcome column")
+    std_p.add_argument("--a-col", required=True, type=str, help="Treatment column (binary)")
+    std_p.add_argument("--x-cols", required=True, type=str, help="Comma-separated covariate columns")
+    std_p.add_argument("--outdir", default="itbound-standard-out", type=str)
+    std_p.add_argument(
+        "--divergences",
+        default=",".join(DEFAULT_DIVERGENCES),
+        type=str,
+        help="Comma-separated divergences (default: KL,JS,Hellinger,TV,Chi2)",
+    )
+    std_p.add_argument("--phi", default="identity", type=str)
+    std_p.add_argument("--propensity-model", default="logistic", type=str)
+    std_p.add_argument("--m-model", default="linear", type=str)
+    std_p.add_argument("--seed", default=123, type=int)
+    std_p.add_argument("--n-folds", default=2, type=int)
+    std_p.add_argument("--num-epochs", default=3, type=int)
+    std_p.add_argument("--batch-size", default="auto", type=str)
+    std_p.add_argument("--aggregation-mode", default="paper_adaptive_k", choices=["paper_adaptive_k", "fixed_k_endpoint"])
+    std_p.add_argument("--fixed-k", default=1, type=int)
+    std_p.add_argument("--no-plots", action="store_true")
+    std_p.add_argument("--html", action="store_true")
+
+    art_p = sub.add_parser("artifacts", help="Write fixed artifact contract outputs")
+    art_p.add_argument("--csv", required=True, type=str, help="Input CSV path")
+    art_p.add_argument("--y-col", required=True, type=str, help="Outcome column")
+    art_p.add_argument("--a-col", required=True, type=str, help="Treatment column (binary)")
+    art_p.add_argument("--x-cols", required=True, type=str, help="Comma-separated covariate columns")
+    art_p.add_argument("--outdir", default="itbound-artifacts-out", type=str)
+    art_p.add_argument(
+        "--divergences",
+        default=",".join(DEFAULT_DIVERGENCES),
+        type=str,
+        help="Comma-separated divergences (default: KL,JS,Hellinger,TV,Chi2)",
+    )
+    art_p.add_argument("--phi", default="identity", type=str)
+    art_p.add_argument("--propensity-model", default="logistic", type=str)
+    art_p.add_argument("--m-model", default="linear", type=str)
+    art_p.add_argument("--seed", default=123, type=int)
+    art_p.add_argument("--n-folds", default=2, type=int)
+    art_p.add_argument("--num-epochs", default=3, type=int)
+    art_p.add_argument("--batch-size", default="auto", type=str)
+    art_p.add_argument("--aggregation-mode", default="paper_adaptive_k", choices=["paper_adaptive_k", "fixed_k_endpoint"])
+    art_p.add_argument("--fixed-k", default=1, type=int)
+    art_p.add_argument("--assumptions", default="", type=str, help="Optional explicit assumptions text")
+    art_p.add_argument("--no-plots", action="store_true")
+    art_p.add_argument("--html", action="store_true")
+
+    quick_p = sub.add_parser(
+        "quick",
+        help="Wrapper around itbound.fit (paper-default) that writes artifact contract outputs",
+    )
+    quick_p.add_argument("--data", required=True, type=str, help="Input CSV path")
+    quick_p.add_argument("--treatment", required=True, type=str, help="Treatment column (binary)")
+    quick_p.add_argument("--outcome", required=True, type=str, help="Outcome column")
+    quick_p.add_argument("--covariates", required=True, type=str, help="Comma-separated covariate columns")
+    quick_p.add_argument("--outdir", default="itbound-quick-out", type=str)
+    quick_p.add_argument(
+        "--mode",
+        default="paper-default",
+        choices=["paper-default"],
+        help="Wrapper mode. Default keeps paper-equivalent math.",
+    )
+    quick_p.add_argument("--divergence", default="KL", type=str)
+    quick_p.add_argument("--phi", default="identity", type=str)
+    quick_p.add_argument("--propensity-model", default="logistic", type=str)
+    quick_p.add_argument("--m-model", default="linear", type=str)
+    quick_p.add_argument("--seed", default=123, type=int)
+    quick_p.add_argument("--n-folds", default=2, type=int)
+    quick_p.add_argument("--num-epochs", default=3, type=int)
+    quick_p.add_argument("--batch-size", default="auto", type=str)
+    quick_p.add_argument("--no-plots", action="store_true")
+    quick_p.add_argument("--html", action="store_true")
+
     return parser
 
 
@@ -149,7 +230,160 @@ def main() -> int:
             return 0
         if args.command == "reproduce":
             return _reproduce(args.dry_run, args.outdir, args.only, args.final_arxiv_dir)
-    except ConfigError as exc:
+        if args.command == "standard":
+            x_cols = [x.strip() for x in str(args.x_cols).split(",") if x.strip()]
+            if not x_cols:
+                raise ConfigError("x-cols must contain at least one covariate column.")
+
+            fit_overrides = {
+                "n_folds": int(args.n_folds),
+                "num_epochs": int(args.num_epochs),
+                "batch_size": args.batch_size,
+                "verbose": False,
+                "log_every": 1,
+            }
+            result = run_standard_bounds(
+                csv_path=args.csv,
+                outcome_col=args.y_col,
+                treatment_col=args.a_col,
+                covariate_cols=x_cols,
+                divergences=args.divergences,
+                phi=args.phi,
+                propensity_model=args.propensity_model,
+                m_model=args.m_model,
+                fit_overrides=fit_overrides,
+                seed=int(args.seed),
+                aggregation_mode=args.aggregation_mode,
+                fixed_k=int(args.fixed_k),
+                outdir=args.outdir,
+                write_plots=not bool(args.no_plots),
+                write_html=bool(args.html),
+            )
+            print(f"saved: {result.bounds_path}")
+            print(f"saved: {result.summary_path}")
+            if result.html_path is not None:
+                print(f"saved: {result.html_path}")
+            for warning in result.warnings:
+                print(f"warning: {warning}", file=sys.stderr)
+            return 0
+        if args.command == "artifacts":
+            x_cols = [x.strip() for x in str(args.x_cols).split(",") if x.strip()]
+            if not x_cols:
+                raise ConfigError("x-cols must contain at least one covariate column.")
+
+            fit_overrides = {
+                "n_folds": int(args.n_folds),
+                "num_epochs": int(args.num_epochs),
+                "batch_size": args.batch_size,
+                "verbose": False,
+                "log_every": 1,
+            }
+            std = run_standard_bounds(
+                csv_path=args.csv,
+                outcome_col=args.y_col,
+                treatment_col=args.a_col,
+                covariate_cols=x_cols,
+                divergences=args.divergences,
+                phi=args.phi,
+                propensity_model=args.propensity_model,
+                m_model=args.m_model,
+                fit_overrides=fit_overrides,
+                seed=int(args.seed),
+                aggregation_mode=args.aggregation_mode,
+                fixed_k=int(args.fixed_k),
+                outdir=args.outdir,
+                write_plots=not bool(args.no_plots),
+                write_html=False,
+            )
+
+            assumptions: object
+            if args.assumptions:
+                assumptions = args.assumptions
+            else:
+                assumptions = {
+                    "paper_default_math": True,
+                    "treatment_domain": "binary_0_1",
+                    "aggregation_mode": args.aggregation_mode,
+                    "divergences": [v.strip() for v in str(args.divergences).split(",") if v.strip()],
+                }
+
+            diag_payload = {
+                "standard": std.diagnostics,
+                "missingness": {"status": "stub_v0", "note": "missingness checks not implemented in schema v0"},
+                "overlap": {"status": "stub_v0", "note": "overlap checks not implemented in schema v0"},
+                "warnings": list(std.warnings),
+            }
+            prov = build_provenance(
+                package_version=__version__,
+                random_seed=int(args.seed),
+                assumptions=assumptions,
+                data_source=args.csv,
+                repo_root=ROOT,
+            )
+            payload = build_result_payload(bounds_df=std.bounds, diagnostics=diag_payload, provenance=prov)
+            paths = write_artifact_contract(
+                outdir=Path(args.outdir),
+                payload=payload,
+                claims=std.claims,
+                warnings=std.warnings,
+                plot_paths=std.plot_paths,
+                write_html=bool(args.html),
+            )
+
+            print(f"saved: {paths.summary_txt}")
+            print(f"saved: {paths.results_json}")
+            print(f"saved: {paths.claims_json}")
+            if paths.claims_md is not None:
+                print(f"saved: {paths.claims_md}")
+            print(f"saved: {paths.plots_dir}")
+            if paths.report_html is not None:
+                print(f"saved: {paths.report_html}")
+            return 0
+        if args.command == "quick":
+            covariates = [x.strip() for x in str(args.covariates).split(",") if x.strip()]
+            if not covariates:
+                raise ConfigError("covariates must contain at least one covariate column.")
+
+            csv_path = Path(args.data)
+            if not csv_path.exists():
+                raise FileNotFoundError(f"Input CSV file not found: {csv_path}")
+
+            df = pd.read_csv(csv_path)
+            fit_overrides = {
+                "n_folds": int(args.n_folds),
+                "num_epochs": int(args.num_epochs),
+                "batch_size": args.batch_size,
+                "verbose": False,
+                "log_every": 1,
+            }
+            report = fit_dataframe(
+                df,
+                treatment=args.treatment,
+                outcome=args.outcome,
+                covariates=covariates,
+                mode=args.mode,
+                divergence=args.divergence,
+                phi=args.phi,
+                propensity_model=args.propensity_model,
+                m_model=args.m_model,
+                fit_overrides=fit_overrides,
+                seed=int(args.seed),
+            )
+            paths = report.save(
+                Path(args.outdir),
+                write_plots=not bool(args.no_plots),
+                write_html=bool(args.html),
+            )
+            print(f"saved: {paths.summary_txt}")
+            print(f"saved: {paths.results_json}")
+            print(f"saved: {paths.claims_json}")
+            if paths.claims_md is not None:
+                print(f"saved: {paths.claims_md}")
+            print(f"saved: {paths.plots_dir}")
+            if paths.report_html is not None:
+                print(f"saved: {paths.report_html}")
+            return 0
+    except (ConfigError, ValueError, FileNotFoundError, KeyError, OSError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
     return 0
