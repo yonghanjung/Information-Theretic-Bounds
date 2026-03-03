@@ -252,7 +252,7 @@ and writes the same artifact contract (`summary.txt`, `results.json`, `claims.js
 
 Toy scenario preview (GIF rendered from the actual CLI run):
 
-![itbound demo toy live preview](docs/media/quick-demo-v2.gif)
+![itbound demo toy live preview](docs/media/quick-demo-v3.gif)
 
 Run a fast toy-data demo:
 
