@@ -3,7 +3,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-OUT_GIF="${1:-${REPO_ROOT}/docs/media/quick-demo-v3.gif}"
+OUT_GIF="${1:-${REPO_ROOT}/docs/media/quick-demo-v4.gif}"
+COVER_DELAY="${COVER_DELAY:-900}"
+FRAME_DELAY="${FRAME_DELAY:-45}"
 
 if ! command -v magick >/dev/null 2>&1; then
   echo "Missing dependency: magick (ImageMagick)." >&2
@@ -178,5 +180,21 @@ cp "${LAST_FRAME}" "${TMP_DIR}/frames/frame_$(printf '%03d' "${FRAME_INDEX}").pn
 FRAME_INDEX=$((FRAME_INDEX + 1))
 cp "${LAST_FRAME}" "${TMP_DIR}/frames/frame_$(printf '%03d' "${FRAME_INDEX}").png"
 
-magick -delay 45 "${TMP_DIR}"/frames/frame_*.png -loop 0 -layers Optimize "${OUT_GIF}"
+shopt -s nullglob
+FRAMES=( "${TMP_DIR}"/frames/frame_*.png )
+if [[ ${#FRAMES[@]} -eq 0 ]]; then
+  echo "No frames generated." >&2
+  exit 2
+fi
+
+FIRST_FRAME="${FRAMES[0]}"
+REST_FRAMES=( "${FRAMES[@]:1}" )
+if [[ ${#REST_FRAMES[@]} -gt 0 ]]; then
+  magick -delay "${COVER_DELAY}" "${FIRST_FRAME}" \
+    -delay "${FRAME_DELAY}" "${REST_FRAMES[@]}" \
+    -loop 0 -layers Optimize "${OUT_GIF}"
+else
+  magick -delay "${COVER_DELAY}" "${FIRST_FRAME}" -loop 0 "${OUT_GIF}"
+fi
+
 echo "saved: ${OUT_GIF}"
