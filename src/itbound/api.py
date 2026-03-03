@@ -34,7 +34,7 @@ def _require_numeric(frame: pd.DataFrame, cols: Sequence[str], *, label: str) ->
         raise ValueError(f"{label} must be numeric for MVP. Non-numeric columns: {joined}")
 
 
-def _diagnostics_from_bounds(bounds_df: pd.DataFrame, *, mode: str, divergence: str) -> Dict[str, Any]:
+def compute_bounds_diagnostics(bounds_df: pd.DataFrame, *, mode: str, divergence: str) -> Dict[str, Any]:
     lower = bounds_df["lower"].to_numpy(dtype=np.float64)
     upper = bounds_df["upper"].to_numpy(dtype=np.float64)
     width = bounds_df["width"].to_numpy(dtype=np.float64)
@@ -186,7 +186,7 @@ def fit(
     ).sort_values("i").reset_index(drop=True)
 
     claims = compute_claims(bounds)
-    diagnostics = _diagnostics_from_bounds(bounds, mode=mode, divergence=str(divergence))
+    diagnostics = compute_bounds_diagnostics(bounds, mode=mode, divergence=str(divergence))
 
     try:
         package_version = getattr(importlib.import_module("itbound"), "__version__", "unknown")
@@ -216,4 +216,4 @@ def fit(
     )
 
 
-__all__ = ["fit"]
+__all__ = ["compute_bounds_diagnostics", "fit"]

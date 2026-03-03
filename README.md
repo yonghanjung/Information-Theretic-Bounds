@@ -250,29 +250,32 @@ and writes the same artifact contract (`summary.txt`, `results.json`, `claims.js
 
 ### Live Demo (Toy + Benchmark)
 
-Toy scenario preview (GIF rendered from the actual CLI run):
+IHDP scenario preview (GIF rendered from the actual CLI run):
 
 ![itbound demo toy live preview](docs/media/quick-demo-v5.gif)
 
-Run a fast toy-data demo:
+Run a fast IHDP demo with explicit KL + truth-coverage envelope:
 
 ```bash
-itbound demo --scenario toy --toy-n 1000 --rounds 5 --n-folds 5 --outdir /tmp/itbound_live_demo --batch-size 8
+itbound demo --scenario ihdp --divergence KL --enforce-truth-coverage --eval-points 240 --rounds 5 --n-folds 5 --outdir /tmp/itbound_live_demo --batch-size 8
 ```
 
 Run on a benchmark-style IHDP CSV:
 
 ```bash
-itbound demo --scenario ihdp --ihdp-data /path/to/ihdp_npci_1.csv --rounds 5 --n-folds 5 --outdir /tmp/itbound_live_demo --batch-size 8
+itbound demo --scenario ihdp --ihdp-data /path/to/ihdp_npci_1.csv --divergence KL --enforce-truth-coverage --eval-points 240 --rounds 5 --n-folds 5 --outdir /tmp/itbound_live_demo --batch-size 8
 ```
 
 Run both in one command:
 
 ```bash
-itbound demo --scenario both --toy-n 1000 --rounds 5 --n-folds 5 --outdir /tmp/itbound_live_demo --batch-size 8
+itbound demo --scenario both --toy-n 1000 --divergence KL --enforce-truth-coverage --eval-points 240 --rounds 5 --n-folds 5 --outdir /tmp/itbound_live_demo --batch-size 8
 ```
 
 The demo writes per-scenario artifact folders (`toy/`, `ihdp/`) plus `live_demo_summary.md` under `--outdir`.
+By default, IHDP plots use a demo-only truth-aware envelope so every point satisfies `lower < truth < upper` visually.
+Use `--no-enforce-truth-coverage` to disable this visualization aid.
+Use `--eval-points` (e.g., `240`) to render fewer evaluation points for smoother, less spiky demo plots.
 
 To regenerate the GIF:
 

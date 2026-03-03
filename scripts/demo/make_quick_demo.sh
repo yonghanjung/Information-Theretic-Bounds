@@ -32,8 +32,10 @@ DEMO_OUTDIR="${TMP_DIR}/demo_out"
 
 pushd "${REPO_ROOT}" >/dev/null
 PYTHONPATH=src python3 -m itbound demo \
-  --scenario toy \
-  --toy-n 1000 \
+  --scenario ihdp \
+  --enforce-truth-coverage \
+  --divergence KL \
+  --eval-points 240 \
   --outdir "${DEMO_OUTDIR}" \
   --num-epochs 5 \
   --n-folds 5 \
@@ -65,7 +67,7 @@ PY
 
 FRAME_TEXT="${TMP_DIR}/frame.txt"
 FRAME_INDEX=0
-COMMAND_LINE='$ python -m itbound demo --scenario toy --toy-n 1000 --outdir /tmp/itbound_live_demo --num-epochs 5 --n-folds 5 --batch-size 8'
+COMMAND_LINE='$ python -m itbound demo --scenario ihdp --enforce-truth-coverage --divergence KL --eval-points 240 --outdir /tmp/itbound_live_demo --num-epochs 5 --n-folds 5 --batch-size 8'
 
 render_frame() {
   local index="$1"
@@ -115,8 +117,8 @@ render_cover_frame() {
       "${base_path}"
   fi
 
-  if [[ -f "${DEMO_OUTDIR}/toy/plots/bounds_interval.png" ]]; then
-    magick "${DEMO_OUTDIR}/toy/plots/bounds_interval.png" -resize 1160x420 "${plot_tmp}"
+  if [[ -f "${PLOT_IMG}" ]]; then
+    magick "${PLOT_IMG}" -resize 1160x420 "${plot_tmp}"
     magick "${base_path}" "${plot_tmp}" -gravity south -geometry +0+18 -composite "${frame_path}"
   else
     cp "${base_path}" "${frame_path}"
@@ -130,6 +132,8 @@ import os
 from pathlib import Path
 
 path = Path(os.environ["DEMO_OUTDIR_RAW"]) / "toy" / "results.json"
+if not path.is_file():
+    path = Path(os.environ["DEMO_OUTDIR_RAW"]) / "ihdp" / "results.json"
 if path.is_file():
     obj = json.loads(path.read_text(encoding="utf-8"))
     b = obj.get("bounds", {})
@@ -142,7 +146,11 @@ else:
     print("results.json not found (fallback mode)")
 PY
 )"
-if [[ ! -f "${DEMO_OUTDIR}/toy/plots/bounds_interval.png" ]]; then
+PLOT_IMG="${DEMO_OUTDIR}/ihdp/plots/bounds_interval.png"
+if [[ ! -f "${PLOT_IMG}" ]]; then
+  PLOT_IMG="${DEMO_OUTDIR}/toy/plots/bounds_interval.png"
+fi
+if [[ ! -f "${PLOT_IMG}" ]]; then
   RESULT_BRIEF="${RESULT_BRIEF}
 plot: not available (install extras: pip install itbound[experiments])"
 fi

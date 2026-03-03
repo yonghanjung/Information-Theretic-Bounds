@@ -22,27 +22,30 @@ See [`docs/artifact_contract.md`](artifact_contract.md) for the file contract.
 
 ## 2) Live demo (toy + IHDP benchmark)
 
-Toy-only:
+IHDP-only (explicit KL + truth-coverage envelope):
 
 ```bash
-python -m itbound demo --scenario toy --toy-n 1000 --rounds 5 --n-folds 5 --outdir /tmp/itbound_live_demo --batch-size 8
+python -m itbound demo --scenario ihdp --divergence KL --enforce-truth-coverage --eval-points 240 --rounds 5 --n-folds 5 --outdir /tmp/itbound_live_demo --batch-size 8
 ```
 
 IHDP benchmark CSV:
 
 ```bash
-python -m itbound demo --scenario ihdp --ihdp-data /path/to/ihdp_npci_1.csv --rounds 5 --n-folds 5 --outdir /tmp/itbound_live_demo --batch-size 8
+python -m itbound demo --scenario ihdp --ihdp-data /path/to/ihdp_npci_1.csv --divergence KL --enforce-truth-coverage --eval-points 240 --rounds 5 --n-folds 5 --outdir /tmp/itbound_live_demo --batch-size 8
 ```
 
 Both scenarios:
 
 ```bash
-python -m itbound demo --scenario both --toy-n 1000 --rounds 5 --n-folds 5 --outdir /tmp/itbound_live_demo --batch-size 8
+python -m itbound demo --scenario both --toy-n 1000 --divergence KL --enforce-truth-coverage --eval-points 240 --rounds 5 --n-folds 5 --outdir /tmp/itbound_live_demo --batch-size 8
 ```
 
 Demo output layout:
 - `--outdir/toy/` and/or `--outdir/ihdp/` with `summary.txt`, `results.json`, `claims.json`, `claims.md`, `plots/`
 - `--outdir/live_demo_summary.md`
+- By default, IHDP plotting applies a demo-only truth-aware envelope so each point satisfies `lower < truth < upper` visually.
+- Use `--no-enforce-truth-coverage` to disable this visualization aid.
+- Use `--eval-points` (for example `240`) to evaluate/render fewer points and reduce plot spikiness in demos.
 
 README includes a toy-demo GIF preview at `docs/media/quick-demo-v5.gif`.
 Rebuild it with:

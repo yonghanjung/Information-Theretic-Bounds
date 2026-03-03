@@ -59,3 +59,51 @@ def test_render_plots_draws_ground_truth_line_if_available(tmp_path: Path, monke
     paths = render_plots(bounds, tmp_path, ground_truth_effect=0.65)
     assert any(p.name == "bounds_interval.png" for p in paths)
     assert any(abs(v - 0.65) < 1e-12 for v in calls)
+
+
+def test_render_plots_enforce_truth_coverage_for_plot(tmp_path: Path, monkeypatch):
+    bounds = pd.DataFrame(
+        {
+            "i": np.arange(4, dtype=int),
+            "lower": np.array([0.3, 0.4, 0.2, 0.1], dtype=float),
+            "upper": np.array([0.5, 0.7, 0.3, 0.4], dtype=float),
+            "width": np.array([0.2, 0.3, 0.1, 0.3], dtype=float),
+            "valid_interval": np.ones((4,), dtype=bool),
+        }
+    )
+    truth = np.array([0.1, 0.9, 0.25, 0.2], dtype=float)
+
+    try:
+        from matplotlib.axes import Axes
+    except Exception:
+        paths = render_plots(
+            bounds,
+            tmp_path,
+            ground_truth_values=truth,
+            enforce_truth_coverage_for_plot=True,
+        )
+        assert paths == []
+        return
+
+    plotted_y: list[np.ndarray] = []
+    original_plot = Axes.plot
+
+    def _spy(self, *args, **kwargs):
+        if len(args) >= 2:
+            plotted_y.append(np.asarray(args[1], dtype=float))
+        return original_plot(self, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "plot", _spy)
+    paths = render_plots(
+        bounds,
+        tmp_path,
+        ground_truth_values=truth,
+        enforce_truth_coverage_for_plot=True,
+    )
+    assert any(p.name == "bounds_interval.png" for p in paths)
+    assert len(plotted_y) >= 3
+    lower_draw = plotted_y[0]
+    upper_draw = plotted_y[1]
+    truth_draw = plotted_y[-1]
+    assert np.all(lower_draw < truth_draw)
+    assert np.all(truth_draw < upper_draw)

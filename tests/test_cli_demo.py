@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+import json
 from pathlib import Path
 
 import numpy as np
@@ -116,6 +117,36 @@ def test_cli_demo_ihdp_with_custom_file(tmp_path: Path):
     assert summary.exists()
     text = summary.read_text(encoding="utf-8")
     assert "ground_truth_effect:" in text
+    assert "truth_coverage_enforced: True" in text
+
+
+def test_cli_demo_ihdp_disable_enforced_truth_coverage(tmp_path: Path):
+    root = _repo_root()
+    outdir = tmp_path / "demo-ihdp-no-enforce"
+    ihdp_path = _fake_ihdp(tmp_path / "ihdp_npci_disable_enforce.csv")
+    result = _run_demo(
+        root,
+        [
+            "--scenario",
+            "ihdp",
+            "--ihdp-data",
+            str(ihdp_path),
+            "--no-enforce-truth-coverage",
+            "--rounds",
+            "2",
+            "--n-folds",
+            "2",
+            "--batch-size",
+            "8",
+            "--outdir",
+            str(outdir),
+            "--no-plots",
+        ],
+    )
+    assert result.returncode == 0, result.stderr
+    summary = outdir / "live_demo_summary.md"
+    text = summary.read_text(encoding="utf-8")
+    assert "truth_coverage_enforced: False" in text
 
 
 def test_cli_demo_rounds_alias_and_toy_n(tmp_path: Path):
@@ -141,3 +172,66 @@ def test_cli_demo_rounds_alias_and_toy_n(tmp_path: Path):
     )
     assert result.returncode == 0, result.stderr
     assert (outdir / "toy" / "results.json").exists()
+
+
+def test_cli_demo_ihdp_enforce_truth_coverage(tmp_path: Path):
+    root = _repo_root()
+    outdir = tmp_path / "demo-ihdp-enforced"
+    ihdp_path = _fake_ihdp(tmp_path / "ihdp_npci_enforced.csv", n=120)
+    result = _run_demo(
+        root,
+        [
+            "--scenario",
+            "ihdp",
+            "--ihdp-data",
+            str(ihdp_path),
+            "--enforce-truth-coverage",
+            "--rounds",
+            "2",
+            "--n-folds",
+            "2",
+            "--batch-size",
+            "8",
+            "--outdir",
+            str(outdir),
+            "--no-plots",
+        ],
+    )
+    assert result.returncode == 0, result.stderr
+    summary = outdir / "live_demo_summary.md"
+    text = summary.read_text(encoding="utf-8")
+    assert "truth_coverage_enforced: True" in text
+    assert "truth_coverage_plot: 1.0" in text
+
+
+def test_cli_demo_eval_points_downsamples_artifacts(tmp_path: Path):
+    root = _repo_root()
+    outdir = tmp_path / "demo-ihdp-eval-points"
+    ihdp_path = _fake_ihdp(tmp_path / "ihdp_npci_eval_points.csv", n=120)
+    result = _run_demo(
+        root,
+        [
+            "--scenario",
+            "ihdp",
+            "--ihdp-data",
+            str(ihdp_path),
+            "--eval-points",
+            "25",
+            "--rounds",
+            "2",
+            "--n-folds",
+            "2",
+            "--batch-size",
+            "8",
+            "--no-plots",
+            "--outdir",
+            str(outdir),
+        ],
+    )
+    assert result.returncode == 0, result.stderr
+    summary_text = (outdir / "live_demo_summary.md").read_text(encoding="utf-8")
+    assert "eval_points_requested: 25" in summary_text
+    assert "eval_points_used: 25" in summary_text
+
+    results = json.loads((outdir / "ihdp" / "results.json").read_text(encoding="utf-8"))
+    assert int(results["bounds"]["n_rows"]) == 25

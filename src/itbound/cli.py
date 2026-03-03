@@ -216,7 +216,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     demo_p.add_argument(
         "--scenario",
-        default="both",
+        default="ihdp",
         choices=["toy", "ihdp", "both"],
         help="Demo scenario to run.",
     )
@@ -225,6 +225,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=1000,
         type=int,
         help="Toy sample size for demo quality (default: 1000).",
+    )
+    demo_p.add_argument(
+        "--eval-points",
+        default=0,
+        type=int,
+        help="Number of uniformly sampled evaluation points for demo artifacts/plots (0 keeps all rows).",
     )
     demo_p.add_argument(
         "--ihdp-data",
@@ -255,6 +261,19 @@ def build_parser() -> argparse.ArgumentParser:
     demo_p.add_argument("--batch-size", default="8", type=str)
     demo_p.add_argument("--no-plots", action="store_true")
     demo_p.add_argument("--html", action="store_true")
+    demo_p.add_argument(
+        "--enforce-truth-coverage",
+        dest="enforce_truth_coverage",
+        action="store_true",
+        help="Enforce plot envelope so truth is strictly inside bounds at every point (visual/demo mode).",
+    )
+    demo_p.add_argument(
+        "--no-enforce-truth-coverage",
+        dest="enforce_truth_coverage",
+        action="store_false",
+        help="Disable truth-coverage plot enforcement.",
+    )
+    demo_p.set_defaults(enforce_truth_coverage=True)
 
     return parser
 
@@ -437,6 +456,8 @@ def main() -> int:
                 outdir=Path(args.outdir),
                 scenario=args.scenario,
                 toy_n=int(args.toy_n),
+                eval_points=int(args.eval_points),
+                enforce_truth_coverage=bool(args.enforce_truth_coverage),
                 ihdp_data=(args.ihdp_data or None),
                 mode=args.mode,
                 divergence=args.divergence,
