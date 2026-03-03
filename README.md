@@ -248,6 +248,38 @@ itbound quick \
 `quick` is an opt-in wrapper around `itbound.fit(...)` with default `mode=paper-default`,
 and writes the same artifact contract (`summary.txt`, `results.json`, `claims.json`, `claims.md`, `plots/`).
 
+### Live Demo (Toy + Benchmark)
+
+Toy scenario preview (GIF rendered from the actual CLI run):
+
+![itbound demo toy live preview](docs/media/quick-demo.gif)
+
+Run a fast toy-data demo:
+
+```bash
+itbound demo --scenario toy --outdir /tmp/itbound_live_demo --num-epochs 1 --n-folds 2 --batch-size 8
+```
+
+Run on a benchmark-style IHDP CSV:
+
+```bash
+itbound demo --scenario ihdp --ihdp-data /path/to/ihdp_npci_1.csv --outdir /tmp/itbound_live_demo --num-epochs 1 --n-folds 2 --batch-size 8
+```
+
+Run both in one command:
+
+```bash
+itbound demo --scenario both --outdir /tmp/itbound_live_demo --num-epochs 1 --n-folds 2 --batch-size 8
+```
+
+The demo writes per-scenario artifact folders (`toy/`, `ihdp/`) plus `live_demo_summary.md` under `--outdir`.
+
+To regenerate the GIF:
+
+```bash
+bash scripts/demo/make_quick_demo.sh
+```
+
 ## Good Example (End-to-End)
 
 Install, run a quick example, and verify the output columns:

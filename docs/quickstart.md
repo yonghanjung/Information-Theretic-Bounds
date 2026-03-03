@@ -20,7 +20,38 @@ python -m itbound quick --data /tmp/itbound_example.csv --treatment a --outcome 
 Artifacts are written to `--outdir` (`/tmp/itbound_quick` above).
 See [`docs/artifact_contract.md`](artifact_contract.md) for the file contract.
 
-## 2) Python quick path
+## 2) Live demo (toy + IHDP benchmark)
+
+Toy-only:
+
+```bash
+python -m itbound demo --scenario toy --outdir /tmp/itbound_live_demo --num-epochs 1 --n-folds 2 --batch-size 8
+```
+
+IHDP benchmark CSV:
+
+```bash
+python -m itbound demo --scenario ihdp --ihdp-data /path/to/ihdp_npci_1.csv --outdir /tmp/itbound_live_demo --num-epochs 1 --n-folds 2 --batch-size 8
+```
+
+Both scenarios:
+
+```bash
+python -m itbound demo --scenario both --outdir /tmp/itbound_live_demo --num-epochs 1 --n-folds 2 --batch-size 8
+```
+
+Demo output layout:
+- `--outdir/toy/` and/or `--outdir/ihdp/` with `summary.txt`, `results.json`, `claims.json`, `claims.md`, `plots/`
+- `--outdir/live_demo_summary.md`
+
+README includes a toy-demo GIF preview at `docs/media/quick-demo.gif`.
+Rebuild it with:
+
+```bash
+bash scripts/demo/make_quick_demo.sh
+```
+
+## 3) Python quick path
 
 ```python
 import pandas as pd
@@ -40,13 +71,13 @@ print(res.summary())
 res.save("/tmp/itbound_quick_py")
 ```
 
-## 3) Interpreting outputs safely
+## 4) Interpreting outputs safely
 
 - `lower` and `upper` are bound endpoints, not a single identified effect estimate.
 - `width = upper - lower` reflects residual uncertainty under allowed confounding.
 - `claims.json` and `claims.md` summarize robust statements derived only from the bounds.
 
-## 4) Paper workflow (unchanged)
+## 5) Paper workflow (unchanged)
 
 Use this for config-driven reproduction and paper-equivalent workflows:
 

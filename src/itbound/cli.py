@@ -13,6 +13,7 @@ from fbound.estimators.causal_bound import compute_causal_bounds
 from .api import fit as fit_dataframe
 from .config import ConfigError, build_phi, default_example_config, load_config, resolve_data
 from .artifacts import build_provenance, build_result_payload, write_artifact_contract
+from .live_demo import run_live_demo
 from .standard import DEFAULT_DIVERGENCES, run_standard_bounds
 from . import __version__
 
@@ -209,6 +210,40 @@ def build_parser() -> argparse.ArgumentParser:
     quick_p.add_argument("--no-plots", action="store_true")
     quick_p.add_argument("--html", action="store_true")
 
+    demo_p = sub.add_parser(
+        "demo",
+        help="Run a live demo on toy data and/or IHDP benchmark using itbound.fit wrapper",
+    )
+    demo_p.add_argument(
+        "--scenario",
+        default="both",
+        choices=["toy", "ihdp", "both"],
+        help="Demo scenario to run.",
+    )
+    demo_p.add_argument(
+        "--ihdp-data",
+        default="",
+        type=str,
+        help="Optional path to IHDP CSV (default: repo ihdp_data/ihdp_npci_1.csv if available).",
+    )
+    demo_p.add_argument("--outdir", default="itbound-live-demo", type=str)
+    demo_p.add_argument(
+        "--mode",
+        default="paper-default",
+        choices=["paper-default"],
+        help="Wrapper mode. Default keeps paper-equivalent math.",
+    )
+    demo_p.add_argument("--divergence", default="TV", type=str, help="Default TV for stable live demo intervals.")
+    demo_p.add_argument("--phi", default="identity", type=str)
+    demo_p.add_argument("--propensity-model", default="logistic", type=str)
+    demo_p.add_argument("--m-model", default="linear", type=str)
+    demo_p.add_argument("--seed", default=123, type=int)
+    demo_p.add_argument("--n-folds", default=2, type=int)
+    demo_p.add_argument("--num-epochs", default=2, type=int)
+    demo_p.add_argument("--batch-size", default="8", type=str)
+    demo_p.add_argument("--no-plots", action="store_true")
+    demo_p.add_argument("--html", action="store_true")
+
     return parser
 
 
@@ -382,6 +417,36 @@ def main() -> int:
             print(f"saved: {paths.plots_dir}")
             if paths.report_html is not None:
                 print(f"saved: {paths.report_html}")
+            return 0
+        if args.command == "demo":
+            runs, summary_path = run_live_demo(
+                repo_root=ROOT,
+                outdir=Path(args.outdir),
+                scenario=args.scenario,
+                ihdp_data=(args.ihdp_data or None),
+                mode=args.mode,
+                divergence=args.divergence,
+                phi=args.phi,
+                propensity_model=args.propensity_model,
+                m_model=args.m_model,
+                seed=int(args.seed),
+                n_folds=int(args.n_folds),
+                num_epochs=int(args.num_epochs),
+                batch_size=args.batch_size,
+                no_plots=bool(args.no_plots),
+                html=bool(args.html),
+            )
+            for run in runs:
+                print(f"demo: {run.name}")
+                print(f"saved: {run.artifacts.summary_txt}")
+                print(f"saved: {run.artifacts.results_json}")
+                print(f"saved: {run.artifacts.claims_json}")
+                if run.artifacts.claims_md is not None:
+                    print(f"saved: {run.artifacts.claims_md}")
+                print(f"saved: {run.artifacts.plots_dir}")
+                if run.artifacts.report_html is not None:
+                    print(f"saved: {run.artifacts.report_html}")
+            print(f"saved: {summary_path}")
             return 0
     except (ConfigError, ValueError, FileNotFoundError, KeyError, OSError) as exc:
         print(str(exc), file=sys.stderr)
