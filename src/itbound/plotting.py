@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import pandas as pd
 
 
-def render_plots(bounds_df: pd.DataFrame, outdir: Path) -> list[Path]:
+def render_plots(bounds_df: pd.DataFrame, outdir: Path, *, ground_truth_effect: Optional[float] = None) -> list[Path]:
     try:
         import matplotlib.pyplot as plt
     except Exception:
@@ -34,6 +35,14 @@ def render_plots(bounds_df: pd.DataFrame, outdir: Path) -> list[Path]:
     ax.plot(idx, upper, label="upper", color="tab:orange", linewidth=1.2)
     if np.any(valid):
         ax.fill_between(idx, lower, upper, where=valid, alpha=0.2, color="tab:green", label="valid interval")
+    if ground_truth_effect is not None and np.isfinite(float(ground_truth_effect)):
+        ax.axhline(
+            y=float(ground_truth_effect),
+            color="tab:red",
+            linestyle="--",
+            linewidth=1.4,
+            label=f"ground truth effect ({float(ground_truth_effect):.4g})",
+        )
     ax.set_title("Causal Bounds by Row")
     ax.set_xlabel("row index")
     ax.set_ylabel("bound value")

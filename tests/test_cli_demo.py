@@ -74,7 +74,10 @@ def test_cli_demo_toy_writes_artifacts(tmp_path: Path):
     assert (toy_dir / "summary.txt").exists()
     assert (toy_dir / "results.json").exists()
     assert (toy_dir / "claims.json").exists()
-    assert (outdir / "live_demo_summary.md").exists()
+    summary = outdir / "live_demo_summary.md"
+    assert summary.exists()
+    text = summary.read_text(encoding="utf-8")
+    assert "ground_truth_effect: 0.65" in text
 
 
 def test_cli_demo_ihdp_with_custom_file(tmp_path: Path):
@@ -105,4 +108,7 @@ def test_cli_demo_ihdp_with_custom_file(tmp_path: Path):
     assert (ihdp_dir / "summary.txt").exists()
     assert (ihdp_dir / "results.json").exists()
     assert (ihdp_dir / "claims.json").exists()
-    assert (outdir / "live_demo_summary.md").exists()
+    summary = outdir / "live_demo_summary.md"
+    assert summary.exists()
+    text = summary.read_text(encoding="utf-8")
+    assert "ground_truth_effect:" in text

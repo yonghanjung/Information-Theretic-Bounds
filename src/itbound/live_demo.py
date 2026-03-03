@@ -24,6 +24,7 @@ class DemoRunResult:
     outcome: str
     covariates: list[str]
     divergence: str
+    ground_truth_effect: Optional[float]
 
 
 def _make_toy_dataframe(n: int = 120, seed: int = 123) -> pd.DataFrame:
@@ -33,6 +34,10 @@ def _make_toy_dataframe(n: int = 120, seed: int = 123) -> pd.DataFrame:
     a = (x1 + rng.normal(scale=0.3, size=n) > 0).astype(int)
     y = 0.25 + 0.65 * a + 0.2 * x1 - 0.1 * x2 + rng.normal(scale=0.1, size=n)
     return pd.DataFrame({"y": y, "a": a, "x1": x1, "x2": x2})
+
+
+def _toy_ground_truth_effect() -> float:
+    return 0.65
 
 
 def _load_ihdp_csv(path: Path) -> pd.DataFrame:
@@ -63,6 +68,21 @@ def _resolve_ihdp_path(repo_root: Path, ihdp_data: Optional[str]) -> Path:
     )
 
 
+def _ihdp_ground_truth_effect(df: pd.DataFrame) -> Optional[float]:
+    if "mu0" not in df.columns or "mu1" not in df.columns:
+        return None
+    try:
+        mu0 = pd.to_numeric(df["mu0"], errors="coerce").to_numpy(dtype=np.float64)
+        mu1 = pd.to_numeric(df["mu1"], errors="coerce").to_numpy(dtype=np.float64)
+    except Exception:
+        return None
+    delta = mu1 - mu0
+    finite = np.isfinite(delta)
+    if not np.any(finite):
+        return None
+    return float(np.mean(delta[finite]))
+
+
 def _run_one(
     *,
     name: str,
@@ -82,6 +102,7 @@ def _run_one(
     batch_size: str,
     no_plots: bool,
     html: bool,
+    ground_truth_effect: Optional[float] = None,
 ) -> DemoRunResult:
     fit_overrides = {
         "n_folds": int(n_folds),
@@ -103,7 +124,12 @@ def _run_one(
         fit_overrides=fit_overrides,
         seed=int(seed),
     )
-    artifacts = report.save(outdir, write_plots=not bool(no_plots), write_html=bool(html))
+    artifacts = report.save(
+        outdir,
+        write_plots=not bool(no_plots),
+        write_html=bool(html),
+        ground_truth_effect=ground_truth_effect,
+    )
     return DemoRunResult(
         name=name,
         outdir=outdir,
@@ -113,6 +139,7 @@ def _run_one(
         outcome=outcome,
         covariates=list(covariates),
         divergence=str(divergence),
+        ground_truth_effect=ground_truth_effect,
     )
 
 
@@ -133,6 +160,7 @@ def _write_demo_summary(path: Path, runs: list[DemoRunResult]) -> Path:
                 f"- outcome: {run.outcome}",
                 f"- covariates: {', '.join(run.covariates)}",
                 f"- divergence: {run.divergence}",
+                f"- ground_truth_effect: {run.ground_truth_effect}",
                 f"- summary: {run.artifacts.summary_txt}",
                 f"- results: {run.artifacts.results_json}",
                 f"- claims: {run.artifacts.claims_json}",
@@ -173,6 +201,7 @@ def run_live_demo(
     runs: list[DemoRunResult] = []
     if scenario in {"toy", "both"}:
         toy_df = _make_toy_dataframe(n=120, seed=int(seed))
+        toy_truth = _toy_ground_truth_effect()
         runs.append(
             _run_one(
                 name="toy",
@@ -192,12 +221,14 @@ def run_live_demo(
                 batch_size=batch_size,
                 no_plots=bool(no_plots),
                 html=bool(html),
+                ground_truth_effect=toy_truth,
             )
         )
 
     if scenario in {"ihdp", "both"}:
         ihdp_path = _resolve_ihdp_path(repo_root=Path(repo_root), ihdp_data=ihdp_data)
         ihdp_df = _load_ihdp_csv(ihdp_path)
+        ihdp_truth = _ihdp_ground_truth_effect(ihdp_df)
         runs.append(
             _run_one(
                 name=f"ihdp:{ihdp_path.name}",
@@ -217,6 +248,7 @@ def run_live_demo(
                 batch_size=batch_size,
                 no_plots=bool(no_plots),
                 html=bool(html),
+                ground_truth_effect=ihdp_truth,
             )
         )
 

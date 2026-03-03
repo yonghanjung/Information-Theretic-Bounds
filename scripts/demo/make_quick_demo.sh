@@ -3,8 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-OUT_GIF="${1:-${REPO_ROOT}/docs/media/quick-demo-v4.gif}"
-COVER_DELAY="${COVER_DELAY:-900}"
+OUT_GIF="${1:-${REPO_ROOT}/docs/media/quick-demo-v5.gif}"
+COVER_DELAY="${COVER_DELAY:-1200}"
 FRAME_DELAY="${FRAME_DELAY:-45}"
 
 if ! command -v magick >/dev/null 2>&1; then

@@ -63,6 +63,7 @@ class BoundsReport:
         *,
         write_plots: bool = True,
         write_html: bool = False,
+        ground_truth_effect: Optional[float] = None,
     ) -> ArtifactPaths:
         plot_paths: list[Path] = []
         warnings = list(self.warnings)
@@ -70,7 +71,7 @@ class BoundsReport:
         tmpdir = Path(tempfile.mkdtemp(prefix="itbound-report-plots-"))
         try:
             if write_plots:
-                plot_paths.extend(render_plots(self.bounds_df, tmpdir))
+                plot_paths.extend(render_plots(self.bounds_df, tmpdir, ground_truth_effect=ground_truth_effect))
                 if not plot_paths:
                     warnings.append(
                         "Plot generation skipped: matplotlib unavailable. "
