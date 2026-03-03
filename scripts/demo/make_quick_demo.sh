@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-OUT_GIF="${1:-${REPO_ROOT}/docs/media/quick-demo.gif}"
+OUT_GIF="${1:-${REPO_ROOT}/docs/media/quick-demo-v2.gif}"
 
 if ! command -v magick >/dev/null 2>&1; then
   echo "Missing dependency: magick (ImageMagick)." >&2

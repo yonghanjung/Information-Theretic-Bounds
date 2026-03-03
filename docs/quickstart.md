@@ -44,7 +44,7 @@ Demo output layout:
 - `--outdir/toy/` and/or `--outdir/ihdp/` with `summary.txt`, `results.json`, `claims.json`, `claims.md`, `plots/`
 - `--outdir/live_demo_summary.md`
 
-README includes a toy-demo GIF preview at `docs/media/quick-demo.gif`.
+README includes a toy-demo GIF preview at `docs/media/quick-demo-v2.gif`.
 Rebuild it with:
 
 ```bash
