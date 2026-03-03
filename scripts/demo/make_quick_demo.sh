@@ -48,9 +48,11 @@ saved: ${DEMO_OUTDIR}/live_demo_summary.md
 EOF
 )"
 fi
+SUMMARY_LINES="$(printf '%s\n' "${SUMMARY_LINES}" | sed "s|${DEMO_OUTDIR}|/tmp/itbound_live_demo|g")"
 
 FRAME_TEXT="${TMP_DIR}/frame.txt"
 FRAME_INDEX=0
+COMMAND_LINE='$ python -m itbound demo --scenario toy --outdir /tmp/itbound_live_demo --num-epochs 1 --n-folds 2 --batch-size 8 --no-plots'
 
 render_frame() {
   local index="$1"
@@ -74,19 +76,27 @@ render_frame() {
   fi
 }
 
-cat >"${FRAME_TEXT}" <<'EOF'
-$ python -m itbound demo --scenario toy --outdir /tmp/itbound_live_demo --num-epochs 1 --n-folds 2 --batch-size 8 --no-plots
+cat >"${FRAME_TEXT}" <<EOF
+${COMMAND_LINE}
 EOF
 render_frame "${FRAME_INDEX}"
 FRAME_INDEX=$((FRAME_INDEX + 1))
 
-cat >>"${FRAME_TEXT}" <<'EOF'
+for SPINNER in "running." "running.." "running..." "running...."; do
+  cat >"${FRAME_TEXT}" <<EOF
+${COMMAND_LINE}
+
+${SPINNER}
+EOF
+  render_frame "${FRAME_INDEX}"
+  FRAME_INDEX=$((FRAME_INDEX + 1))
+done
+
+cat >"${FRAME_TEXT}" <<EOF
+${COMMAND_LINE}
 
 running...
 EOF
-render_frame "${FRAME_INDEX}"
-FRAME_INDEX=$((FRAME_INDEX + 1))
-
 while IFS= read -r line; do
   [[ -z "${line}" ]] && continue
   printf '%s\n' "${line}" >>"${FRAME_TEXT}"
@@ -99,5 +109,5 @@ cp "${LAST_FRAME}" "${TMP_DIR}/frames/frame_$(printf '%03d' "${FRAME_INDEX}").pn
 FRAME_INDEX=$((FRAME_INDEX + 1))
 cp "${LAST_FRAME}" "${TMP_DIR}/frames/frame_$(printf '%03d' "${FRAME_INDEX}").png"
 
-magick -delay 85 "${TMP_DIR}"/frames/frame_*.png -loop 0 -layers Optimize "${OUT_GIF}"
+magick -delay 45 "${TMP_DIR}"/frames/frame_*.png -loop 0 -layers Optimize "${OUT_GIF}"
 echo "saved: ${OUT_GIF}"
