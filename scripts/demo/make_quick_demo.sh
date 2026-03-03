@@ -33,9 +33,10 @@ DEMO_OUTDIR="${TMP_DIR}/demo_out"
 pushd "${REPO_ROOT}" >/dev/null
 PYTHONPATH=src python3 -m itbound demo \
   --scenario toy \
+  --toy-n 1000 \
   --outdir "${DEMO_OUTDIR}" \
-  --num-epochs 1 \
-  --n-folds 2 \
+  --num-epochs 5 \
+  --n-folds 5 \
   --batch-size 8 >"${LOG_PATH}" 2>&1
 popd >/dev/null
 
@@ -64,7 +65,7 @@ PY
 
 FRAME_TEXT="${TMP_DIR}/frame.txt"
 FRAME_INDEX=0
-COMMAND_LINE='$ python -m itbound demo --scenario toy --outdir /tmp/itbound_live_demo --num-epochs 1 --n-folds 2 --batch-size 8'
+COMMAND_LINE='$ python -m itbound demo --scenario toy --toy-n 1000 --outdir /tmp/itbound_live_demo --num-epochs 5 --n-folds 5 --batch-size 8'
 
 render_frame() {
   local index="$1"

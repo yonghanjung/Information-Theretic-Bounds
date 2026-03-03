@@ -221,6 +221,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Demo scenario to run.",
     )
     demo_p.add_argument(
+        "--toy-n",
+        default=1000,
+        type=int,
+        help="Toy sample size for demo quality (default: 1000).",
+    )
+    demo_p.add_argument(
         "--ihdp-data",
         default="",
         type=str,
@@ -238,8 +244,14 @@ def build_parser() -> argparse.ArgumentParser:
     demo_p.add_argument("--propensity-model", default="logistic", type=str)
     demo_p.add_argument("--m-model", default="linear", type=str)
     demo_p.add_argument("--seed", default=123, type=int)
-    demo_p.add_argument("--n-folds", default=2, type=int)
-    demo_p.add_argument("--num-epochs", default=2, type=int)
+    demo_p.add_argument("--n-folds", default=5, type=int)
+    demo_p.add_argument("--num-epochs", default=5, type=int)
+    demo_p.add_argument(
+        "--rounds",
+        default=0,
+        type=int,
+        help="Alias for num-epochs. If >0, overrides --num-epochs.",
+    )
     demo_p.add_argument("--batch-size", default="8", type=str)
     demo_p.add_argument("--no-plots", action="store_true")
     demo_p.add_argument("--html", action="store_true")
@@ -419,10 +431,12 @@ def main() -> int:
                 print(f"saved: {paths.report_html}")
             return 0
         if args.command == "demo":
+            effective_num_epochs = int(args.rounds) if int(args.rounds) > 0 else int(args.num_epochs)
             runs, summary_path = run_live_demo(
                 repo_root=ROOT,
                 outdir=Path(args.outdir),
                 scenario=args.scenario,
+                toy_n=int(args.toy_n),
                 ihdp_data=(args.ihdp_data or None),
                 mode=args.mode,
                 divergence=args.divergence,
@@ -431,7 +445,7 @@ def main() -> int:
                 m_model=args.m_model,
                 seed=int(args.seed),
                 n_folds=int(args.n_folds),
-                num_epochs=int(args.num_epochs),
+                num_epochs=effective_num_epochs,
                 batch_size=args.batch_size,
                 no_plots=bool(args.no_plots),
                 html=bool(args.html),

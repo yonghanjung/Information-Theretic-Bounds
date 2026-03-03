@@ -178,6 +178,7 @@ def run_live_demo(
     repo_root: Path,
     outdir: Path,
     scenario: str,
+    toy_n: int,
     ihdp_data: Optional[str],
     mode: str,
     divergence: str,
@@ -194,13 +195,15 @@ def run_live_demo(
     scenario = str(scenario).strip().lower()
     if scenario not in {"toy", "ihdp", "both"}:
         raise ValueError("scenario must be one of: toy, ihdp, both")
+    if int(toy_n) <= 0:
+        raise ValueError("toy_n must be a positive integer.")
 
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
     runs: list[DemoRunResult] = []
     if scenario in {"toy", "both"}:
-        toy_df = _make_toy_dataframe(n=120, seed=int(seed))
+        toy_df = _make_toy_dataframe(n=int(toy_n), seed=int(seed))
         toy_truth = _toy_ground_truth_effect()
         runs.append(
             _run_one(

@@ -257,19 +257,19 @@ Toy scenario preview (GIF rendered from the actual CLI run):
 Run a fast toy-data demo:
 
 ```bash
-itbound demo --scenario toy --outdir /tmp/itbound_live_demo --num-epochs 1 --n-folds 2 --batch-size 8
+itbound demo --scenario toy --toy-n 1000 --rounds 5 --n-folds 5 --outdir /tmp/itbound_live_demo --batch-size 8
 ```
 
 Run on a benchmark-style IHDP CSV:
 
 ```bash
-itbound demo --scenario ihdp --ihdp-data /path/to/ihdp_npci_1.csv --outdir /tmp/itbound_live_demo --num-epochs 1 --n-folds 2 --batch-size 8
+itbound demo --scenario ihdp --ihdp-data /path/to/ihdp_npci_1.csv --rounds 5 --n-folds 5 --outdir /tmp/itbound_live_demo --batch-size 8
 ```
 
 Run both in one command:
 
 ```bash
-itbound demo --scenario both --outdir /tmp/itbound_live_demo --num-epochs 1 --n-folds 2 --batch-size 8
+itbound demo --scenario both --toy-n 1000 --rounds 5 --n-folds 5 --outdir /tmp/itbound_live_demo --batch-size 8
 ```
 
 The demo writes per-scenario artifact folders (`toy/`, `ihdp/`) plus `live_demo_summary.md` under `--outdir`.

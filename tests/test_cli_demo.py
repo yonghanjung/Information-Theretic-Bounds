@@ -59,6 +59,8 @@ def test_cli_demo_toy_writes_artifacts(tmp_path: Path):
             "toy",
             "--outdir",
             str(outdir),
+            "--toy-n",
+            "120",
             "--num-epochs",
             "1",
             "--n-folds",
@@ -93,6 +95,8 @@ def test_cli_demo_ihdp_with_custom_file(tmp_path: Path):
             str(ihdp_path),
             "--outdir",
             str(outdir),
+            "--toy-n",
+            "120",
             "--num-epochs",
             "1",
             "--n-folds",
@@ -112,3 +116,28 @@ def test_cli_demo_ihdp_with_custom_file(tmp_path: Path):
     assert summary.exists()
     text = summary.read_text(encoding="utf-8")
     assert "ground_truth_effect:" in text
+
+
+def test_cli_demo_rounds_alias_and_toy_n(tmp_path: Path):
+    root = _repo_root()
+    outdir = tmp_path / "demo-rounds-alias"
+    result = _run_demo(
+        root,
+        [
+            "--scenario",
+            "toy",
+            "--toy-n",
+            "80",
+            "--rounds",
+            "2",
+            "--n-folds",
+            "2",
+            "--batch-size",
+            "8",
+            "--outdir",
+            str(outdir),
+            "--no-plots",
+        ],
+    )
+    assert result.returncode == 0, result.stderr
+    assert (outdir / "toy" / "results.json").exists()
