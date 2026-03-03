@@ -18,7 +18,9 @@ elif magick -list font 2>/dev/null | grep -Eiq '^\s*Font:\s+Courier'; then
   FONT_ARGS=(-font "Courier")
 fi
 
-TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/itbound-demo-gif.XXXXXX")"
+TMP_BASE="${TMPDIR:-/tmp}"
+TMP_BASE="${TMP_BASE%/}"
+TMP_DIR="$(mktemp -d "${TMP_BASE}/itbound-demo-gif.XXXXXX")"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 mkdir -p "${TMP_DIR}/frames"
 mkdir -p "$(dirname "${OUT_GIF}")"
@@ -48,7 +50,16 @@ saved: ${DEMO_OUTDIR}/live_demo_summary.md
 EOF
 )"
 fi
-SUMMARY_LINES="$(printf '%s\n' "${SUMMARY_LINES}" | sed "s|${DEMO_OUTDIR}|/tmp/itbound_live_demo|g")"
+SUMMARY_LINES="$(
+SUMMARY_LINES_RAW="${SUMMARY_LINES}" DEMO_OUTDIR_RAW="${DEMO_OUTDIR}" python3 - <<'PY'
+import os
+from pathlib import Path
+
+demo_outdir = str(Path(os.environ["DEMO_OUTDIR_RAW"]))
+text = os.environ.get("SUMMARY_LINES_RAW", "")
+print(text.replace(demo_outdir, "/tmp/itbound_live_demo"))
+PY
+)"
 
 FRAME_TEXT="${TMP_DIR}/frame.txt"
 FRAME_INDEX=0
