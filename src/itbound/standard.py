@@ -22,6 +22,7 @@ class StandardRunResult:
     bounds: pd.DataFrame
     claims: Dict[str, Any]
     diagnostics: Dict[str, Any]
+    ground_truth_plot: Dict[str, Any]
     bounds_path: Path
     summary_path: Path
     plot_paths: list[Path]
@@ -172,12 +173,39 @@ def _aggregate_divergence_frames(
     nonfinite_upper = np.zeros((n,), dtype=int)
     nonfinite_lower = np.zeros((n,), dtype=int)
     inverted_filtered = np.zeros((n,), dtype=int)
+    tight_k_start = np.zeros((n,), dtype=int)
 
-    if mode not in {"paper_adaptive_k", "fixed_k_endpoint"}:
-        raise ValueError("aggregation_mode must be one of: paper_adaptive_k, fixed_k_endpoint")
+    if mode not in {"paper_adaptive_k", "fixed_k_endpoint", "tight_kth"}:
+        raise ValueError("aggregation_mode must be one of: paper_adaptive_k, fixed_k_endpoint, tight_kth")
     fixed_k = int(fixed_k)
     if fixed_k <= 0:
         raise ValueError("fixed_k must be >= 1")
+
+    def _tight_kth_endpoint(lo_vals: np.ndarray, up_vals: np.ndarray, *, k_cap: int) -> tuple[float, float, int, int]:
+        """Experiment-style tight_kth over endpoint candidates for one row.
+
+        Search from large k down to 1:
+          lower = k-th smallest(lower candidates)
+          upper = k-th largest(upper candidates)
+        and return the first feasible pair (lower <= upper).
+        """
+        lo_vals = np.asarray(lo_vals, dtype=np.float64).reshape(-1)
+        up_vals = np.asarray(up_vals, dtype=np.float64).reshape(-1)
+        if lo_vals.size == 0 or up_vals.size == 0:
+            return float("nan"), float("nan"), 0, 0
+
+        lo_sorted = np.sort(lo_vals)  # ascending
+        up_sorted = np.sort(up_vals)  # ascending
+        k_start = int(min(lo_sorted.size, up_sorted.size))
+        if int(k_cap) > 1:
+            k_start = int(min(k_start, int(k_cap)))
+
+        for k in range(int(k_start), 0, -1):
+            lo_k = float(lo_sorted[k - 1])  # k-th smallest
+            up_k = float(up_sorted[up_sorted.size - k])  # k-th largest
+            if lo_k <= up_k:
+                return lo_k, up_k, int(k), int(k_start)
+        return float("nan"), float("nan"), 0, int(k_start)
 
     for i in range(n):
         lo_i = lower_mat[:, i]
@@ -214,6 +242,19 @@ def _aggregate_divergence_frames(
                 k_used[i] = fixed_k
             continue
 
+        if mode == "tight_kth":
+            lo_v, up_v, k_v, k_start_v = _tight_kth_endpoint(
+                lo_i[lo_mask],
+                up_i[up_mask],
+                k_cap=int(fixed_k),
+            )
+            tight_k_start[i] = int(k_start_v)
+            if np.isfinite(lo_v) and np.isfinite(up_v):
+                lower_out[i] = lo_v
+                upper_out[i] = up_v
+                k_used[i] = int(k_v)
+            continue
+
         k_limit = min(lo_candidates.size, up_candidates.size)
         for k in range(1, int(k_limit) + 1):
             lo_v = float(lo_candidates[k - 1])
@@ -239,6 +280,7 @@ def _aggregate_divergence_frames(
     diagnostics = {
         "aggregation_mode": mode,
         "k_used": k_used.tolist(),
+        "tight_k_start": tight_k_start.tolist(),
         "n_eff_up": n_eff_up.tolist(),
         "n_eff_lo": n_eff_lo.tolist(),
         "filtered_counts": {
@@ -252,8 +294,108 @@ def _aggregate_divergence_frames(
     return base, diagnostics
 
 
-def _write_plots(bounds: pd.DataFrame, outdir: Path) -> tuple[list[Path], list[str]]:
-    plot_paths = render_plots(bounds, outdir)
+def _resolve_ground_truth_plot_inputs(
+    frame: pd.DataFrame,
+    *,
+    ground_truth_col: Optional[str],
+    ground_truth_effect: Optional[float],
+    auto_ground_truth: bool,
+) -> tuple[Optional[float], Optional[np.ndarray], Dict[str, Any], list[str]]:
+    warnings: list[str] = []
+    source = "none"
+    truth_values: Optional[np.ndarray] = None
+    truth_effect: Optional[float] = None
+
+    def _coerce_numeric(col_name: str) -> Optional[np.ndarray]:
+        vals = pd.to_numeric(frame[col_name], errors="coerce").to_numpy(dtype=np.float64)
+        if vals.ndim != 1 or vals.shape[0] != frame.shape[0]:
+            return None
+        return vals
+
+    if ground_truth_col:
+        if ground_truth_col not in frame.columns:
+            warnings.append(
+                f"ground_truth_col '{ground_truth_col}' not found; skipping explicit ground truth overlay."
+            )
+        else:
+            vals = _coerce_numeric(ground_truth_col)
+            if vals is None:
+                warnings.append(
+                    f"ground_truth_col '{ground_truth_col}' could not be interpreted as a 1D numeric series."
+                )
+            else:
+                finite = np.isfinite(vals)
+                if not np.any(finite):
+                    warnings.append(
+                        f"ground_truth_col '{ground_truth_col}' has no finite numeric values; skipping explicit overlay."
+                    )
+                else:
+                    truth_values = vals
+                    source = "explicit_col"
+                    truth_effect = float(np.mean(vals[finite]))
+
+    if source == "none" and auto_ground_truth:
+        auto_pairs = [("mu1", "mu0"), ("mu_1", "mu_0")]
+        used_pair: Optional[tuple[str, str]] = None
+        for lhs, rhs in auto_pairs:
+            if lhs in frame.columns and rhs in frame.columns:
+                used_pair = (lhs, rhs)
+                break
+        if used_pair is not None:
+            mu1_vals = pd.to_numeric(frame[used_pair[0]], errors="coerce").to_numpy(dtype=np.float64)
+            mu0_vals = pd.to_numeric(frame[used_pair[1]], errors="coerce").to_numpy(dtype=np.float64)
+            delta = mu1_vals - mu0_vals
+            finite = np.isfinite(delta)
+            if np.any(finite):
+                truth_values = delta
+                source = "auto_mu1_mu0"
+                truth_effect = float(np.mean(delta[finite]))
+            else:
+                warnings.append(
+                    f"Auto ground-truth columns {used_pair[0]} and {used_pair[1]} contain no finite values."
+                )
+
+    if source == "none" and ground_truth_effect is not None:
+        try:
+            val = float(ground_truth_effect)
+            if np.isfinite(val):
+                truth_effect = val
+                source = "explicit_effect"
+            else:
+                warnings.append("ground_truth_effect is non-finite; skipping scalar ground truth overlay.")
+        except Exception:
+            warnings.append("ground_truth_effect could not be parsed as float; skipping scalar ground truth overlay.")
+
+    n_truth_points = 0
+    if truth_values is not None:
+        n_truth_points = int(np.count_nonzero(np.isfinite(truth_values)))
+    elif truth_effect is not None:
+        n_truth_points = int(frame.shape[0])
+
+    metadata = {
+        "source": source,
+        "ground_truth_col": (ground_truth_col if ground_truth_col else None),
+        "auto_ground_truth": bool(auto_ground_truth),
+        "n_truth_points": int(n_truth_points),
+        "ground_truth_effect": (float(truth_effect) if truth_effect is not None else None),
+        "warnings": list(warnings),
+    }
+    return truth_effect, truth_values, metadata, warnings
+
+
+def _write_plots(
+    bounds: pd.DataFrame,
+    outdir: Path,
+    *,
+    ground_truth_effect: Optional[float] = None,
+    ground_truth_values: Optional[np.ndarray] = None,
+) -> tuple[list[Path], list[str]]:
+    if ground_truth_values is not None and int(ground_truth_values.shape[0]) != int(bounds.shape[0]):
+        raise ValueError(
+            "ground_truth_values length must match bounds rows "
+            f"({ground_truth_values.shape[0]} vs {bounds.shape[0]})."
+        )
+    plot_paths = render_plots(bounds, outdir, ground_truth_effect=ground_truth_effect, ground_truth_values=ground_truth_values)
     warnings: list[str] = []
     if not plot_paths:
         warnings.append(
@@ -349,12 +491,21 @@ def run_standard_bounds(
     seed: int = 123,
     aggregation_mode: str = "paper_adaptive_k",
     fixed_k: int = 1,
+    ground_truth_col: Optional[str] = None,
+    ground_truth_effect: Optional[float] = None,
+    auto_ground_truth: bool = True,
     outdir: str | Path = "itbound-standard-out",
     write_plots: bool = True,
     write_html: bool = False,
 ) -> StandardRunResult:
     frame = _load_frame(dataframe=dataframe, csv_path=csv_path)
     _validate_columns(frame, outcome_col, treatment_col, covariate_cols)
+    truth_effect, truth_values, gt_plot_meta, gt_warnings = _resolve_ground_truth_plot_inputs(
+        frame,
+        ground_truth_col=ground_truth_col,
+        ground_truth_effect=ground_truth_effect,
+        auto_ground_truth=bool(auto_ground_truth),
+    )
 
     div_list = _normalize_divergences(divergences)
 
@@ -394,11 +545,28 @@ def run_standard_bounds(
     bounds_df.to_csv(bounds_path, index=False)
 
     plot_paths: list[Path] = []
-    warnings: list[str] = []
+    warnings: list[str] = list(gt_warnings)
+    if truth_values is not None and int(truth_values.shape[0]) != int(bounds_df.shape[0]):
+        raise ValueError(
+            "ground truth vector length must match bounds rows "
+            f"({truth_values.shape[0]} vs {bounds_df.shape[0]})."
+        )
     if write_plots:
-        pp, ww = _write_plots(bounds_df, output_dir)
+        pp, ww = _write_plots(
+            bounds_df,
+            output_dir,
+            ground_truth_effect=truth_effect,
+            ground_truth_values=truth_values,
+        )
         plot_paths.extend(pp)
         warnings.extend(ww)
+
+    gt_plot_meta = dict(gt_plot_meta)
+    gt_warning_list = list(gt_plot_meta.get("warnings", []))
+    for msg in warnings:
+        if msg not in gt_warning_list:
+            gt_warning_list.append(msg)
+    gt_plot_meta["warnings"] = gt_warning_list
 
     summary_payload = {
         "claims": claims,
@@ -415,6 +583,7 @@ def run_standard_bounds(
             "outcome_col": outcome_col,
             "treatment_col": treatment_col,
             "covariate_cols": list(covariate_cols),
+            "ground_truth_plot": gt_plot_meta,
         },
         "warnings": warnings,
         "artifacts": {
@@ -441,6 +610,7 @@ def run_standard_bounds(
         bounds=bounds_df,
         claims=claims,
         diagnostics=diagnostics,
+        ground_truth_plot=gt_plot_meta,
         bounds_path=bounds_path,
         summary_path=summary_path,
         plot_paths=plot_paths,

@@ -154,8 +154,41 @@ def build_parser() -> argparse.ArgumentParser:
     std_p.add_argument("--n-folds", default=2, type=int)
     std_p.add_argument("--num-epochs", default=3, type=int)
     std_p.add_argument("--batch-size", default="auto", type=str)
-    std_p.add_argument("--aggregation-mode", default="paper_adaptive_k", choices=["paper_adaptive_k", "fixed_k_endpoint"])
-    std_p.add_argument("--fixed-k", default=1, type=int)
+    std_p.add_argument(
+        "--aggregation-mode",
+        default="paper_adaptive_k",
+        choices=["paper_adaptive_k", "fixed_k_endpoint", "tight_kth"],
+        help=(
+            "Endpoint aggregation mode across divergences: "
+            "paper_adaptive_k (default), fixed_k_endpoint, or tight_kth."
+        ),
+    )
+    std_p.add_argument(
+        "--fixed-k",
+        default=1,
+        type=int,
+        help=(
+            "k parameter for fixed_k_endpoint; also acts as an optional upper cap for tight_kth "
+            "(default 1 means automatic max-k search for tight_kth)."
+        ),
+    )
+    std_p.add_argument(
+        "--ground-truth-col",
+        default="",
+        type=str,
+        help="Optional column for per-point ground-truth overlay in bounds plots.",
+    )
+    std_p.add_argument(
+        "--ground-truth-effect",
+        default=None,
+        type=float,
+        help="Optional scalar ground-truth effect line for bounds plots.",
+    )
+    std_p.add_argument(
+        "--no-ground-truth-auto",
+        action="store_true",
+        help="Disable automatic ground-truth overlay from mu1-mu0 columns when available.",
+    )
     std_p.add_argument("--no-plots", action="store_true")
     std_p.add_argument("--html", action="store_true")
 
@@ -178,8 +211,41 @@ def build_parser() -> argparse.ArgumentParser:
     art_p.add_argument("--n-folds", default=2, type=int)
     art_p.add_argument("--num-epochs", default=3, type=int)
     art_p.add_argument("--batch-size", default="auto", type=str)
-    art_p.add_argument("--aggregation-mode", default="paper_adaptive_k", choices=["paper_adaptive_k", "fixed_k_endpoint"])
-    art_p.add_argument("--fixed-k", default=1, type=int)
+    art_p.add_argument(
+        "--aggregation-mode",
+        default="paper_adaptive_k",
+        choices=["paper_adaptive_k", "fixed_k_endpoint", "tight_kth"],
+        help=(
+            "Endpoint aggregation mode across divergences: "
+            "paper_adaptive_k (default), fixed_k_endpoint, or tight_kth."
+        ),
+    )
+    art_p.add_argument(
+        "--fixed-k",
+        default=1,
+        type=int,
+        help=(
+            "k parameter for fixed_k_endpoint; also acts as an optional upper cap for tight_kth "
+            "(default 1 means automatic max-k search for tight_kth)."
+        ),
+    )
+    art_p.add_argument(
+        "--ground-truth-col",
+        default="",
+        type=str,
+        help="Optional column for per-point ground-truth overlay in bounds plots.",
+    )
+    art_p.add_argument(
+        "--ground-truth-effect",
+        default=None,
+        type=float,
+        help="Optional scalar ground-truth effect line for bounds plots.",
+    )
+    art_p.add_argument(
+        "--no-ground-truth-auto",
+        action="store_true",
+        help="Disable automatic ground-truth overlay from mu1-mu0 columns when available.",
+    )
     art_p.add_argument("--assumptions", default="", type=str, help="Optional explicit assumptions text")
     art_p.add_argument("--no-plots", action="store_true")
     art_p.add_argument("--html", action="store_true")
@@ -321,6 +387,9 @@ def main() -> int:
                 seed=int(args.seed),
                 aggregation_mode=args.aggregation_mode,
                 fixed_k=int(args.fixed_k),
+                ground_truth_col=(args.ground_truth_col or None),
+                ground_truth_effect=args.ground_truth_effect,
+                auto_ground_truth=not bool(args.no_ground_truth_auto),
                 outdir=args.outdir,
                 write_plots=not bool(args.no_plots),
                 write_html=bool(args.html),
@@ -357,6 +426,9 @@ def main() -> int:
                 seed=int(args.seed),
                 aggregation_mode=args.aggregation_mode,
                 fixed_k=int(args.fixed_k),
+                ground_truth_col=(args.ground_truth_col or None),
+                ground_truth_effect=args.ground_truth_effect,
+                auto_ground_truth=not bool(args.no_ground_truth_auto),
                 outdir=args.outdir,
                 write_plots=not bool(args.no_plots),
                 write_html=False,
@@ -375,6 +447,7 @@ def main() -> int:
 
             diag_payload = {
                 "standard": std.diagnostics,
+                "ground_truth_plot": std.ground_truth_plot,
                 "missingness": {"status": "stub_v0", "note": "missingness checks not implemented in schema v0"},
                 "overlap": {"status": "stub_v0", "note": "overlap checks not implemented in schema v0"},
                 "warnings": list(std.warnings),

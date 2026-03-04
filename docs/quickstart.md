@@ -54,7 +54,48 @@ Rebuild it with:
 bash scripts/demo/make_quick_demo.sh
 ```
 
-## 3) Python quick path
+## 3) Standard aggregation options (multi-divergence)
+
+```bash
+python -m itbound standard \
+  --csv /tmp/itbound_example.csv \
+  --y-col y \
+  --a-col a \
+  --x-cols x1,x2 \
+  --aggregation-mode tight_kth \
+  --outdir /tmp/itbound_standard_tight
+```
+
+Aggregation modes:
+- `paper_adaptive_k` (default)
+- `fixed_k_endpoint` (use `--fixed-k`)
+- `tight_kth` (experiment-style tight-kth order-statistics)
+  - default divergence set is `KL,JS,Hellinger,TV,Chi2`
+  - override with subset via `--divergences` (example: `KL,TV`)
+
+Ground-truth overlays for `standard`/`artifacts` (visualization only):
+- `--ground-truth-col <col>`: per-point truth line
+- `--ground-truth-effect <float>`: scalar truth line
+- auto mode: if `mu1` and `mu0` exist, draw `mu1-mu0` by default
+- disable auto mode: `--no-ground-truth-auto`
+
+Subset + explicit truth-column example:
+
+```bash
+python -m itbound standard \
+  --csv /tmp/itbound_example.csv \
+  --y-col y \
+  --a-col a \
+  --x-cols x1,x2 \
+  --divergences KL,TV \
+  --aggregation-mode tight_kth \
+  --ground-truth-col tau_true \
+  --outdir /tmp/itbound_standard_tight_kltv
+```
+
+Details: [`docs/aggregation_modes.md`](aggregation_modes.md)
+
+## 4) Python quick path
 
 ```python
 import pandas as pd
@@ -74,13 +115,13 @@ print(res.summary())
 res.save("/tmp/itbound_quick_py")
 ```
 
-## 4) Interpreting outputs safely
+## 5) Interpreting outputs safely
 
 - `lower` and `upper` are bound endpoints, not a single identified effect estimate.
 - `width = upper - lower` reflects residual uncertainty under allowed confounding.
 - `claims.json` and `claims.md` summarize robust statements derived only from the bounds.
 
-## 5) Paper workflow (unchanged)
+## 6) Paper workflow (unchanged)
 
 Use this for config-driven reproduction and paper-equivalent workflows:
 

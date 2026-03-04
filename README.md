@@ -206,6 +206,45 @@ itbound standard \
   --html
 ```
 
+Aggregation modes:
+- `paper_adaptive_k` (default): increase endpoint-k until feasible interval is found.
+- `fixed_k_endpoint`: use exactly `--fixed-k` for both endpoints.
+- `tight_kth`: experiment-style tight-kth aggregation (starts from large k, relaxes down).
+  - default divergences for this mode are the same built-in 5: `KL,JS,Hellinger,TV,Chi2`.
+  - you can override to a subset with `--divergences` (for example `KL,TV`).
+
+Ground-truth plot overlay options (visualization only; math unchanged):
+- `--ground-truth-col <col>`: draw per-row truth values from a column.
+- `--ground-truth-effect <float>`: draw a scalar horizontal truth line.
+- `--no-ground-truth-auto`: disable auto detection from `mu1-mu0`.
+- default behavior auto-detects `mu1-mu0` when available.
+
+Example (`tight_kth`):
+
+```bash
+itbound standard \
+  --csv /tmp/itbound_toy.csv \
+  --y-col y \
+  --a-col a \
+  --x-cols x1,x2 \
+  --outdir /tmp/itbound_standard_tight \
+  --aggregation-mode tight_kth
+```
+
+Example (`tight_kth` subset override + explicit truth column):
+
+```bash
+itbound standard \
+  --csv /tmp/itbound_toy.csv \
+  --y-col y \
+  --a-col a \
+  --x-cols x1,x2 \
+  --outdir /tmp/itbound_standard_tight_kltv \
+  --divergences KL,TV \
+  --aggregation-mode tight_kth \
+  --ground-truth-col tau_true
+```
+
 Artifacts written to `--outdir`:
 - `bounds.csv`
 - `summary.json` (claims + diagnostics + run config)
@@ -213,6 +252,7 @@ Artifacts written to `--outdir`:
 - `report.html` when `--html` is enabled
 
 If `matplotlib` is missing, plotting is skipped with a warning and other artifacts are still produced.
+See also: [`docs/aggregation_modes.md`](docs/aggregation_modes.md)
 
 ### Artifact Contract Run (schema-versioned `results.json`)
 
