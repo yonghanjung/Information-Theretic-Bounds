@@ -14,6 +14,7 @@ def test_release_external_ops_contract_files():
     assert checklist.exists(), "Missing scripts/release_trusted_publisher_checklist.md"
 
     bootstrap_text = bootstrap.read_text(encoding="utf-8")
+    assert "mapfile" not in bootstrap_text
     assert "testpypi" in bootstrap_text
     assert "pypi" in bootstrap_text
     assert "gh api" in bootstrap_text

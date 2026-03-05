@@ -16,7 +16,14 @@ if [ "${CHECK_ONLY}" -ne 1 ]; then
   gh api "repos/${REPO_SLUG}/environments/pypi" --method PUT >/dev/null
 fi
 
-mapfile -t ENV_NAMES < <(gh api "repos/${REPO_SLUG}/environments" --jq '.environments[].name')
+ENV_NAMES=()
+while IFS= read -r name; do
+  if [ -n "${name}" ]; then
+    ENV_NAMES+=("${name}")
+  fi
+done <<EOF
+$(gh api "repos/${REPO_SLUG}/environments" --jq '.environments[].name')
+EOF
 
 has_testpypi=0
 has_pypi=0
