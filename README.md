@@ -9,46 +9,14 @@ Target estimands (paper notation):
 θ(a)    = E_{Q_a}[φ(Y)]
 ```
 
-## Install (step-by-step, very detailed)
+## Install (PyPI-first)
 
-Below is a public, copy‑paste friendly guide. The key idea is that `pip install .` installs the package from the **current directory** (this repo) into your **currently active Python environment**.
-
-### 0) Open a terminal and go to the repo root
-
-You must run these commands **in the repository root** (the folder containing `pyproject.toml`).
-
-If you haven’t cloned the repo yet:
-
-```bash
-git clone https://github.com/yonghanjung/Information-Theretic-Bounds.git
-cd Information-Theretic-Bounds
-```
-
-If you already have the repo locally, just `cd` into it:
-
-```bash
-cd <your-local-repo-path>
-```
-
-Check you are in the right place:
-
-```bash
-ls pyproject.toml
-```
-
-If it prints `pyproject.toml`, you are in the correct directory.
+For most users, install directly from PyPI:
 
 ### 1) Create and activate a clean virtual environment (recommended)
 
-This keeps dependencies isolated to this project.
-
 ```bash
 python -m venv .venv
-```
-
-Activate it:
-
-```bash
 source .venv/bin/activate  # macOS/Linux
 ```
 
@@ -64,49 +32,45 @@ On Windows (cmd.exe):
 .venv\\Scripts\\activate.bat
 ```
 
-After activation, your shell prompt usually shows `(.venv)`.
-
-### 2) Upgrade pip inside the venv
+### 2) Upgrade pip
 
 ```bash
 python -m pip install --upgrade pip
 ```
 
-### 3) Install this package from the repo directory
-
-This installs **itbound** into the active environment.
+### 3) Install from PyPI
 
 ```bash
-python -m pip install .
+python -m pip install itbound
 ```
 
-What this means:
-- `.` means “the current folder.”
-- So `pip install .` tells pip to read `pyproject.toml` here and install the package.
-
-### 4) (Optional) Development install (editable)
-
-Use this if you want local code changes to be reflected immediately without reinstalling.
+### 4) Quick sanity check
 
 ```bash
-python -m pip install -e .
-```
-
-### 5) (Optional) Extras for figure reproduction
-
-If you want to run the `reproduce` command and create figures:
-
-```bash
-python -m pip install '.[experiments]'
-```
-
-### 6) Quick sanity check
-
-```bash
-python -m itbound --help
+itbound --help
 ```
 
 If you see the CLI help output, the installation worked.
+
+### 5) Optional extras for figure reproduction
+
+```bash
+python -m pip install 'itbound[experiments]'
+```
+
+## Install from Source (development)
+
+If you want editable installs and local code iteration:
+
+```bash
+git clone https://github.com/yonghanjung/Information-Theretic-Bounds.git
+cd Information-Theretic-Bounds
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
+python -m pip install -e '.[experiments]'
+```
 
 ## 10-Minute Quickstart (Opt-in Wrapper)
 
@@ -115,9 +79,9 @@ If you see the CLI help output, the installation worked.
 ```bash
 python -m venv .venv && source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install .
-python -m itbound example --out /tmp/itbound_example.csv
-python -m itbound quick --data /tmp/itbound_example.csv --treatment a --outcome y --covariates x1,x2 --outdir /tmp/itbound_quick
+python -m pip install itbound
+itbound example --out /tmp/itbound_example.csv
+itbound quick --data /tmp/itbound_example.csv --treatment a --outcome y --covariates x1,x2 --outdir /tmp/itbound_quick
 ```
 
 What the outputs mean:
@@ -190,7 +154,9 @@ itbound reproduce --dry-run
 Notes:
 - `reproduce` expects the final-arxiv JSON summaries under `experiments/final-arxiv`.
 - If you installed the package, run `itbound reproduce` from the repo root so the data files are found.
-- Install extras first: `pip install .[experiments]`.
+- Install extras first:
+  - PyPI install: `python -m pip install 'itbound[experiments]'`
+  - Source/editable install: `python -m pip install -e '.[experiments]'`
 
 ### Standard-library run (CSV -> bounds + claims JSON + plots + optional HTML)
 
@@ -328,7 +294,7 @@ bash scripts/demo/make_quick_demo.sh
 Install, run a quick example, and verify the output columns:
 
 ```bash
-pip install .
+python -m pip install itbound
 itbound example --out /tmp/itbound_example.csv
 
 python - <<'PY'
