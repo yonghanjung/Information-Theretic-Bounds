@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+title: "itbound"
+message: "If you use this software, please cite the repository and the associated paper."
+authors:
+  - family-names: Jung
+    given-names: Yonghan
+  - family-names: Kang
+    given-names: Bogyeong
+version: 0.1.1
+url: "https://github.com/yonghanjung/Information-Theretic-Bounds"
+repository-code: "https://github.com/yonghanjung/Information-Theretic-Bounds"
+preferred-citation:
+  type: article
+  title: "Data-Driven Information-Theoretic Causal Bounds under Unmeasured Confounding"
+  authors:
+    - family-names: Jung
+      given-names: Yonghan
+    - family-names: Kang
+      given-names: Bogyeong
+  year: 2026
+  url: "https://arxiv.org/abs/2601.17160"

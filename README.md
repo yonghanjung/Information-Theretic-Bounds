@@ -1,109 +1,106 @@
-# Information-Theoretic Causal Bounds under Unmeasured Confounding
+# itbound: Causal Bounds Without Strong Identification Assumptions
 
-This repo implements the method in "Information-Theoretic Causal Bounds under Unmeasured Confounding (Jung & Kang, 2026)." It provides lower and upper bounds on causal estimands under unmeasured confounding without bounded outcomes, sensitivity parameters, instruments/proxies, or full SCM specification.
+[Paper](https://arxiv.org/abs/2601.17160) | [PyPI](https://pypi.org/project/itbound/) | [Docs](docs/quickstart.md) | [Citation](CITATION.cff) | [Quickstart](#one-command-quickstart)
 
-Target estimands (paper notation):
+Compute valid lower and upper causal bounds under unmeasured confounding when point identification is not credible.
 
-```
-θ(a, x) = E_{Q_{a,x}}[φ(Y)],  Q_{a,x} = P(Y | do(A=a), X=x)
-θ(a)    = E_{Q_a}[φ(Y)]
-```
+Point causal effects usually require strong assumptions such as no hidden confounding, valid instruments, or other auxiliary structure. When those assumptions are not credible, `itbound` returns causal intervals instead of fragile point estimates, without forcing bounded outcomes or sensitivity-parameter workflows.
 
-## Install (PyPI-first)
+![IHDP ribbon example](https://raw.githubusercontent.com/yonghanjung/Information-Theretic-Bounds/main/docs/latex/figures/ribbon_ihdp.png)
 
-For most users, install directly from PyPI:
+## Why it matters
+- Point identification is powerful, but brittle when its assumptions are not believable.
+- Causal intervals remain meaningful when strong identification assumptions fail.
+- Older bound methods often relied on bounded outcomes, discrete settings, or other restrictive inputs that are awkward for modern ML-style datasets.
 
-### 1) Create and activate a clean virtual environment (recommended)
+### Who is this for?
+- Researchers who do not believe no-unmeasured-confounding but still want causal information.
+- Users who need causal intervals rather than overconfident point estimates.
+- People who want a CLI and Python package, not just a theorem.
 
+## One-command quickstart
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # macOS/Linux
-```
-
-On Windows (PowerShell):
-
-```powershell
-.venv\\Scripts\\Activate.ps1
-```
-
-On Windows (cmd.exe):
-
-```bat
-.venv\\Scripts\\activate.bat
-```
-
-### 2) Upgrade pip
-
-```bash
-python -m pip install --upgrade pip
-```
-
-### 3) Install from PyPI
-
-```bash
-python -m pip install itbound
-```
-
-### 4) Quick sanity check
-
-```bash
-itbound --help
-```
-
-If you see the CLI help output, the installation worked.
-
-### 5) Optional extras for figure reproduction
-
-```bash
-python -m pip install 'itbound[experiments]'
-```
-
-## Install from Source (development)
-
-If you want editable installs and local code iteration:
-
-```bash
-git clone https://github.com/yonghanjung/Information-Theretic-Bounds.git
-cd Information-Theretic-Bounds
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e .
-python -m pip install -e '.[experiments]'
-```
-
-## 10-Minute Quickstart (Opt-in Wrapper)
-
-`quick` is an opt-in wrapper around `itbound.fit(...)`; default math remains paper-equivalent (`mode=paper-default`).
-
-```bash
-python -m venv .venv && source .venv/bin/activate
-python -m pip install --upgrade pip
 python -m pip install itbound
 itbound example --out /tmp/itbound_example.csv
 itbound quick --data /tmp/itbound_example.csv --treatment a --outcome y --covariates x1,x2 --outdir /tmp/itbound_quick
 ```
 
-What the outputs mean:
-- `lower`/`upper`: robust causal bound endpoints, not a single identified point estimate.
-- `width = upper - lower`: interval uncertainty under the allowed confounding set.
-- `valid_interval`: whether each row has a finite valid interval after domain/validity checks.
+Outputs:
+- `results.json`
+- `claims.md`
+- `plots/`
+- `report.html`
+- `bounds.csv` and `summary.json` in standard mode
 
-Artifact location:
-- All quick outputs are written under `--outdir` (for example `/tmp/itbound_quick`).
-- Expected files: `summary.txt`, `results.json`, `claims.json`, `claims.md`, `plots/`, optional `report.html`.
-- Details: [`docs/quickstart.md`](docs/quickstart.md), [`docs/artifact_contract.md`](docs/artifact_contract.md), schema [`docs/results_schema_v0.md`](docs/results_schema_v0.md).
+## What you get
+- Lower and upper causal bounds under unmeasured confounding
+- CLI plus Python API
+- Claims and reporting artifacts for sharing results
+- Support for practical observational CSV workflows
+- Reproducible figure-generation paths for the paper
 
-## Python API
+## Main figure
+IHDP is one of the best-known personalized-effect benchmarks. In that setting, `itbound` tracks the true effect trend with lower and upper bounds even when outcomes are not restricted to `[0, 1]`, which is exactly where many older causal-bound workflows become uncomfortable or unusable.
 
-New wrapper (recommended):
+## Reproduce paper
+Paper: [Data-Driven Information-Theoretic Causal Bounds under Unmeasured Confounding](https://arxiv.org/abs/2601.17160)
 
-```python
-import itbound
+Quick path:
+
+```bash
+itbound example --out /tmp/itbound_example.csv
+itbound quick --data /tmp/itbound_example.csv --treatment a --outcome y --covariates x1,x2 --outdir /tmp/itbound_quick
 ```
 
-Standard-library function:
+Standard mode:
 
+```bash
+itbound standard --csv /tmp/itbound_example.csv --y-col y --a-col a --x-cols x1,x2 --outdir /tmp/itbound_standard --divergences KL,JS,Hellinger,TV,Chi2 --aggregation-mode paper_adaptive_k --html
+```
+
+Paper-figure dry run:
+
+```bash
+itbound reproduce --dry-run
+```
+
+More detail:
+- [docs/quickstart.md](docs/quickstart.md)
+- [docs/artifact_contract.md](docs/artifact_contract.md)
+- [docs/aggregation_modes.md](docs/aggregation_modes.md)
+- [docs/results_schema_v0.md](docs/results_schema_v0.md)
+
+## Citation
+Software citation metadata is in [CITATION.cff](CITATION.cff).
+
+```bibtex
+@article{jung2026itbound,
+  title   = {Data-Driven Information-Theoretic Causal Bounds under Unmeasured Confounding},
+  author  = {Jung, Yonghan and Kang, Bogyeong},
+  year    = {2026},
+  url     = {https://arxiv.org/abs/2601.17160}
+}
+```
+
+## Links
+- Paper: <https://arxiv.org/abs/2601.17160>
+- PyPI: <https://pypi.org/project/itbound/>
+- Repository: <https://github.com/yonghanjung/Information-Theretic-Bounds>
+- Quickstart: [docs/quickstart.md](docs/quickstart.md)
+- Artifact contract: [docs/artifact_contract.md](docs/artifact_contract.md)
+
+## Demo assets
+Live demo preview:
+
+![itbound demo preview](https://raw.githubusercontent.com/yonghanjung/Information-Theretic-Bounds/main/docs/media/quick-demo-v5.gif)
+
+To regenerate the GIF:
+
+```bash
+bash scripts/demo/make_quick_demo.sh
+```
+
+## Python API
 ```python
 from itbound.standard import run_standard_bounds
 
@@ -119,335 +116,45 @@ result = run_standard_bounds(
 )
 ```
 
-Legacy import (still supported):
+Legacy import remains supported:
 
 ```python
 import fbound
 ```
 
-## CLI
-
-### Run bounds from config
+## CLI reference
+Run from config:
 
 ```bash
 itbound run --config docs/cli-config.example.yaml
 ```
 
-You can override output path:
+Override output path:
 
 ```bash
 itbound run --config docs/cli-config.example.yaml --out /tmp/itbound_bounds.csv
 ```
 
-### Run a quick synthetic example
+Artifact contract mode:
 
 ```bash
-itbound example --out /tmp/itbound_example.csv
+itbound artifacts --csv /tmp/itbound_toy.csv --y-col y --a-col a --x-cols x1,x2 --outdir /tmp/itbound_artifacts --divergences KL
 ```
 
-### Reproduce arXiv plots
+## Notes on outputs
+- `results.json` is the schema-versioned artifact for quick and artifact-contract flows.
+- `claims.md` is the readable report for sharing robust claims.
+- `bounds.csv` and `summary.json` are produced in standard mode.
+- `report.html` is optional and written when HTML output is enabled.
 
+## Development
 ```bash
-itbound reproduce --dry-run
+python -m pip install -e .[dev]
+python -m pytest -q
+python -m build
 ```
 
-Notes:
-- `reproduce` expects the final-arxiv JSON summaries under `experiments/final-arxiv`.
-- If you installed the package, run `itbound reproduce` from the repo root so the data files are found.
-- Install extras first:
-  - PyPI install: `python -m pip install 'itbound[experiments]'`
-  - Source/editable install: `python -m pip install -e '.[experiments]'`
-
-### Standard-library run (CSV -> bounds + claims JSON + plots + optional HTML)
-
-```bash
-itbound standard \
-  --csv /tmp/itbound_toy.csv \
-  --y-col y \
-  --a-col a \
-  --x-cols x1,x2 \
-  --outdir /tmp/itbound_standard \
-  --divergences KL,JS,Hellinger,TV,Chi2 \
-  --aggregation-mode paper_adaptive_k \
-  --html
-```
-
-Aggregation modes:
-- `paper_adaptive_k` (default): increase endpoint-k until feasible interval is found.
-- `fixed_k_endpoint`: use exactly `--fixed-k` for both endpoints.
-- `tight_kth`: experiment-style tight-kth aggregation (starts from large k, relaxes down).
-  - default divergences for this mode are the same built-in 5: `KL,JS,Hellinger,TV,Chi2`.
-  - you can override to a subset with `--divergences` (for example `KL,TV`).
-
-Ground-truth plot overlay options (visualization only; math unchanged):
-- `--ground-truth-col <col>`: draw per-row truth values from a column.
-- `--ground-truth-effect <float>`: draw a scalar horizontal truth line.
-- `--no-ground-truth-auto`: disable auto detection from `mu1-mu0`.
-- default behavior auto-detects `mu1-mu0` when available.
-
-Example (`tight_kth`):
-
-```bash
-itbound standard \
-  --csv /tmp/itbound_toy.csv \
-  --y-col y \
-  --a-col a \
-  --x-cols x1,x2 \
-  --outdir /tmp/itbound_standard_tight \
-  --aggregation-mode tight_kth
-```
-
-Example (`tight_kth` subset override + explicit truth column):
-
-```bash
-itbound standard \
-  --csv /tmp/itbound_toy.csv \
-  --y-col y \
-  --a-col a \
-  --x-cols x1,x2 \
-  --outdir /tmp/itbound_standard_tight_kltv \
-  --divergences KL,TV \
-  --aggregation-mode tight_kth \
-  --ground-truth-col tau_true
-```
-
-Artifacts written to `--outdir`:
-- `bounds.csv`
-- `summary.json` (claims + diagnostics + run config)
-- plot PNGs when `matplotlib` is available
-- `report.html` when `--html` is enabled
-
-If `matplotlib` is missing, plotting is skipped with a warning and other artifacts are still produced.
-See also: [`docs/aggregation_modes.md`](docs/aggregation_modes.md)
-
-### Artifact Contract Run (schema-versioned `results.json`)
-
-```bash
-itbound artifacts \
-  --csv /tmp/itbound_toy.csv \
-  --y-col y \
-  --a-col a \
-  --x-cols x1,x2 \
-  --outdir /tmp/itbound_artifacts \
-  --divergences KL
-```
-
-This opt-in command writes a fixed folder contract:
-- `summary.txt`
-- `results.json` (schema versioned; see `docs/results_schema_v0.md`)
-- `claims.json`
-- `claims.md`
-- `plots/`
-- `report.html` (optional with `--html`)
-
-### Quick Wrapper Run (`itbound.fit` via CLI)
-
-```bash
-itbound quick \
-  --data /tmp/itbound_toy.csv \
-  --treatment a \
-  --outcome y \
-  --covariates x1,x2 \
-  --outdir /tmp/itbound_quick
-```
-
-`quick` is an opt-in wrapper around `itbound.fit(...)` with default `mode=paper-default`,
-and writes the same artifact contract (`summary.txt`, `results.json`, `claims.json`, `claims.md`, `plots/`).
-
-### Live Demo (Toy + Benchmark)
-
-IHDP scenario preview (GIF rendered from the actual CLI run):
-
-![itbound demo toy live preview](https://raw.githubusercontent.com/yonghanjung/Information-Theretic-Bounds/main/docs/media/quick-demo-v5.gif)
-
-Run a fast IHDP demo with explicit KL + truth-coverage envelope:
-
-```bash
-itbound demo --scenario ihdp --divergence KL --enforce-truth-coverage --eval-points 240 --rounds 5 --n-folds 5 --outdir /tmp/itbound_live_demo --batch-size 8
-```
-
-Run on a benchmark-style IHDP CSV:
-
-```bash
-itbound demo --scenario ihdp --ihdp-data /path/to/ihdp_npci_1.csv --divergence KL --enforce-truth-coverage --eval-points 240 --rounds 5 --n-folds 5 --outdir /tmp/itbound_live_demo --batch-size 8
-```
-
-Run both in one command:
-
-```bash
-itbound demo --scenario both --toy-n 1000 --divergence KL --enforce-truth-coverage --eval-points 240 --rounds 5 --n-folds 5 --outdir /tmp/itbound_live_demo --batch-size 8
-```
-
-The demo writes per-scenario artifact folders (`toy/`, `ihdp/`) plus `live_demo_summary.md` under `--outdir`.
-By default, IHDP plots use a demo-only truth-aware envelope so every point satisfies `lower < truth < upper` visually.
-Use `--no-enforce-truth-coverage` to disable this visualization aid.
-Use `--eval-points` (e.g., `240`) to render fewer evaluation points for smoother, less spiky demo plots.
-
-To regenerate the GIF:
-
-```bash
-bash scripts/demo/make_quick_demo.sh
-```
-
-## Good Example (End-to-End)
-
-Install, run a quick example, and verify the output columns:
-
-```bash
-python -m pip install itbound
-itbound example --out /tmp/itbound_example.csv
-
-python - <<'PY'
-import pandas as pd
-df = pd.read_csv("/tmp/itbound_example.csv")
-print(df.columns.tolist())
-PY
-```
-
-Expected columns include `lower` and `upper`.
-
-## Example Diagram
-
-```mermaid
-flowchart LR
-    A[Config YAML/JSON] --> B[Data Loader]
-    B --> C[Bound Estimator]
-    C --> D[Bounds CSV]
-    B --> E[Diagnostics]
-    C --> E
-```
-
-## Example Plot
-
-![Bound width example (all divergences)](https://raw.githubusercontent.com/yonghanjung/Information-Theretic-Bounds/main/docs/latex/figures/width-alldivergences.png)
-
-![IHDP ribbon example](https://raw.githubusercontent.com/yonghanjung/Information-Theretic-Bounds/main/docs/latex/figures/ribbon_ihdp.png)
-
-## Config schema (CLI)
-
-The config must be YAML or JSON and include:
-
-- `data`: one of `synthetic`, `npz_path`, or `csv_path`
-- `divergence`
-- `propensity_model`
-- `m_model`
-- `dual_net_config`
-- `fit_config`
-- `seed`
-
-Optional:
-- `phi` (default: `identity`)
-- `output_path` (default: `itbound_bounds.csv`)
-
-See `docs/cli-config.example.yaml` for a complete example.
-
-For a full field-by-field explanation, see `docs/config.md`.
-
-## Toy CSV example
-
-Create a toy CSV and run:
-
-```bash
-python - <<'PY'
-import numpy as np
-import pandas as pd
-
-rng = np.random.default_rng(0)
-n = 50
-x1 = rng.normal(size=n)
-x2 = rng.normal(size=n)
-a = (x1 + rng.normal(scale=0.5, size=n) > 0).astype(int)
-y = 1.0 + 0.5 * a + 0.3 * x1 - 0.2 * x2 + rng.normal(scale=0.1, size=n)
-
-df = pd.DataFrame({"y": y, "a": a, "x1": x1, "x2": x2})
-df.to_csv("/tmp/itbound_toy.csv", index=False)
-print("/tmp/itbound_toy.csv")
-PY
-
-cat <<'YAML' > /tmp/itbound_toy.yaml
-data:
-  csv_path: /tmp/itbound_toy.csv
-  y_col: y
-  a_col: a
-  x_cols: [x1, x2]
-divergence: KL
-phi: identity
-propensity_model: logistic
-m_model: linear
-dual_net_config:
-  hidden_sizes: [8, 8]
-  activation: relu
-  dropout: 0.0
-  h_clip: 10.0
-  device: cpu
-fit_config:
-  n_folds: 2
-  num_epochs: 2
-  batch_size: 16
-  lr: 0.005
-  weight_decay: 0.0
-  max_grad_norm: 5.0
-  eps_propensity: 0.001
-  deterministic_torch: true
-  train_m_on_fold: true
-  propensity_config:
-    C: 1.0
-    max_iter: 200
-    penalty: l2
-    solver: lbfgs
-    n_jobs: 1
-  m_config:
-    alpha: 1.0
-  verbose: false
-  log_every: 1
-seed: 123
-YAML
-
-itbound run --config /tmp/itbound_toy.yaml --out /tmp/itbound_toy_bounds.csv
-```
-
-## Agent Skill
-
-Agent-friendly usage is documented in `docs/agent/SKILL.md`.
-
-## Theory at a glance (ITB.pdf)
-
-### Divergence bound from propensity (Theorem 1)
-
-For any action `a` and covariates `x` with `P(a|x) > 0`:
-
-```
-D_f(P_{a,x} || Q_{a,x}) <= B_f(e_a(x)),  B_f(e) = e f(1/e) + (1-e) f(0)
-```
-
-This upper bound depends only on the propensity score, making the divergence radius fully propensity-score-based.
-
-Specializations used in the code:
-- `KL`: `D_KL(P||Q) <= -log e`
-- `Hellinger`: `D_H(P||Q) <= 1 - sqrt(e)`
-- `Chi2`: `D_chi2(P||Q) <= (1-e)/(2e)`
-- `TV`: `D_TV(P||Q) <= 1 - e`
-- `JS`: `D_JS(P||Q) <= B_fJS(e)` (closed form in the paper)
-
-### Dual causal bound (Theorem 2)
-
-Define `g(s)=s f(1/s)` and its convex conjugate `g*(t)`. The upper bound solves:
-
-```
-θ_up(a,x) = inf_{λ>0, u in R} { λ η_f(a,x) + u + λ E_{P_{a,x}}[g*((φ(Y)-u)/λ)] }
-```
-
-### Debiased semiparametric estimator (Section 5)
-
-The code minimizes the paper's risk function (Definition 4) with cross-fitting and a Neyman-orthogonal correction, using:
-- PyTorch dual nets for `h(a,x)` and `u(a,x)` with `λ(a,x)=exp(h(a,x))`
-- sklearn propensity + outcome regressors for nuisances
-
-## Diagnostics (AGENTS P0)
-
-Endpoint-wise aggregation reports per-point diagnostics:
-- `n_eff_up`, `n_eff_lo`: effective candidate counts after filtering.
-- `k_used_up`, `k_used_lo`: order-statistic index used (default 1).
-- `invalid_up`, `invalid_lo`, `nonfinite_upper`, `nonfinite_lower`, `inverted_filtered`: rejection counts.
-
-Run example outputs include validity masks and these diagnostics in the saved tables.
+## Troubleshooting
+1. If plots do not render, install extras with `python -m pip install 'itbound[experiments]'`.
+2. If you only need a fast install check, run `itbound --help`.
+3. If you want the demo figures, run from the repo root so the bundled data paths resolve correctly.

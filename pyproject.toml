@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 authors = [
   { name = "Yonghan Jung" },
-  { name = "Jiwoong Kang" }
+  { name = "Bogyeong Kang" }
 ]
 keywords = ["causal-inference", "partial-identification", "bounds", "f-divergence"]
 dependencies = [
