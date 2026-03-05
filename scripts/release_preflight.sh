@@ -15,13 +15,16 @@ echo "[preflight] running fast tests"
 python3 -m pytest -q -m "not slow"
 
 echo "[preflight] building wheel/sdist"
+rm -rf dist
 python3 -m build
 
 echo "[preflight] wheel install smoke"
 rm -rf "${TMP_VENV}" "${TMP_OUTDIR}" "${TMP_EXAMPLE}"
 python3 -m venv "${TMP_VENV}"
 "${TMP_VENV}/bin/python" -m pip install -U pip
-"${TMP_VENV}/bin/python" -m pip install dist/*.whl
+EXPECTED_VERSION="$(awk -F'\"' '/^version = \"/ {print $2; exit}' pyproject.toml)"
+WHEEL_PATH="$(ls "dist/itbound-${EXPECTED_VERSION}"-*.whl | head -n 1)"
+"${TMP_VENV}/bin/python" -m pip install "${WHEEL_PATH}"
 export PATH="${TMP_VENV}/bin:${PATH}"
 itbound --help >/dev/null
 itbound example --out "${TMP_EXAMPLE}" >/dev/null

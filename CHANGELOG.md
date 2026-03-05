@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.1] - 2026-03-05
+
+### Added
+- Codex execution tutorial for replicating the FD-CATE PyPI/release pattern in this repository (`TUTORIAL_PYPI_ITBOUND_FROM_FDCATE.md`).
+
 ## [0.1.0] - 2026-03-05
 
 ### Added

@@ -19,4 +19,4 @@ __all__ = [
     "run_standard_bounds",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
