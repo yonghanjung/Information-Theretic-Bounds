@@ -5,6 +5,7 @@
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
 
 # Local caches
 .cache/
@@ -28,6 +29,7 @@ env/
 # Plots / binary artifacts
 *.png
 *.pkl
+dist/
 
 # LaTeX build artifacts (keep sources/figures tracked)
 docs/latex/**/*.aux

@@ -292,7 +292,7 @@ and writes the same artifact contract (`summary.txt`, `results.json`, `claims.js
 
 IHDP scenario preview (GIF rendered from the actual CLI run):
 
-![itbound demo toy live preview](docs/media/quick-demo-v5.gif)
+![itbound demo toy live preview](https://raw.githubusercontent.com/yonghanjung/Information-Theretic-Bounds/main/docs/media/quick-demo-v5.gif)
 
 Run a fast IHDP demo with explicit KL + truth-coverage envelope:
 
@@ -353,9 +353,9 @@ flowchart LR
 
 ## Example Plot
 
-![Bound width example (all divergences)](docs/latex/figures/width-alldivergences.png)
+![Bound width example (all divergences)](https://raw.githubusercontent.com/yonghanjung/Information-Theretic-Bounds/main/docs/latex/figures/width-alldivergences.png)
 
-![IHDP ribbon example](docs/latex/figures/ribbon_ihdp.png)
+![IHDP ribbon example](https://raw.githubusercontent.com/yonghanjung/Information-Theretic-Bounds/main/docs/latex/figures/ribbon_ihdp.png)
 
 ## Config schema (CLI)
 

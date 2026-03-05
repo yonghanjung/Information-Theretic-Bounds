@@ -27,6 +27,10 @@ experiments = [
   "scipy",
   "statsmodels",
 ]
+dev = [
+  "pytest",
+  "build",
+]
 
 [project.scripts]
 itbound = "itbound.cli:main"
