@@ -20,11 +20,14 @@ tags:
 
 Upload a CSV and compute data-driven lower and upper causal bounds under unmeasured confounding.
 
+[Paper](https://arxiv.org/abs/2601.17160) | [GitHub](https://github.com/yonghanjung/Information-Theretic-Bounds) | [PyPI](https://pypi.org/project/itbound/)
+
 This Space demonstrates the core idea of [Data-Driven Information-Theoretic Causal Bounds under Unmeasured Confounding](https://arxiv.org/abs/2601.17160): when strong identification assumptions are not credible, causal intervals can still be valid and informative.
 
 ## What this demo does
 
-- Uploads an observational CSV
+- Uses the canonical IHDP example when no file is uploaded
+- Uploads an observational CSV when you want to override the default example
 - Selects treatment, outcome, and covariates
 - Computes lower and upper causal bounds
 - Returns a width histogram and claims summary
@@ -32,9 +35,9 @@ This Space demonstrates the core idea of [Data-Driven Information-Theoretic Caus
 
 ## Suggested first run
 
-- treatment column: `a`
-- outcome column: `y`
-- covariates: `x1,x2`
+- treatment column: `treatment`
+- outcome column: `y_factual`
+- covariates: `x1,x2,x3,x4,x5`
 - divergences: `KL`, `TV`
 - aggregation mode: `paper_adaptive_k`
 

@@ -22,6 +22,8 @@ def test_hf_space_readme_pin_contract():
     text = SPACE_README.read_text(encoding="utf-8")
     assert 'python_version: "3.10"' in text
     assert 'sdk_version: "5.50.0"' in text
+    assert "https://arxiv.org/abs/2601.17160" in text
+    assert "https://github.com/yonghanjung/Information-Theretic-Bounds" in text
 
 
 def test_hf_space_api_info_smoke():
@@ -57,4 +59,24 @@ def test_hf_space_callback_smoke(tmp_path):
     assert not bounds_preview.empty
     assert width_fig is not None
     assert "Claims summary" in claims_md
+    assert Path(archive_path).exists()
+
+
+def test_hf_space_callback_smoke_without_upload_uses_canonical_ihdp():
+    namespace = _load_space_namespace()
+    run_space_demo = namespace["run_space_demo"]
+
+    bounds_preview, width_fig, claims_md, archive_path = run_space_demo(
+        csv_path=None,
+        treatment_col="treatment",
+        outcome_col="y_factual",
+        covariates_text="x1,x2,x3,x4,x5",
+        divergences=["KL", "TV"],
+        aggregation_mode="paper_adaptive_k",
+        write_html=False,
+    )
+
+    assert not bounds_preview.empty
+    assert width_fig is not None
+    assert "canonical IHDP example" in claims_md
     assert Path(archive_path).exists()

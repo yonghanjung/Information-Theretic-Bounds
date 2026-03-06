@@ -21,6 +21,8 @@ def test_readme_top_fold_has_launch_contract():
 
     assert "# itbound: Causal Bounds Without Strong Identification Assumptions" in readme
     assert "https://arxiv.org/abs/2601.17160" in top
+    assert "https://github.com/yonghanjung/Information-Theretic-Bounds" in top
+    assert "https://huggingface.co/spaces/yonghanjung/itbound-demo" in top
     assert "python -m pip install itbound" in top
     assert "itbound example --out /tmp/itbound_example.csv" in top
     assert (

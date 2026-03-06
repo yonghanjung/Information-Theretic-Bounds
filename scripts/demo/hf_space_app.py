@@ -5,20 +5,51 @@ Copy this file to the root of a Gradio Space as `app.py`.
 
 from __future__ import annotations
 
-import json
 import shutil
 import tempfile
 from pathlib import Path
+from urllib.request import urlretrieve
 
 import gradio as gr
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from itbound.live_demo import _load_ihdp_csv
 from itbound.standard import DEFAULT_DIVERGENCES, run_standard_bounds
 
 
-def _claims_markdown(claims: dict) -> str:
+CANONICAL_IHDP_COVARIATES = [f"x{i}" for i in range(1, 6)]
+CANONICAL_IHDP_URL = (
+    "https://raw.githubusercontent.com/yonghanjung/Information-Theretic-Bounds/main/"
+    "ihdp_data/ihdp_npci_1.csv"
+)
+
+
+def _detect_repo_root() -> Path:
+    here = Path(__file__).resolve()
+    for candidate in (here.parent, *here.parents):
+        if (candidate / "pyproject.toml").exists() or (candidate / "ihdp_data" / "ihdp_npci_1.csv").exists():
+            return candidate
+    return here.parent
+
+
+REPO_ROOT = _detect_repo_root()
+
+
+def _claims_markdown(
+    claims: dict,
+    *,
+    source_label: str,
+    treatment_col: str,
+    outcome_col: str,
+    covariates: list[str],
+) -> str:
     lines = [
+        "## Run summary",
+        f"- Source: {source_label}",
+        f"- Treatment / outcome: `{treatment_col}` / `{outcome_col}`",
+        f"- Covariates: `{', '.join(covariates)}`",
+        "",
         "## Claims summary",
         f"- Robust sign: `{claims['sign']['label']}`",
         f"- Sign statement: {claims['sign']['statement']}",
@@ -49,8 +80,45 @@ def _zip_artifacts(outdir: Path) -> str:
     return archive_path
 
 
+def _parse_covariates(covariates_text: str) -> list[str]:
+    return [item.strip() for item in covariates_text.split(",") if item.strip()]
+
+
+def _load_input_frame(
+    *,
+    csv_path: str | None,
+    outcome_col: str,
+    treatment_col: str,
+    covariates_text: str,
+) -> tuple[pd.DataFrame, list[str], str]:
+    covariates = _parse_covariates(covariates_text)
+    if csv_path:
+        frame = pd.read_csv(csv_path)
+        if not covariates:
+            excluded = {outcome_col, treatment_col, "y_cfactual", "mu0", "mu1"}
+            covariates = [col for col in frame.columns if col not in excluded]
+        return frame, covariates, f"uploaded CSV `{Path(csv_path).name}`"
+
+    ihdp_path = _resolve_space_ihdp_path()
+    frame = _load_ihdp_csv(ihdp_path)
+    if not covariates:
+        covariates = list(CANONICAL_IHDP_COVARIATES)
+    return frame, covariates, f"canonical IHDP example `{ihdp_path.name}`"
+
+
+def _resolve_space_ihdp_path() -> Path:
+    local_candidate = REPO_ROOT / "ihdp_data" / "ihdp_npci_1.csv"
+    if local_candidate.exists():
+        return local_candidate
+
+    cache_path = Path(tempfile.gettempdir()) / "itbound-space-ihdp_npci_1.csv"
+    if not cache_path.exists():
+        urlretrieve(CANONICAL_IHDP_URL, cache_path)
+    return cache_path
+
+
 def run_space_demo(
-    csv_path: str,
+    csv_path: str | None,
     treatment_col: str,
     outcome_col: str,
     covariates_text: str,
@@ -58,11 +126,12 @@ def run_space_demo(
     aggregation_mode: str,
     write_html: bool,
 ):
-    if not csv_path:
-        raise gr.Error("Upload a CSV file first.")
-
-    frame = pd.read_csv(csv_path)
-    covariates = [item.strip() for item in covariates_text.split(",") if item.strip()]
+    frame, covariates, source_label = _load_input_frame(
+        csv_path=csv_path,
+        outcome_col=outcome_col,
+        treatment_col=treatment_col,
+        covariates_text=covariates_text,
+    )
     if not covariates:
         raise gr.Error("Provide at least one covariate column.")
     if not divergences:
@@ -82,7 +151,13 @@ def run_space_demo(
         write_html=write_html,
     )
 
-    claims_md = _claims_markdown(result.claims)
+    claims_md = _claims_markdown(
+        result.claims,
+        source_label=source_label,
+        treatment_col=treatment_col,
+        outcome_col=outcome_col,
+        covariates=covariates,
+    )
     bounds_preview = result.bounds.head(50)
     width_fig = _width_plot(result.bounds)
     archive_path = _zip_artifacts(outdir)
@@ -94,16 +169,22 @@ with gr.Blocks(title="itbound Demo") as demo:
         """
         # itbound Demo
 
-        Upload a CSV and compute data-driven lower and upper causal bounds under unmeasured confounding.
-        This demo is designed for cases where point identification is not credible but causal intervals remain meaningful.
+        [Paper](https://arxiv.org/abs/2601.17160) | [GitHub](https://github.com/yonghanjung/Information-Theretic-Bounds) | [PyPI](https://pypi.org/project/itbound/)
+
+        Upload a CSV to compute data-driven lower and upper causal bounds under unmeasured confounding,
+        or leave the upload blank to run the canonical IHDP example.
+        For a toy uploaded CSV, a common schema is `treatment=a`, `outcome=y`, and `covariates=x1,x2`.
         """
     )
 
-    csv_file = gr.File(label="CSV upload", type="filepath")
+    csv_file = gr.File(label="CSV upload (optional; blank = canonical IHDP example)", type="filepath")
     with gr.Row():
-        treatment = gr.Textbox(label="Treatment column", value="a")
-        outcome = gr.Textbox(label="Outcome column", value="y")
-    covariates = gr.Textbox(label="Covariate columns (comma-separated)", value="x1,x2")
+        treatment = gr.Textbox(label="Treatment column", value="treatment")
+        outcome = gr.Textbox(label="Outcome column", value="y_factual")
+    covariates = gr.Textbox(
+        label="Covariate columns (comma-separated)",
+        value="x1,x2,x3,x4,x5",
+    )
     with gr.Row():
         divergence = gr.CheckboxGroup(
             label="Divergences",

@@ -1,6 +1,6 @@
 # itbound: Causal Bounds Without Strong Identification Assumptions
 
-[Paper](https://arxiv.org/abs/2601.17160) | [PyPI](https://pypi.org/project/itbound/) | [Docs](docs/quickstart.md) | [Citation](CITATION.cff) | [Quickstart](#one-command-quickstart)
+[Paper](https://arxiv.org/abs/2601.17160) | [GitHub](https://github.com/yonghanjung/Information-Theretic-Bounds) | [HF Demo](https://huggingface.co/spaces/yonghanjung/itbound-demo) | [PyPI](https://pypi.org/project/itbound/) | [Docs](docs/quickstart.md) | [Citation](CITATION.cff) | [Quickstart](#one-command-quickstart)
 
 Compute valid lower and upper causal bounds under unmeasured confounding when point identification is not credible.
 
@@ -86,6 +86,7 @@ Software citation metadata is in [CITATION.cff](CITATION.cff).
 - Paper: <https://arxiv.org/abs/2601.17160>
 - PyPI: <https://pypi.org/project/itbound/>
 - Repository: <https://github.com/yonghanjung/Information-Theretic-Bounds>
+- Hugging Face demo: <https://huggingface.co/spaces/yonghanjung/itbound-demo>
 - Quickstart: [docs/quickstart.md](docs/quickstart.md)
 - Artifact contract: [docs/artifact_contract.md](docs/artifact_contract.md)
 
