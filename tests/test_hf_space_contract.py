@@ -51,7 +51,7 @@ def test_hf_space_callback_smoke(tmp_path):
         treatment_col="a",
         outcome_col="y",
         covariates_text="x1,x2",
-        ribbon_axis_col="x0",
+        ribbon_axis_col="propensity",
         divergences=["KL", "TV"],
         aggregation_mode="paper_adaptive_k",
         write_html=False,
@@ -60,7 +60,8 @@ def test_hf_space_callback_smoke(tmp_path):
     assert not bounds_preview.empty
     assert width_fig is not None
     assert ribbon_fig is not None
-    assert ribbon_fig.axes[0].get_xlabel() == "x0"
+    assert ribbon_fig.axes[0].get_xlabel() == "estimated propensity"
+    assert ribbon_fig.axes[0].get_title() == "Binned ribbon plot by estimated propensity"
     assert "Claims summary" in claims_md
     assert Path(archive_path).exists()
 
@@ -74,7 +75,7 @@ def test_hf_space_callback_smoke_without_upload_uses_canonical_ihdp():
         treatment_col="treatment",
         outcome_col="y_factual",
         covariates_text="x1,x2,x3,x4,x5",
-        ribbon_axis_col="x0",
+        ribbon_axis_col="propensity",
         divergences=["KL", "TV"],
         aggregation_mode="paper_adaptive_k",
         write_html=False,
@@ -83,6 +84,7 @@ def test_hf_space_callback_smoke_without_upload_uses_canonical_ihdp():
     assert not bounds_preview.empty
     assert width_fig is not None
     assert ribbon_fig is not None
-    assert ribbon_fig.axes[0].get_xlabel() == "x0"
+    assert ribbon_fig.axes[0].get_xlabel() == "estimated propensity"
+    assert ribbon_fig.axes[0].get_title() == "Binned ribbon plot by estimated propensity"
     assert "canonical IHDP example" in claims_md
     assert Path(archive_path).exists()

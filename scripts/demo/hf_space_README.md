@@ -30,7 +30,8 @@ This Space demonstrates the core idea of [Data-Driven Information-Theoretic Caus
 - Uploads an observational CSV when you want to override the default example
 - Selects treatment, outcome, and covariates
 - Computes lower and upper causal bounds
-- Shows a ribbon plot against `x0` for the canonical IHDP example, with ground-truth effect and bounds
+- Shows a binned ribbon plot against estimated propensity for the canonical IHDP example, with ground-truth effect and bounds
+- Lets you override the ribbon axis with a raw covariate such as `x4` when you want a one-dimensional feature view
 - Returns a width histogram and claims summary
 - Produces a downloadable artifact bundle
 
@@ -39,7 +40,7 @@ This Space demonstrates the core idea of [Data-Driven Information-Theoretic Caus
 - treatment column: `treatment`
 - outcome column: `y_factual`
 - covariates: `x1,x2,x3,x4,x5`
-- ribbon x-axis column: `x0`
+- ribbon x-axis column: `propensity`
 - divergences: `KL`, `TV`
 - aggregation mode: `paper_adaptive_k`
 

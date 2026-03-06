@@ -15,6 +15,9 @@ import gradio as gr
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 
 from itbound.live_demo import _load_ihdp_csv
 from itbound.standard import DEFAULT_DIVERGENCES, run_standard_bounds
@@ -25,6 +28,8 @@ CANONICAL_IHDP_URL = (
     "https://raw.githubusercontent.com/yonghanjung/Information-Theretic-Bounds/main/"
     "ihdp_data/ihdp_npci_1.csv"
 )
+PROPENSITY_AXIS_NAMES = {"propensity", "estimated_propensity", "e_hat", "ehat"}
+RIBBON_Q_BINS = 30
 
 
 def _detect_repo_root() -> Path:
@@ -84,6 +89,17 @@ def _with_x0_alias(frame: pd.DataFrame) -> pd.DataFrame:
     return enriched
 
 
+def _align_series_to_bounds(values: pd.Series, bounds_df: pd.DataFrame) -> pd.Series:
+    numeric = pd.to_numeric(values, errors="coerce")
+    if "i" not in bounds_df.columns:
+        return numeric.iloc[: bounds_df.shape[0]].reset_index(drop=True)
+    row_ids = pd.to_numeric(bounds_df["i"], errors="coerce").fillna(-1).astype(int)
+    valid_rows = row_ids.between(0, numeric.shape[0] - 1)
+    aligned = pd.Series(index=bounds_df.index, dtype=float)
+    aligned.loc[valid_rows] = numeric.iloc[row_ids.loc[valid_rows].to_numpy()].to_numpy(dtype=float)
+    return aligned
+
+
 def _truth_vector(frame: pd.DataFrame, bounds_df: pd.DataFrame) -> pd.Series | None:
     if {"mu0", "mu1"}.issubset(frame.columns):
         truth = pd.to_numeric(frame["mu1"], errors="coerce") - pd.to_numeric(frame["mu0"], errors="coerce")
@@ -91,33 +107,106 @@ def _truth_vector(frame: pd.DataFrame, bounds_df: pd.DataFrame) -> pd.Series | N
         truth = pd.to_numeric(frame["tau_true"], errors="coerce")
     else:
         return None
+    return _align_series_to_bounds(truth, bounds_df)
 
-    if "i" not in bounds_df.columns:
-        return truth.iloc[: bounds_df.shape[0]].reset_index(drop=True)
-    row_ids = pd.to_numeric(bounds_df["i"], errors="coerce").fillna(-1).astype(int)
-    valid_rows = row_ids.between(0, frame.shape[0] - 1)
-    aligned = pd.Series(index=bounds_df.index, dtype=float)
-    aligned.loc[valid_rows] = truth.iloc[row_ids.loc[valid_rows].to_numpy()].to_numpy(dtype=float)
-    return aligned
-
-
-def _ribbon_plot(frame: pd.DataFrame, bounds_df: pd.DataFrame, *, axis_col: str):
-    axis_name = axis_col.strip() or "x0"
-    if axis_name not in frame.columns:
+def _estimate_propensity(frame: pd.DataFrame, *, treatment_col: str, covariates: list[str]) -> pd.Series | None:
+    usable_covariates = [col for col in covariates if col in frame.columns]
+    if treatment_col not in frame.columns or not usable_covariates:
         return None
 
-    axis_series = pd.to_numeric(frame[axis_name], errors="coerce")
-    if "i" in bounds_df.columns:
-        row_ids = pd.to_numeric(bounds_df["i"], errors="coerce").fillna(-1).astype(int)
-        valid_rows = row_ids.between(0, frame.shape[0] - 1)
-        axis_values = pd.Series(index=bounds_df.index, dtype=float)
-        axis_values.loc[valid_rows] = axis_series.iloc[row_ids.loc[valid_rows].to_numpy()].to_numpy(dtype=float)
-    else:
-        axis_values = axis_series.iloc[: bounds_df.shape[0]].reset_index(drop=True)
+    treatment = pd.to_numeric(frame[treatment_col], errors="coerce")
+    if treatment.isna().any():
+        return None
+    a = treatment.astype(int)
+    if set(a.unique()) - {0, 1}:
+        return None
 
+    x_frame = frame[usable_covariates].apply(pd.to_numeric, errors="coerce")
+    x_frame = x_frame.loc[:, x_frame.notna().any(axis=0)]
+    if x_frame.empty:
+        return None
+    x_frame = x_frame.fillna(x_frame.median(numeric_only=True))
+    if x_frame.isna().any().any():
+        return None
+
+    model = make_pipeline(
+        StandardScaler(),
+        LogisticRegression(max_iter=2000, solver="lbfgs"),
+    )
+    try:
+        model.fit(x_frame.to_numpy(dtype=float), a.to_numpy(dtype=int))
+        propensity = model.predict_proba(x_frame.to_numpy(dtype=float))[:, 1]
+    except Exception:
+        return None
+    return pd.Series(propensity, index=frame.index, dtype=float)
+
+
+def _resolve_ribbon_axis(
+    frame: pd.DataFrame,
+    bounds_df: pd.DataFrame,
+    *,
+    axis_col: str,
+    treatment_col: str,
+    covariates: list[str],
+) -> tuple[str, pd.Series] | None:
+    axis_name = axis_col.strip() or "propensity"
+    axis_key = axis_name.lower()
+    if axis_key in PROPENSITY_AXIS_NAMES:
+        propensity = _estimate_propensity(frame, treatment_col=treatment_col, covariates=covariates)
+        if propensity is None:
+            return None
+        return "estimated propensity", _align_series_to_bounds(propensity, bounds_df)
+    if axis_name not in frame.columns:
+        return None
+    return axis_name, _align_series_to_bounds(frame[axis_name], bounds_df)
+
+
+def _bin_ribbon_frame(ribbon_df: pd.DataFrame, *, axis_label: str) -> tuple[pd.DataFrame, bool]:
+    unique_count = int(ribbon_df[axis_label].nunique(dropna=True))
+    if unique_count < 10 or ribbon_df.shape[0] < 40:
+        return ribbon_df, False
+
+    n_bins = min(RIBBON_Q_BINS, unique_count)
+    try:
+        qbin = pd.qcut(ribbon_df[axis_label], q=n_bins, duplicates="drop")
+    except ValueError:
+        return ribbon_df, False
+
+    grouped = ribbon_df.assign(_bin=qbin).dropna(subset=["_bin"]).groupby("_bin", observed=True)
+    aggregated = pd.DataFrame(
+        {
+            axis_label: grouped[axis_label].median(),
+            "lower": grouped["lower"].median(),
+            "upper": grouped["upper"].median(),
+        }
+    )
+    if "truth" in ribbon_df.columns:
+        aggregated["truth"] = grouped["truth"].median()
+    return aggregated.reset_index(drop=True), True
+
+
+def _ribbon_plot(
+    frame: pd.DataFrame,
+    bounds_df: pd.DataFrame,
+    *,
+    axis_col: str,
+    treatment_col: str,
+    covariates: list[str],
+):
+    resolved = _resolve_ribbon_axis(
+        frame,
+        bounds_df,
+        axis_col=axis_col,
+        treatment_col=treatment_col,
+        covariates=covariates,
+    )
+    if resolved is None:
+        return None
+
+    axis_label, axis_values = resolved
     ribbon_df = pd.DataFrame(
         {
-            axis_name: axis_values.to_numpy(dtype=float),
+            axis_label: axis_values.to_numpy(dtype=float),
             "lower": pd.to_numeric(bounds_df["lower"], errors="coerce").to_numpy(dtype=float),
             "upper": pd.to_numeric(bounds_df["upper"], errors="coerce").to_numpy(dtype=float),
         }
@@ -126,19 +215,24 @@ def _ribbon_plot(frame: pd.DataFrame, bounds_df: pd.DataFrame, *, axis_col: str)
     if truth is not None:
         ribbon_df["truth"] = truth.to_numpy(dtype=float)
 
-    ribbon_df = ribbon_df.dropna(subset=[axis_name, "lower", "upper"]).sort_values(axis_name, kind="mergesort")
+    ribbon_df = ribbon_df.dropna(subset=[axis_label, "lower", "upper"]).sort_values(axis_label, kind="mergesort")
     if ribbon_df.empty:
         return None
+    ribbon_df, used_binning = _bin_ribbon_frame(ribbon_df, axis_label=axis_label)
 
     fig, ax = plt.subplots(figsize=(7, 4))
-    x = ribbon_df[axis_name].to_numpy(dtype=float)
+    x = ribbon_df[axis_label].to_numpy(dtype=float)
     lower = ribbon_df["lower"].to_numpy(dtype=float)
     upper = ribbon_df["upper"].to_numpy(dtype=float)
-    ax.plot(x, lower, color="tab:blue", linewidth=1.2, label="lower")
-    ax.plot(x, upper, color="tab:orange", linewidth=1.2, label="upper")
+    lower_label = "median lower" if used_binning else "lower"
+    upper_label = "median upper" if used_binning else "upper"
+    ribbon_label = "median bound ribbon" if used_binning else "bound ribbon"
+    truth_label = "median ground truth" if used_binning else "ground truth"
+    ax.plot(x, lower, color="tab:blue", linewidth=1.2, label=lower_label)
+    ax.plot(x, upper, color="tab:orange", linewidth=1.2, label=upper_label)
     valid_band = np.isfinite(lower) & np.isfinite(upper) & (lower <= upper)
     if np.any(valid_band):
-        ax.fill_between(x, lower, upper, where=valid_band, alpha=0.2, color="tab:green", label="bound ribbon")
+        ax.fill_between(x, lower, upper, where=valid_band, alpha=0.2, color="tab:green", label=ribbon_label)
     if "truth" in ribbon_df.columns:
         truth_vals = ribbon_df["truth"].to_numpy(dtype=float)
         truth_mask = np.isfinite(truth_vals)
@@ -149,10 +243,11 @@ def _ribbon_plot(frame: pd.DataFrame, bounds_df: pd.DataFrame, *, axis_col: str)
                 color="tab:red",
                 linewidth=1.4,
                 linestyle="--",
-                label="ground truth",
+                label=truth_label,
             )
-    ax.set_title(f"Ribbon plot by {axis_name}")
-    ax.set_xlabel(axis_name)
+    title_prefix = "Binned " if used_binning else ""
+    ax.set_title(f"{title_prefix}ribbon plot by {axis_label}")
+    ax.set_xlabel(axis_label)
     ax.set_ylabel("Causal effect / bounds")
     ax.legend(loc="best")
     fig.tight_layout()
@@ -256,8 +351,14 @@ def run_space_demo(
     )
     bounds_preview = result.bounds.head(50)
     width_fig = _width_plot(result.bounds)
-    ribbon_axis = ribbon_axis_col.strip() or "x0"
-    ribbon_fig = _ribbon_plot(frame, result.bounds, axis_col=ribbon_axis)
+    ribbon_axis = ribbon_axis_col.strip() or "propensity"
+    ribbon_fig = _ribbon_plot(
+        frame,
+        result.bounds,
+        axis_col=ribbon_axis,
+        treatment_col=treatment_col,
+        covariates=covariates,
+    )
     _save_plot(width_fig, outdir, "bounds_width_histogram.png")
     _save_plot(ribbon_fig, outdir, f"bounds_ribbon_{re.sub(r'[^a-zA-Z0-9_-]+', '_', ribbon_axis)}.png")
     archive_path = _zip_artifacts(outdir)
@@ -286,7 +387,11 @@ with gr.Blocks(title="itbound Demo") as demo:
         value="x1,x2,x3,x4,x5",
     )
     with gr.Row():
-        ribbon_axis = gr.Textbox(label="Ribbon x-axis column", value="x0")
+        ribbon_axis = gr.Textbox(
+            label="Ribbon x-axis column",
+            value="propensity",
+            info="Recommended: `propensity` for the paper-aligned IHDP view. You can also try a raw covariate such as `x4`.",
+        )
         divergence = gr.CheckboxGroup(
             label="Divergences",
             choices=list(DEFAULT_DIVERGENCES),
@@ -303,7 +408,7 @@ with gr.Blocks(title="itbound Demo") as demo:
 
     bounds = gr.Dataframe(label="Bounds preview", interactive=False)
     plot = gr.Plot(label="Interval width histogram")
-    ribbon = gr.Plot(label="Ribbon plot by x0")
+    ribbon = gr.Plot(label="Binned ribbon plot")
     claims = gr.Markdown()
     bundle = gr.File(label="Download artifact bundle")
 
